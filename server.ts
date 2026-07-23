@@ -95,7 +95,7 @@ try {
 const messaging: Messaging = getMessaging(adminApp);
 
 // Helper to send push notifications from server
-async function sendPush(token: string, title: string, body: string, orderId?: string, type?: string) {
+async function sendPush(token: string, title: string, body: string, orderId?: string, type?: string, targetUrl?: string) {
   if (!token) return;
   try {
     const message: any = {
@@ -108,6 +108,15 @@ async function sendPush(token: string, title: string, body: string, orderId?: st
     };
     if (orderId) message.data.orderId = orderId;
     if (type) message.data.type = type;
+    if (targetUrl) {
+      message.data.url = targetUrl;
+      message.data.click_action = targetUrl;
+      message.webpush = {
+        fcmOptions: {
+          link: targetUrl
+        }
+      };
+    }
 
     await messaging.send(message);
     console.log(`[Push] Notificação enviada para ${token}`);
@@ -2116,6 +2125,801 @@ async function startServer() {
       res.json({ success: true });
     } catch (error: any) {
       console.error('Error saving delivery settings:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Middleware to verify driver token
+  const verifyDriver = async (req: any, res: any, next: any) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Não autorizado: Token não informado' });
+    }
+    const idToken = authHeader.split('Bearer ')[1];
+    try {
+      const decodedToken = await authAdmin.verifyIdToken(idToken);
+      const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+      const userData = userDoc.data();
+
+      if (!userData) {
+        return res.status(403).json({ error: 'Acesso negado: Perfil do usuário não encontrado' });
+      }
+
+      const isDriverRole = userData.role === 'delivery_driver' || 
+                           userData.role === 'entregador' || 
+                           userData.tipo_usuario === 'delivery_driver' || 
+                           userData.tipo_usuario === 'entregador';
+
+      if (!isDriverRole) {
+        return res.status(403).json({ error: 'Acesso negado: Perfil de entregador necessário' });
+      }
+
+      let restaurantId = userData.restaurantId;
+
+      if (!restaurantId) {
+        const driverQuery = await db.collectionGroup('drivers').where('userId', '==', decodedToken.uid).limit(1).get();
+        if (!driverQuery.empty) {
+          restaurantId = driverQuery.docs[0].data().restaurantId;
+        }
+      }
+
+      if (!restaurantId) {
+        return res.status(403).json({ error: 'Entregador não está vinculado a nenhum restaurante' });
+      }
+
+      req.driver = {
+        id: decodedToken.uid,
+        uid: decodedToken.uid,
+        restaurantId,
+        name: userData.nome || decodedToken.name || 'Entregador',
+        phone: userData.phone || userData.telefone || '',
+        email: decodedToken.email || userData.email || ''
+      };
+      next();
+    } catch (error: any) {
+      console.error('Error verifying driver token:', error);
+      res.status(401).json({ error: `Não autorizado: ${error.message}` });
+    }
+  };
+
+  // POST: Assign a driver to an order
+  app.post('/api/restaurant/orders/:orderId/assign-driver', verifyRestaurant, async (req: any, res: any) => {
+    const { orderId } = req.params;
+    const { driverId } = req.body;
+    const restaurantId = req.user.restaurantId;
+
+    if (!driverId) {
+      return res.status(400).json({ error: 'driverId é obrigatório' });
+    }
+
+    try {
+      const driverRef = db.collection('restaurants').doc(restaurantId).collection('drivers').doc(driverId);
+      const driverDoc = await driverRef.get();
+
+      if (!driverDoc.exists) {
+        return res.status(404).json({ error: 'Entregador não encontrado neste restaurante' });
+      }
+
+      const driverData = driverDoc.data()!;
+      if (driverData.status !== 'ACTIVE') {
+        return res.status(400).json({ error: 'Este entregador está inativo' });
+      }
+
+      const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
+      const orderDoc = await orderRef.get();
+
+      if (!orderDoc.exists) {
+        return res.status(404).json({ error: 'Pedido não encontrado' });
+      }
+
+      const orderData = orderDoc.data()!;
+      const now = new Date().toISOString();
+
+      const driverName = driverData.name || driverData.nickname || 'Entregador';
+      const driverPhone = driverData.phone || '';
+
+      const batch = db.batch();
+
+      const orderUpdates = {
+        driverId: driverId,
+        assignedDriverId: driverId,
+        entregador_id: driverId,
+        driverName: driverName,
+        driverPhone: driverPhone,
+        deliveryStatus: 'ASSIGNED',
+        canonicalStatus: 'ASSIGNED',
+        status_entrega: 'waiting',
+        status: 'pronto',
+        assignedAt: now,
+        updated_at: now,
+        assignedBy: req.user.uid
+      };
+
+      batch.update(orderRef, orderUpdates);
+
+      const deliveryRef = db.collection('restaurants').doc(restaurantId).collection('deliveries').doc(orderId);
+      const deliverySnapshot = {
+        id: orderId,
+        orderId: orderId,
+        restaurantId: restaurantId,
+        driverId: driverId,
+        assignedDriverId: driverId,
+        driverName: driverName,
+        driverPhone: driverPhone,
+        cliente_id: orderData.cliente_id || '',
+        cliente_nome: orderData.cliente_nome || 'Cliente',
+        cliente_telefone: orderData.cliente_telefone || orderData.telefone || '',
+        endereco_entrega: orderData.endereco_entrega || orderData.endereco || '',
+        deliveryStatus: 'ASSIGNED',
+        canonicalStatus: 'ASSIGNED',
+        paymentStatus: orderData.pago ? 'PAID' : 'PENDING',
+        status_entrega: 'waiting',
+        status: 'pronto',
+        valor_total: orderData.valor_total || 0,
+        valor_produtos: orderData.valor_produtos || 0,
+        taxa_entrega: orderData.taxa_entrega || 0,
+        forma_pagamento: orderData.forma_pagamento || '',
+        troco: orderData.troco || null,
+        data_criacao: orderData.data_criacao || now,
+        assignedAt: now,
+        updatedAt: now
+      };
+
+      batch.set(deliveryRef, deliverySnapshot, { merge: true });
+
+      batch.update(driverRef, {
+        currentOrderId: orderId,
+        availabilityStatus: 'ON_DELIVERY',
+        updatedAt: now
+      });
+
+      await batch.commit();
+
+      try {
+        const driverUserDoc = await db.collection('users').doc(driverId).get();
+        const fcmToken = driverUserDoc.data()?.fcmToken;
+        if (fcmToken) {
+          await sendPush(
+            fcmToken,
+            "Novo Pedido Atribuído! 🛵",
+            `Você recebeu a entrega do pedido #${orderId.slice(-6).toUpperCase()}. Abra o app para aceitar/iniciar a rota.`,
+            orderId,
+            "delivery_assigned"
+          );
+        }
+      } catch (pushErr) {
+        console.error('Error sending push to driver:', pushErr);
+      }
+
+      res.json({ success: true, message: 'Entregador atribuído com sucesso' });
+    } catch (error: any) {
+      console.error('Error assigning driver:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST: Execute driver delivery action
+  app.post('/api/driver/orders/:orderId/action', verifyDriver, async (req: any, res: any) => {
+    const { orderId } = req.params;
+    const { action, failureReason } = req.body;
+    const driver = req.driver;
+    const restaurantId = driver.restaurantId;
+
+    if (!action || !['ACCEPT', 'REJECT', 'START', 'DELIVER', 'FAIL'].includes(action)) {
+      return res.status(400).json({ error: 'Ação inválida. Use ACCEPT, REJECT, START, DELIVER ou FAIL' });
+    }
+
+    try {
+      const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
+      const orderDoc = await orderRef.get();
+
+      if (!orderDoc.exists) {
+        return res.status(404).json({ error: 'Pedido não encontrado' });
+      }
+
+      const orderData = orderDoc.data()!;
+
+      const isAssignedToThisDriver = 
+        orderData.driverId === driver.id || 
+        orderData.assignedDriverId === driver.id || 
+        orderData.entregador_id === driver.id;
+
+      if (!isAssignedToThisDriver) {
+        return res.status(403).json({ error: 'Este pedido não está atribuído a você' });
+      }
+
+      const now = new Date().toISOString();
+      const batch = db.batch();
+      const driverRef = db.collection('restaurants').doc(restaurantId).collection('drivers').doc(driver.id);
+      const deliveryRef = db.collection('restaurants').doc(restaurantId).collection('deliveries').doc(orderId);
+
+      let orderUpdates: any = { updated_at: now };
+      let deliveryUpdates: any = { updatedAt: now };
+
+      if (action === 'ACCEPT') {
+        orderUpdates.deliveryStatus = 'ACCEPTED';
+        orderUpdates.acceptedAt = now;
+
+        deliveryUpdates.deliveryStatus = 'ACCEPTED';
+        deliveryUpdates.acceptedAt = now;
+      } else if (action === 'REJECT') {
+        orderUpdates.deliveryStatus = 'REJECTED';
+        orderUpdates.canonicalStatus = 'UNASSIGNED';
+        orderUpdates.driverId = null;
+        orderUpdates.assignedDriverId = null;
+        orderUpdates.entregador_id = null;
+        orderUpdates.driverName = null;
+        orderUpdates.status_entrega = 'waiting';
+
+        deliveryUpdates.deliveryStatus = 'REJECTED';
+        deliveryUpdates.canonicalStatus = 'UNASSIGNED';
+        deliveryUpdates.driverId = null;
+        deliveryUpdates.assignedDriverId = null;
+        deliveryUpdates.status_entrega = 'waiting';
+
+        batch.update(driverRef, {
+          currentOrderId: null,
+          availabilityStatus: 'ONLINE',
+          updatedAt: now
+        });
+      } else if (action === 'START') {
+        orderUpdates.deliveryStatus = 'IN_TRANSIT';
+        orderUpdates.canonicalStatus = 'IN_TRANSIT';
+        orderUpdates.status_entrega = 'out_for_delivery';
+        orderUpdates.status = 'delivering';
+        orderUpdates.startedAt = now;
+        orderUpdates.horario_saida = now;
+
+        deliveryUpdates.deliveryStatus = 'IN_TRANSIT';
+        deliveryUpdates.canonicalStatus = 'IN_TRANSIT';
+        deliveryUpdates.status_entrega = 'out_for_delivery';
+        deliveryUpdates.status = 'delivering';
+        deliveryUpdates.startedAt = now;
+        deliveryUpdates.horario_saida = now;
+
+        batch.update(driverRef, {
+          currentOrderId: orderId,
+          availabilityStatus: 'ON_DELIVERY',
+          updatedAt: now
+        });
+      } else if (action === 'DELIVER') {
+        const isPrepaid = orderData.pago === true || orderData.paymentStatus === 'PAID' || orderData.paymentStatus === 'SETTLED';
+        const paymentCollectedByDriver = req.body.paymentCollectedByDriver === true;
+        const paymentNotCollected = req.body.paymentCollectedByDriver === false;
+        const paymentNotCollectedReason = req.body.paymentNotCollectedReason || failureReason || 'Não informado';
+
+        orderUpdates.deliveredAt = now;
+        orderUpdates.horario_entrega = now;
+        deliveryUpdates.deliveredAt = now;
+        deliveryUpdates.horario_entrega = now;
+
+        if (isPrepaid) {
+          orderUpdates.status = 'finalizado';
+          orderUpdates.deliveryStatus = 'DELIVERED';
+          orderUpdates.canonicalStatus = 'DELIVERED';
+          orderUpdates.status_entrega = 'delivered';
+          orderUpdates.paymentStatus = 'SETTLED';
+          orderUpdates.pago = true;
+          orderUpdates.data_finalizado = now;
+
+          deliveryUpdates.status = 'finalizado';
+          deliveryUpdates.deliveryStatus = 'DELIVERED';
+          deliveryUpdates.canonicalStatus = 'DELIVERED';
+          deliveryUpdates.status_entrega = 'delivered';
+          deliveryUpdates.paymentStatus = 'SETTLED';
+          deliveryUpdates.pago = true;
+        } else if (paymentCollectedByDriver) {
+          orderUpdates.status = 'entregue';
+          orderUpdates.deliveryStatus = 'DELIVERED';
+          orderUpdates.canonicalStatus = 'DELIVERED';
+          orderUpdates.status_entrega = 'delivered';
+          orderUpdates.paymentStatus = 'AWAITING_DRIVER_SETTLEMENT';
+          orderUpdates.paymentCollectedByDriver = true;
+          orderUpdates.paymentCollectedAt = now;
+          orderUpdates.paymentCollectedAmount = orderData.valor_total || 0;
+          orderUpdates.paymentCollectedMethod = orderData.forma_pagamento || 'Cobrança na Entrega';
+          orderUpdates.pago = false;
+
+          deliveryUpdates.status = 'entregue';
+          deliveryUpdates.deliveryStatus = 'DELIVERED';
+          deliveryUpdates.canonicalStatus = 'DELIVERED';
+          deliveryUpdates.status_entrega = 'delivered';
+          deliveryUpdates.paymentStatus = 'AWAITING_DRIVER_SETTLEMENT';
+          deliveryUpdates.paymentCollectedByDriver = true;
+          deliveryUpdates.paymentCollectedAt = now;
+          deliveryUpdates.paymentCollectedAmount = orderData.valor_total || 0;
+          deliveryUpdates.paymentCollectedMethod = orderData.forma_pagamento || 'Cobrança na Entrega';
+          deliveryUpdates.pago = false;
+        } else {
+          // Payment not collected
+          orderUpdates.status = 'entregue';
+          orderUpdates.deliveryStatus = 'DELIVERED';
+          orderUpdates.canonicalStatus = 'DELIVERED';
+          orderUpdates.status_entrega = 'delivered';
+          orderUpdates.paymentStatus = 'PAYMENT_NOT_COLLECTED';
+          orderUpdates.paymentCollectedByDriver = false;
+          orderUpdates.paymentNotCollectedReason = paymentNotCollectedReason;
+          orderUpdates.pago = false;
+
+          deliveryUpdates.status = 'entregue';
+          deliveryUpdates.deliveryStatus = 'DELIVERED';
+          deliveryUpdates.canonicalStatus = 'DELIVERED';
+          deliveryUpdates.status_entrega = 'delivered';
+          deliveryUpdates.paymentStatus = 'PAYMENT_NOT_COLLECTED';
+          deliveryUpdates.paymentCollectedByDriver = false;
+          deliveryUpdates.paymentNotCollectedReason = paymentNotCollectedReason;
+          deliveryUpdates.pago = false;
+        }
+
+        const driverDocSnap = await driverRef.get();
+        const driverDocData = driverDocSnap.exists ? driverDocSnap.data() : null;
+        let nextOrderId: string | null = null;
+        let updateRoutePayload: any = {
+          totalDeliveries: FieldValue.increment(1),
+          lastDeliveryAt: now,
+          updatedAt: now
+        };
+
+        if (driverDocData?.activeRoute?.orderIds?.length) {
+          const routeOrderIds: string[] = driverDocData.activeRoute.orderIds;
+          const currentRouteIdx: number = driverDocData.activeRoute.currentIndex ?? 0;
+          const nextIdx = currentRouteIdx + 1;
+
+          if (nextIdx < routeOrderIds.length) {
+            nextOrderId = routeOrderIds[nextIdx];
+            updateRoutePayload['activeRoute.currentIndex'] = nextIdx;
+            updateRoutePayload['currentOrderId'] = nextOrderId;
+            updateRoutePayload['availabilityStatus'] = 'ON_DELIVERY';
+          } else {
+            updateRoutePayload['activeRoute'] = FieldValue.delete();
+            updateRoutePayload['currentOrderId'] = null;
+            updateRoutePayload['availabilityStatus'] = 'ONLINE';
+          }
+        } else {
+          updateRoutePayload['currentOrderId'] = null;
+          updateRoutePayload['availabilityStatus'] = 'ONLINE';
+        }
+
+        batch.update(driverRef, updateRoutePayload);
+      } else if (action === 'FAIL') {
+        orderUpdates.status = 'pronto';
+        orderUpdates.deliveryStatus = 'FAILED';
+        orderUpdates.canonicalStatus = 'FAILED';
+        orderUpdates.status_entrega = 'failed';
+        orderUpdates.assignedDriverId = null;
+        orderUpdates.driverId = null;
+        orderUpdates.entregador_id = null;
+        orderUpdates.failedAt = now;
+        orderUpdates.failureReason = failureReason || 'Não entregue';
+
+        deliveryUpdates.status = 'pronto';
+        deliveryUpdates.deliveryStatus = 'FAILED';
+        deliveryUpdates.canonicalStatus = 'FAILED';
+        deliveryUpdates.status_entrega = 'failed';
+        deliveryUpdates.assignedDriverId = null;
+        deliveryUpdates.driverId = null;
+        deliveryUpdates.failedAt = now;
+        deliveryUpdates.failureReason = failureReason || 'Não entregue';
+
+        batch.update(driverRef, {
+          currentOrderId: null,
+          availabilityStatus: 'ONLINE',
+          updatedAt: now
+        });
+      }
+
+      batch.update(orderRef, orderUpdates);
+      batch.set(deliveryRef, deliveryUpdates, { merge: true });
+
+      await batch.commit();
+
+      try {
+        if (orderData.cliente_id) {
+          const clientDoc = await db.collection('users').doc(orderData.cliente_id).get();
+          const clientFcm = clientDoc.data()?.fcmToken;
+          if (clientFcm) {
+            let title = "Atualização da Entrega 🛵";
+            let body = `Seu pedido #${orderId.slice(-6).toUpperCase()} teve uma atualização no status da entrega.`;
+            if (action === 'START') {
+              title = "Pedido a caminho! 🛵";
+              body = `O entregador ${driver.name} saiu para entregar seu pedido #${orderId.slice(-6).toUpperCase()}.`;
+            } else if (action === 'DELIVER') {
+              title = "Pedido Entregue! 🎉";
+              body = `Seu pedido #${orderId.slice(-6).toUpperCase()} foi entregue com sucesso. Bom apetite!`;
+            } else if (action === 'FAIL') {
+              title = "Problema na Entrega ⚠️";
+              body = `Ocorreu um problema com a entrega do seu pedido #${orderId.slice(-6).toUpperCase()}. Entre em contato com o restaurante.`;
+            }
+            await sendPush(clientFcm, title, body, orderId, `delivery_${action.toLowerCase()}`, '/orders');
+          }
+        }
+      } catch (pErr) {
+        console.error('Error sending client push:', pErr);
+      }
+
+      res.json({ success: true, action, message: `Ação ${action} realizada com sucesso` });
+    } catch (error: any) {
+      console.error('Error handling driver action:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST: Start route with multiple orders
+  app.post('/api/driver/routes/start', verifyDriver, async (req: any, res: any) => {
+    const { orderIds, orderedOrderIds, clientActionId } = req.body;
+    const driver = req.driver;
+    const restaurantId = driver.restaurantId;
+
+    const routeOrders = orderedOrderIds || orderIds;
+
+    if (!Array.isArray(routeOrders) || routeOrders.length === 0) {
+      return res.status(400).json({ error: 'Nenhum pedido informado para a rota' });
+    }
+
+    try {
+      const now = new Date().toISOString();
+      const batch = db.batch();
+      const routeId = `route_${Date.now()}`;
+
+      for (const orderId of routeOrders) {
+        const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
+        const orderSnap = await orderRef.get();
+        if (!orderSnap.exists) {
+          return res.status(404).json({ error: `Pedido ${orderId} não encontrado` });
+        }
+        const orderData = orderSnap.data()!;
+        const isAssigned = orderData.driverId === driver.id || orderData.assignedDriverId === driver.id || orderData.entregador_id === driver.id;
+        if (!isAssigned) {
+          return res.status(403).json({ error: `Pedido ${orderId} não está atribuído a você` });
+        }
+
+        const updates = {
+          status: 'delivering',
+          deliveryStatus: 'IN_TRANSIT',
+          canonicalStatus: 'IN_TRANSIT',
+          status_entrega: 'out_for_delivery',
+          startedAt: now,
+          horario_saida: now,
+          updated_at: now
+        };
+
+        batch.update(orderRef, updates);
+
+        const deliveryRef = db.collection('restaurants').doc(restaurantId).collection('deliveries').doc(orderId);
+        batch.set(deliveryRef, {
+          status: 'delivering',
+          deliveryStatus: 'IN_TRANSIT',
+          canonicalStatus: 'IN_TRANSIT',
+          status_entrega: 'out_for_delivery',
+          startedAt: now,
+          horario_saida: now,
+          updatedAt: now
+        }, { merge: true });
+
+        try {
+          if (orderData.cliente_id) {
+            const clientDoc = await db.collection('users').doc(orderData.cliente_id).get();
+            const clientFcm = clientDoc.data()?.fcmToken;
+            if (clientFcm) {
+              await sendPush(
+                clientFcm,
+                "Pedido a caminho! 🛵",
+                `O entregador ${driver.name} saiu para entregar seu pedido #${orderId.slice(-6).toUpperCase()}.`,
+                orderId,
+                "delivery_in_transit"
+              );
+            }
+          }
+        } catch (pErr) {
+          console.error('Error sending push on route start:', pErr);
+        }
+      }
+
+      const driverRef = db.collection('restaurants').doc(restaurantId).collection('drivers').doc(driver.id);
+      batch.update(driverRef, {
+        activeRoute: {
+          id: routeId,
+          orderIds: routeOrders,
+          currentIndex: 0,
+          createdAt: now,
+          startedAt: now
+        },
+        currentOrderId: routeOrders[0],
+        availabilityStatus: 'ON_DELIVERY',
+        updatedAt: now
+      });
+
+      await batch.commit();
+
+      res.json({ success: true, routeId, message: 'Rota iniciada com sucesso' });
+    } catch (error: any) {
+      console.error('Error starting route:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST: Settlement of payment collected by driver
+  app.post('/api/restaurant/orders/:orderId/settle-driver-payment', verifyRestaurant, async (req: any, res: any) => {
+    const { orderId } = req.params;
+    const { receivedAmount, notes, clientActionId } = req.body;
+    const restaurantId = req.user.restaurantId;
+
+    if (receivedAmount === undefined || receivedAmount === null || Number(receivedAmount) < 0) {
+      return res.status(400).json({ error: 'O valor recebido informado é inválido' });
+    }
+
+    try {
+      const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
+      const deliveryRef = db.collection('restaurants').doc(restaurantId).collection('deliveries').doc(orderId);
+
+      const orderDoc = await orderRef.get();
+      if (!orderDoc.exists) {
+        return res.status(404).json({ error: 'Pedido não encontrado' });
+      }
+
+      const orderData = orderDoc.data()!;
+
+      // Verify status allows settlement
+      if (orderData.paymentStatus === 'SETTLED' && orderData.status === 'finalizado' && orderData.pago === true) {
+        return res.status(400).json({ error: 'Este pedido já foi baixado e finalizado anteriormente.' });
+      }
+
+      const isDelivered = orderData.deliveryStatus === 'DELIVERED' || orderData.status === 'entregue' || orderData.status === 'completed' || orderData.status === 'finalizado';
+      if (!isDelivered) {
+        return res.status(400).json({ error: 'Somente pedidos entregues podem receber baixa do pagamento.' });
+      }
+
+      const now = new Date().toISOString();
+      const numReceived = Number(receivedAmount);
+      const expectedAmount = Number(orderData.valor_total || 0);
+      const difference = numReceived - expectedAmount;
+
+      const batch = db.batch();
+
+      const orderUpdates = {
+        status: 'finalizado',
+        paymentStatus: 'SETTLED',
+        pago: true,
+        driverSettlementAt: now,
+        driverSettlementBy: req.user.uid,
+        driverSettlementAmount: numReceived,
+        driverSettlementNotes: notes || '',
+        driverSettlementDifference: difference,
+        data_finalizado: now,
+        updated_at: now
+      };
+
+      const deliveryUpdates = {
+        status: 'finalizado',
+        paymentStatus: 'SETTLED',
+        pago: true,
+        driverSettlementAt: now,
+        driverSettlementBy: req.user.uid,
+        driverSettlementAmount: numReceived,
+        driverSettlementNotes: notes || '',
+        driverSettlementDifference: difference,
+        updatedAt: now
+      };
+
+      batch.update(orderRef, orderUpdates);
+      batch.set(deliveryRef, deliveryUpdates, { merge: true });
+
+      await batch.commit();
+
+      // Log financial event
+      try {
+        await db.collection('restaurants').doc(restaurantId).collection('financialLogs').add({
+          orderId,
+          type: 'DRIVER_SETTLEMENT',
+          receivedAmount: numReceived,
+          expectedAmount,
+          difference,
+          hasDivergence: difference !== 0,
+          driverId: orderData.driverId || orderData.assignedDriverId || null,
+          driverName: orderData.driverName || 'Entregador',
+          settledBy: req.user.uid,
+          notes: notes || '',
+          clientActionId: clientActionId || null,
+          createdAt: now
+        });
+      } catch (logErr) {
+        console.warn('Error recording financial log:', logErr);
+      }
+
+      // Send push notification to driver if driver user exists
+      const driverId = orderData.driverId || orderData.assignedDriverId;
+      if (driverId) {
+        try {
+          const driverUserDoc = await db.collection('users').doc(driverId).get();
+          const driverFcm = driverUserDoc.data()?.fcmToken;
+          if (driverFcm) {
+            await sendPush(
+              driverFcm,
+              "Baixa Confirmada! 💰",
+              `A baixa do valor do pedido #${orderId.slice(-6).toUpperCase()} foi confirmada pelo restaurante.`,
+              orderId,
+              "payment_settled",
+              "/entregador"
+            );
+          }
+        } catch (dErr) {
+          console.warn('Error notifying driver of settlement:', dErr);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: 'Baixa confirmada com sucesso',
+        difference,
+        settledAt: now
+      });
+    } catch (error: any) {
+      console.error('Error settling driver payment:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST: Migration of legacy orders
+  app.post('/api/admin/migrate-orders', async (req: any, res: any) => {
+    const { dryRun = true, restaurantId } = req.body;
+
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Token de autenticação necessário' });
+    }
+
+    try {
+      const idToken = authHeader.split('Bearer ')[1];
+      const decoded = await authAdmin.verifyIdToken(idToken);
+      const userDoc = await db.collection('users').doc(decoded.uid).get();
+      const userData = userDoc.data();
+
+      if (!userData || (userData.role !== 'admin' && userData.tipo_usuario !== 'admin' && userData.role !== 'restaurant_owner')) {
+        return res.status(403).json({ error: 'Acesso negado: Permissão administrativa necessária' });
+      }
+
+      const targetRestaurantId = restaurantId || userData.restaurantId || decoded.uid;
+      const ordersRef = db.collection('restaurants').doc(targetRestaurantId).collection('orders');
+      const snapshot = await ordersRef.get();
+
+      let totalExamined = 0;
+      let totalUpdated = 0;
+      const simulationLogs: any[] = [];
+
+      const batches: any[] = [db.batch()];
+      let operationCount = 0;
+      let currentBatchIdx = 0;
+
+      for (const orderDoc of snapshot.docs) {
+        totalExamined++;
+        const data = orderDoc.data();
+        const updates: any = {};
+
+        if (!data.deliveryStatus) {
+          if (data.status === 'out_for_delivery' || data.status_entrega === 'out_for_delivery' || data.status === 'delivering') {
+            updates.deliveryStatus = 'IN_TRANSIT';
+            updates.canonicalStatus = 'IN_TRANSIT';
+          } else if (data.status === 'delivered' || data.status_entrega === 'delivered' || data.status === 'completed' || data.status === 'entregue') {
+            updates.deliveryStatus = 'DELIVERED';
+            updates.canonicalStatus = 'DELIVERED';
+          } else if (data.status === 'accepted' || data.status === 'aceito') {
+            updates.deliveryStatus = 'ACCEPTED';
+            updates.canonicalStatus = 'ASSIGNED';
+          } else if (data.driverId || data.assignedDriverId || data.entregador_id) {
+            updates.deliveryStatus = 'ASSIGNED';
+            updates.canonicalStatus = 'ASSIGNED';
+          } else {
+            updates.deliveryStatus = 'UNASSIGNED';
+            updates.canonicalStatus = 'UNASSIGNED';
+          }
+        }
+
+        if (!data.paymentStatus) {
+          if (data.pago) {
+            updates.paymentStatus = 'SETTLED';
+          } else if (data.paymentCollectedByDriver) {
+            updates.paymentStatus = 'AWAITING_DRIVER_SETTLEMENT';
+          } else {
+            updates.paymentStatus = 'PENDING';
+          }
+        }
+
+        if (!data.assignedDriverId && (data.driverId || data.entregador_id)) {
+          updates.assignedDriverId = data.driverId || data.entregador_id;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          totalUpdated++;
+          simulationLogs.push({
+            orderId: orderDoc.id,
+            original: {
+              status: data.status,
+              status_entrega: data.status_entrega,
+              pago: data.pago,
+              driverId: data.driverId
+            },
+            proposedUpdates: updates
+          });
+
+          if (!dryRun) {
+            batches[currentBatchIdx].update(orderDoc.ref, updates);
+            operationCount++;
+            if (operationCount >= 400) {
+              batches.push(db.batch());
+              currentBatchIdx++;
+              operationCount = 0;
+            }
+          }
+        }
+      }
+
+      if (!dryRun) {
+        for (const batch of batches) {
+          await batch.commit();
+        }
+      }
+
+      res.json({
+        success: true,
+        dryRun,
+        restaurantId: targetRestaurantId,
+        totalExamined,
+        totalUpdated,
+        simulationLogs: simulationLogs.slice(0, 50)
+      });
+    } catch (err: any) {
+      console.error('Error migrating orders:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST: Update driver GPS location
+  app.post('/api/driver/location', verifyDriver, async (req: any, res: any) => {
+    const { latitude, longitude, accuracy, heading, speed, timestamp, activeOrderIds } = req.body;
+    const driver = req.driver;
+    const restaurantId = driver.restaurantId;
+
+    if (latitude == null || longitude == null || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return res.status(400).json({ error: 'Coordenadas de GPS inválidas' });
+    }
+
+    try {
+      const now = new Date().toISOString();
+      const recordedAt = timestamp || now;
+
+      const batch = db.batch();
+      const driverRef = db.collection('restaurants').doc(restaurantId).collection('drivers').doc(driver.id);
+
+      const locationData = {
+        latitude,
+        longitude,
+        accuracy: accuracy || 0,
+        heading: heading || null,
+        speed: speed || null,
+        recordedAt,
+        receivedAt: now
+      };
+
+      batch.update(driverRef, {
+        lastLocation: locationData,
+        updatedAt: now
+      });
+
+      if (Array.isArray(activeOrderIds) && activeOrderIds.length > 0) {
+        for (const orderId of activeOrderIds) {
+          const deliveryRef = db.collection('restaurants').doc(restaurantId).collection('deliveries').doc(orderId);
+          batch.set(deliveryRef, {
+            currentLocation: locationData,
+            updatedAt: now
+          }, { merge: true });
+        }
+      }
+
+      await batch.commit();
+
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('Error updating driver location:', error);
       res.status(500).json({ error: error.message });
     }
   });

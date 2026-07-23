@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { 
-  ShoppingBag, Clock, User, MapPin, CreditCard, Save, Edit2, ArrowLeft, Printer, X, Check, RefreshCcw, Bike
+  ShoppingBag, Clock, User, MapPin, CreditCard, Save, Edit2, ArrowLeft, Printer, X, Check, RefreshCcw, Bike, DollarSign, AlertCircle, ShieldCheck, FileText
 } from 'lucide-react';
 import { getRestaurantStatusText, getStatusColor } from './OrderListItem';
 import { db } from '../../../firebase';
 import { collection, query, where, getDocs, doc, updateDoc, setDoc } from 'firebase/firestore';
 import { useAuth } from '../../../contexts/AuthContext';
+import { getPaymentStatusInfo } from '../../../utils/paymentStatus';
 
 interface OrderDetailsProps {
   selectedOrder: any;
@@ -60,12 +61,80 @@ const OrderDetails = ({
   const [refundAmount, setRefundAmount] = useState('');
   const [isRefunding, setIsRefunding] = useState(false);
 
+  // Settlement modal state
+  const [showSettlementModal, setShowSettlementModal] = useState(false);
+  const [settlementAmount, setSettlementAmount] = useState<string>('');
+  const [settlementNotes, setSettlementNotes] = useState<string>('');
+  const [isSettling, setIsSettling] = useState(false);
+  const [settleError, setSettleError] = useState<string | null>(null);
+
   const { user } = useAuth();
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [restaurantDrivers, setRestaurantDrivers] = useState<any[]>([]);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [assigningDriverId, setAssigningDriverId] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
+
+  const paymentInfo = getPaymentStatusInfo(
+    selectedOrder?.paymentStatus,
+    selectedOrder?.pago,
+    selectedOrder?.forma_pagamento,
+    selectedOrder?.paymentCollectedByDriver
+  );
+
+  const handleOpenSettlement = () => {
+    setSettlementAmount(selectedOrder?.valor_total?.toFixed(2) || '0.00');
+    setSettlementNotes('');
+    setSettleError(null);
+    setShowSettlementModal(true);
+  };
+
+  const handleConfirmSettlement = async () => {
+    if (!selectedOrder?.id || !user) return;
+
+    const parsedVal = parseFloat(settlementAmount.replace(',', '.'));
+    if (isNaN(parsedVal) || parsedVal < 0) {
+      setSettleError('Informe um valor de baixa válido (não pode ser negativo).');
+      return;
+    }
+
+    setIsSettling(true);
+    setSettleError(null);
+
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/restaurant/orders/${selectedOrder.id}/settle-driver-payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          settlementNotes: settlementNotes.trim(),
+          receivedAmount: parsedVal
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao realizar baixa com entregador.');
+      }
+
+      setSelectedOrder({
+        ...selectedOrder,
+        pago: true,
+        paymentStatus: 'SETTLED',
+        settledAt: new Date().toISOString()
+      });
+
+      setShowSettlementModal(false);
+    } catch (err: any) {
+      console.error('Error settling driver payment:', err);
+      setSettleError(err.message || 'Erro ao realizar baixa.');
+    } finally {
+      setIsSettling(false);
+    }
+  };
 
   const fetchDrivers = async () => {
     if (!selectedOrder?.restaurant_id) return;
@@ -90,84 +159,40 @@ const OrderDetails = ({
     setAssigningDriverId(driver.id);
     setAssignError(null);
     try {
-      const now = new Date().toISOString();
-      const orderRef = doc(db, 'restaurants', selectedOrder.restaurant_id, 'orders', selectedOrder.id);
-      
-      const assignmentData = {
-        deliveryType: "OWN_DELIVERY",
-        assignedDriverId: driver.userId,
-        assignedDriverName: driver.name,
-        assignedDriverPhone: driver.phone,
-        deliveryStatus: "ASSIGNED",
-        assignedAt: now,
-        assignedBy: user?.uid || 'Restaurante',
-        
-        // Compatibility fields for the driver interface filters
-        driverId: driver.userId,
-        entregador_id: driver.userId,
-        driverName: driver.name,
-        status_entrega: "pending"
-      };
-
-      await updateDoc(orderRef, assignmentData);
-
-      // Create a document inside restaurants/{restaurantId}/deliveries/{deliveryId}
-      const deliveryDocRef = doc(db, 'restaurants', selectedOrder.restaurant_id, 'deliveries', selectedOrder.id);
-      
-      const clientName = customerData?.nome || customerData?.displayName || selectedOrder.cliente_nome || 'Cliente';
-      const clientPhone = customerData?.telefone || selectedOrder.cliente_telefone || '';
-      
-      const getDeliveryAddressString = () => {
-        if (typeof selectedOrder.endereco_entrega === 'string') {
-          return selectedOrder.endereco_entrega;
-        }
-        const addr = selectedOrder.endereco_entrega || addressData;
-        if (!addr) return 'Endereço não especificado';
-        return `${addr.rua || addr.address || ''}, ${addr.numero || ''} - ${addr.bairro || ''}, ${addr.cidade || ''}/${addr.estado || ''}`;
-      };
-
-      await setDoc(deliveryDocRef, {
-        orderId: selectedOrder.id,
-        restaurantId: selectedOrder.restaurant_id,
-        driverId: driver.userId,
-        driverName: driver.name,
-        customerName: clientName,
-        customerPhone: clientPhone,
-        deliveryAddress: getDeliveryAddressString(),
-        paymentMethod: selectedOrder.forma_pagamento || 'Não especificada',
-        totalAmount: selectedOrder.valor_total || 0,
-        status: "ASSIGNED",
-        assignedAt: now,
-        acceptedAt: null,
-        pickedUpAt: null,
-        deliveredAt: null,
-        failedAt: null,
-        createdAt: now,
-        updatedAt: now
+      const token = await user?.getIdToken();
+      const response = await fetch(`/api/restaurant/orders/${selectedOrder.id}/assign-driver`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          driverId: driver.userId || driver.id
+        })
       });
 
-      // Create log document inside restaurants/{restaurantId}/deliveryLogs/{logId}
-      const logRef = doc(collection(db, 'restaurants', selectedOrder.restaurant_id, 'deliveryLogs'));
-      await setDoc(logRef, {
-        orderId: selectedOrder.id,
-        deliveryId: selectedOrder.id,
-        driverId: driver.userId,
-        action: 'ASSIGNED',
-        message: `Restaurante atribuiu o pedido para o entregador ${driver.name}`,
-        createdAt: now,
-        createdBy: user?.uid || 'restaurant'
-      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao atribuir entregador');
+      }
 
       // Update local state reactive propagation immediately
       setSelectedOrder({
         ...selectedOrder,
-        ...assignmentData
+        assignedDriverId: driver.userId || driver.id,
+        assignedDriverName: driver.name,
+        assignedDriverPhone: driver.phone,
+        driverId: driver.userId || driver.id,
+        driverName: driver.name,
+        deliveryStatus: "ASSIGNED",
+        canonicalStatus: "ASSIGNED",
+        status_entrega: "waiting"
       });
 
       setIsAssignModalOpen(false);
     } catch (err: any) {
       console.error("Erro ao atribuir entregador:", err);
-      setAssignError(err.message || "Erro de conexão ao atribuir. Verifique suas regras ou permissões.");
+      setAssignError(err.message || "Erro de conexão ao atribuir.");
     } finally {
       setAssigningDriverId(null);
     }
@@ -205,34 +230,91 @@ const OrderDetails = ({
   return (
     <div className="flex flex-col w-full flex-1 min-h-0 overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 p-6 border-b border-stone-100 bg-stone-50 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => setSelectedOrder(null)}
-            className="lg:hidden p-2 -ml-2 text-stone-500 hover:text-stone-800 hover:bg-stone-200 rounded-xl transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <h2 className="text-xl font-bold text-stone-800">Pedido #{selectedOrder.id.slice(-6).toUpperCase()}</h2>
-            <p className="text-sm text-stone-500">Feito em {new Date(selectedOrder.data_criacao).toLocaleString()}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="relative group">
-            <button className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-sm font-bold transition-colors" onClick={() => handlePrint(selectedOrder)}>
-              <Printer className="w-4 h-4" /> Imprimir
+      <div className="shrink-0 p-6 border-b border-stone-100 bg-stone-50 flex flex-col gap-4">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setSelectedOrder(null)}
+              className="lg:hidden p-2 -ml-2 text-stone-500 hover:text-stone-800 hover:bg-stone-200 rounded-xl transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="absolute right-0 top-full mt-2 bg-white border border-stone-200 rounded-xl shadow-lg overflow-hidden hidden group-hover:block z-10 w-32">
-              <button onClick={() => handlePrint(selectedOrder, '48mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">48mm</button>
-              <button onClick={() => handlePrint(selectedOrder, '72mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">72mm</button>
-              <button onClick={() => handlePrint(selectedOrder, '112mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">112mm</button>
+            <div>
+              <h2 className="text-xl font-bold text-stone-800">Pedido #{selectedOrder.id.slice(-6).toUpperCase()}</h2>
+              <p className="text-sm text-stone-500">Feito em {new Date(selectedOrder.data_criacao).toLocaleString()}</p>
             </div>
           </div>
-          <span className={`text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider ${getStatusColor(selectedOrder.status)}`}>
-            {getRestaurantStatusText(selectedOrder.status)}
-          </span>
+          <div className="flex items-center gap-3">
+            <div className="relative group">
+              <button className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-sm font-bold transition-colors" onClick={() => handlePrint(selectedOrder)}>
+                <Printer className="w-4 h-4" /> Imprimir
+              </button>
+              <div className="absolute right-0 top-full mt-2 bg-white border border-stone-200 rounded-xl shadow-lg overflow-hidden hidden group-hover:block z-10 w-32">
+                <button onClick={() => handlePrint(selectedOrder, '48mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">48mm</button>
+                <button onClick={() => handlePrint(selectedOrder, '72mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">72mm</button>
+                <button onClick={() => handlePrint(selectedOrder, '112mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">112mm</button>
+              </div>
+            </div>
+            <span className={`text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider ${getStatusColor(selectedOrder.status)}`}>
+              {getRestaurantStatusText(selectedOrder.status)}
+            </span>
+          </div>
         </div>
+
+        {/* Status Badges Breakdown */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-1 border-t border-stone-200/60">
+          <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+            <span className="text-stone-400 font-bold uppercase text-[10px]">Status Pedido:</span>
+            <span className="font-extrabold text-stone-800 uppercase">{getRestaurantStatusText(selectedOrder.status)}</span>
+          </div>
+
+          <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+            <span className="text-stone-400 font-bold uppercase text-[10px]">Entrega:</span>
+            <span className={`font-extrabold uppercase ${
+              selectedOrder.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' :
+              selectedOrder.deliveryStatus === 'PICKED_UP' ? 'text-blue-700' :
+              selectedOrder.deliveryStatus === 'ACCEPTED' ? 'text-indigo-700' :
+              selectedOrder.deliveryStatus === 'FAILED' ? 'text-rose-700' : 'text-stone-600'
+            }`}>
+              {selectedOrder.deliveryStatus === 'DELIVERED' ? 'Entregue' :
+               selectedOrder.deliveryStatus === 'PICKED_UP' ? 'Em Rota' :
+               selectedOrder.deliveryStatus === 'ACCEPTED' ? 'Aceito' :
+               selectedOrder.deliveryStatus === 'FAILED' ? 'Falhou' :
+               selectedOrder.assignedDriverId ? 'Atribuído' : 'Não Atribuído'}
+            </span>
+          </div>
+
+          <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+            <span className="text-stone-400 font-bold uppercase text-[10px]">Financeiro:</span>
+            <span className={`font-extrabold uppercase ${paymentInfo.color}`}>
+              {paymentInfo.label}
+            </span>
+          </div>
+        </div>
+
+        {/* Banner de Aguardando Baixa do Entregador */}
+        {(selectedOrder.paymentStatus === 'AWAITING_DRIVER_SETTLEMENT' || (selectedOrder.paymentCollectedByDriver && !selectedOrder.pago)) && (
+          <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 mt-0.5">
+                <DollarSign className="w-5 h-5 stroke-[2.5]" />
+              </div>
+              <div>
+                <h4 className="font-extrabold text-sm text-amber-950">Pagamento Recebido pelo Entregador</h4>
+                <p className="text-xs text-amber-800 font-medium leading-relaxed mt-0.5">
+                  O entregador <strong>{selectedOrder.assignedDriverName || selectedOrder.driverName || 'designado'}</strong> confirmou o recebimento na entrega. Aguardando repasse ao restaurante.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleOpenSettlement}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-200 shrink-0 self-start sm:self-center"
+            >
+              Confirmar Baixa
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -738,6 +820,113 @@ const OrderDetails = ({
                   {isRefunding ? 'Processando...' : 'Confirmar Estorno'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Baixa com Entregador */}
+      {showSettlementModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in text-left">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl flex flex-col space-y-4">
+            <div className="flex justify-between items-center pb-3 border-b border-stone-100">
+              <div className="flex items-center gap-2 text-emerald-700">
+                <DollarSign className="w-6 h-6 stroke-[2.5]" />
+                <h3 className="text-lg font-bold text-stone-900">Baixa Financeira com Entregador</h3>
+              </div>
+              <button 
+                onClick={() => setShowSettlementModal(false)}
+                className="p-1.5 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-full transition-colors"
+                disabled={isSettling}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-100 space-y-1.5 text-xs">
+              <p className="text-stone-600">
+                <strong className="text-stone-800">Pedido:</strong> #{selectedOrder.id.slice(-6).toUpperCase()}
+              </p>
+              <p className="text-stone-600">
+                <strong className="text-stone-800">Entregador:</strong> {selectedOrder.assignedDriverName || selectedOrder.driverName || 'Não especificado'}
+              </p>
+              <p className="text-stone-600">
+                <strong className="text-stone-800">Forma de Pagamento:</strong> <span className="uppercase font-bold">{selectedOrder.forma_pagamento || 'Dinheiro/Entrega'}</span>
+              </p>
+              <p className="text-stone-600">
+                <strong className="text-stone-800">Valor Total do Pedido:</strong> <span className="font-extrabold text-emerald-700">R$ {Number(selectedOrder.valor_total || 0).toFixed(2)}</span>
+              </p>
+            </div>
+
+            {settleError && (
+              <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{settleError}</span>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  Valor Repassado / Confirmado (R$)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={settlementAmount}
+                  onChange={(e) => setSettlementAmount(e.target.value)}
+                  className="w-full p-3 border border-stone-200 rounded-xl font-bold text-stone-900 focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+                  placeholder="0.00"
+                  disabled={isSettling}
+                />
+                {parseFloat(settlementAmount || '0') !== Number(selectedOrder.valor_total || 0) && (
+                  <p className="text-[11px] text-amber-700 font-medium mt-1">
+                    ⚠️ Atenção: O valor digitado difere do valor total do pedido.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 mb-1">
+                  Observações de Baixa (opcional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={settlementNotes}
+                  onChange={(e) => setSettlementNotes(e.target.value)}
+                  className="w-full p-2.5 border border-stone-200 rounded-xl text-xs text-stone-800 focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
+                  placeholder="Ex: Valor recebido integralmente em dinheiro no caixa..."
+                  disabled={isSettling}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2 border-t border-stone-100">
+              <button
+                onClick={() => setShowSettlementModal(false)}
+                className="flex-1 py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-colors"
+                disabled={isSettling}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmSettlement}
+                disabled={isSettling}
+                className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-200 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isSettling ? (
+                  <>
+                    <RefreshCcw className="w-4 h-4 animate-spin" />
+                    Baixando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Confirmar Baixa
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

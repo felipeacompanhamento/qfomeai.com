@@ -231,6 +231,31 @@ service cloud.firestore {
       );
     }
 
+    // Deliveries (Collection Group)
+    match /{path=**}/deliveries/{deliveryId} {
+      allow read: if isAuthenticated() && (
+        isRestaurantOwner(resource.data.restaurantId) ||
+        isAdmin() ||
+        resource.data.driverId == request.auth.uid ||
+        resource.data.assignedDriverId == request.auth.uid ||
+        resource.data.customerId == request.auth.uid ||
+        resource.data.cliente_id == request.auth.uid
+      );
+      allow write: if isAuthenticated() && (
+        isRestaurantOwner(resource.data.restaurantId) ||
+        isAdmin()
+      );
+    }
+
+    // Drivers (Collection Group)
+    match /{path=**}/drivers/{driverId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == driverId ||
+        isRestaurantOwner(resource.data.restaurantId) ||
+        isAdmin()
+      );
+    }
+
     // Orders
     match /restaurants/{restaurantId}/orders/{orderId} {
       allow read: if isAuthenticated() && (

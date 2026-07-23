@@ -270,14 +270,33 @@ export default function Checkout() {
       const restDoc = await getDoc(doc(db, 'restaurants', items[0].restaurant_id));
       const currentRestaurantData = restDoc.exists() ? restDoc.data() : restaurantData;
 
-      const selectedAddressData = deliveryType === 'entrega' ? addresses.find(a => a.id === selectedAddress) : null;
+      const selectedAddressData = addresses.find(a => a.id === selectedAddress);
+
+      const addressSnapshot = selectedAddressData ? {
+        rua: selectedAddressData.rua || selectedAddressData.endereco || '',
+        numero: selectedAddressData.numero || 'S/N',
+        bairro: selectedAddressData.bairro || '',
+        cidade: selectedAddressData.cidade || '',
+        estado: selectedAddressData.estado || '',
+        complemento: selectedAddressData.complemento || '',
+        referencia: selectedAddressData.referencia || ''
+      } : null;
 
       const orderData = {
         cliente_id: user.uid,
         cliente_nome: profile?.nome || user.displayName || 'Cliente',
+        cliente_telefone: profile?.telefone || profile?.phone || '',
         restaurant_id: items[0].restaurant_id,
         restaurant_nome: items[0].restaurant_nome,
         status: 'pendente',
+        status_entrega: 'waiting',
+        deliveryStatus: 'UNASSIGNED',
+        canonicalStatus: 'UNASSIGNED',
+        paymentStatus: 'PENDING',
+        driverId: null,
+        assignedDriverId: null,
+        entregador_id: null,
+        driverName: null,
         tipo_entrega: deliveryType,
         valor_produtos: total,
         taxa_entrega: deliveryFee,
@@ -288,15 +307,8 @@ export default function Checkout() {
         forma_pagamento: paymentMethod,
         troco: paymentMethod === 'dinheiro' ? changeAmount : null,
         endereco_id: deliveryType === 'entrega' ? selectedAddress : null,
-        endereco: selectedAddressData ? {
-          rua: selectedAddressData.rua,
-          numero: selectedAddressData.numero,
-          bairro: selectedAddressData.bairro,
-          cidade: selectedAddressData.cidade,
-          estado: selectedAddressData.estado,
-          complemento: selectedAddressData.complemento || '',
-          referencia: selectedAddressData.referencia || ''
-        } : null,
+        endereco: addressSnapshot,
+        endereco_entrega: addressSnapshot,
         cidade: deliveryType === 'entrega' ? selectedAddressData?.cidade : currentRestaurantData?.endereco?.cidade,
         estado: deliveryType === 'entrega' ? selectedAddressData?.estado : currentRestaurantData?.endereco?.estado,
         data_criacao: new Date().toISOString(),

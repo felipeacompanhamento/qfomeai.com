@@ -16,6 +16,7 @@ import { playNotificationSound, registerPushNotifications, playChefBell } from '
 import ReportModal from '../../components/ReportModal';
 import QRCode from 'qrcode';
 import { gerarPix } from '../../utils/pixUtils';
+import CustomerDeliveryTrackingBlock from '../../components/delivery/CustomerDeliveryTrackingBlock';
 
 function PixPaymentInfo({ order }: { order: any }) {
   const [pixData, setPixData] = useState<{
@@ -585,6 +586,12 @@ export default function Orders() {
                       </div>
                     </div>
                   )}
+
+                  <CustomerDeliveryTrackingBlock 
+                    restaurantId={order.restaurant_id} 
+                    orderId={order.id} 
+                    customerAddress={order.endereco_entrega} 
+                  />
 
                   <div className="mt-4 flex justify-between items-center">
                     <button onClick={() => setSelectedOrder(order)} className="text-emerald-600 font-bold text-sm hover:underline">Ver Detalhes</button>
