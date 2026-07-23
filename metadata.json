@@ -1,0 +1,5 @@
+{
+  "name": "Qfomeai",
+  "description": "Plataforma completa de marketplace de delivery para restaurantes locais.",
+  "requestFramePermissions": ["notifications"]
+}

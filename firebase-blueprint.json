@@ -1,0 +1,479 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile data for clients, restaurants, and admins.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "nome": { "type": "string" },
+        "telefone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "tipo_usuario": { "type": "string", "enum": ["cliente", "restaurante", "admin"] },
+        "status_conta": { "type": "string", "enum": ["ativo", "bloqueado", "pendente_aprovacao"] },
+        "data_criacao": { "type": "string", "format": "date-time" },
+        "fcmToken": { "type": "string" }
+      },
+      "required": ["uid", "nome", "email", "telefone", "tipo_usuario"]
+    },
+    "Endereco": {
+      "title": "Endereco",
+      "description": "Customer delivery address.",
+      "type": "object",
+      "properties": {
+        "rua": { "type": "string" },
+        "numero": { "type": "string" },
+        "complemento": { "type": "string" },
+        "bairro": { "type": "string" },
+        "cidade": { "type": "string" },
+        "estado": { "type": "string" },
+        "cep": { "type": "string" },
+        "referencia": { "type": "string" }
+      },
+      "required": ["rua", "numero", "bairro", "cidade", "estado", "cep"]
+    },
+    "Restaurant": {
+      "title": "Restaurant",
+      "description": "Restaurant profile and settings.",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "nome_fantasia": { "type": "string" },
+        "nome_proprietario": { "type": "string" },
+        "cpf_cnpj": { "type": "string" },
+        "descricao": { "type": "string" },
+        "logo_url": { "type": "string" },
+        "capa_url": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "categorias": { "type": "array", "items": { "type": "string" } },
+        "endereco": {
+          "type": "object",
+          "properties": {
+            "rua": { "type": "string" },
+            "numero": { "type": "string" },
+            "complemento": { "type": "string" },
+            "bairro": { "type": "string" },
+            "cidade": { "type": "string" },
+            "estado": { "type": "string" },
+            "cep": { "type": "string" }
+          }
+        },
+        "horarios_funcionamento": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dia_semana": { "type": "integer" },
+              "abertura": { "type": "string" },
+              "fechamento": { "type": "string" }
+            }
+          }
+        },
+        "bairros_entrega": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "bairro_id": { "type": "string" },
+              "taxa_entrega": { "type": "number" }
+            }
+          }
+        },
+        "status_aprovacao": { "type": "string", "enum": ["pendente_aprovacao", "aprovado", "rejeitado"] },
+        "status_operacao": { "type": "string", "enum": ["aberto", "fechado"] },
+        "tempo_min_entrega": { "type": "integer" },
+        "tempo_max_entrega": { "type": "integer" },
+        "tempo_max_aceite": { "type": "integer" },
+        "tipo_entrega": { "type": "string", "enum": ["somente_retirada", "somente_entrega", "ambos"] },
+        "formas_pagamento": {
+          "type": "object",
+          "properties": {
+            "dinheiro": {
+              "type": "object",
+              "properties": { "delivery": { "type": "boolean" }, "retirada": { "type": "boolean" } }
+            },
+            "pix": {
+              "type": "object",
+              "properties": { "delivery": { "type": "boolean" }, "retirada": { "type": "boolean" } }
+            },
+            "credito": {
+              "type": "object",
+              "properties": { "delivery": { "type": "boolean" }, "retirada": { "type": "boolean" } }
+            },
+            "debito": {
+              "type": "object",
+              "properties": { "delivery": { "type": "boolean" }, "retirada": { "type": "boolean" } }
+            }
+          }
+        },
+        "mercadopago_access_token": { "type": "string" },
+        "mercadopago_public_key": { "type": "string" },
+        "mercadopago_enabled": { "type": "boolean" },
+        "data_criacao": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nome", "nome_fantasia", "nome_proprietario", "cpf_cnpj", "status_aprovacao"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Product in a restaurant's menu.",
+      "type": "object",
+      "properties": {
+        "restaurant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "descricao": { "type": "string" },
+        "preco": { "type": "number" },
+        "imagem_url": { "type": "string" },
+        "ativo": { "type": "boolean" }
+      },
+      "required": ["restaurant_id", "nome", "preco", "imagem_url"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Delivery order details.",
+      "type": "object",
+      "properties": {
+        "cliente_id": { "type": "string" },
+        "restaurant_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "aceito", "preparando", "saiu_entrega", "finalizado", "cancelado", "rejeitado"] },
+        "valor_produtos": { "type": "number" },
+        "taxa_entrega": { "type": "number" },
+        "valor_total": { "type": "number" },
+        "forma_pagamento": { "type": "string" },
+        "data_criacao": { "type": "string", "format": "date-time" },
+        "data_aceite": { "type": "string", "format": "date-time" },
+        "data_finalizado": { "type": "string", "format": "date-time" },
+        "motivo_cancelamento": { "type": "string" },
+        "mercadopago_payment_id": { "type": "string", "description": "ID do pagamento no Mercado Pago" },
+        "pix_copia_cola": { "type": "string", "description": "Código PIX copia e cola gerado pelo Mercado Pago" },
+        "pix_qr_code_base64": { "type": "string", "description": "QR Code em base64 gerado pelo Mercado Pago" },
+        "mercadopago_status": { "type": "string", "description": "Status do pagamento no Mercado Pago" }
+      },
+      "required": ["cliente_id", "restaurant_id", "status", "valor_total"]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "Application banners.",
+      "type": "object",
+      "properties": {
+        "titulo": { "type": "string" },
+        "image_url": { "type": "string" },
+        "bannerUrl": { "type": "string" },
+        "link": { "type": "string" },
+        "data_inicio_exibicao": { "type": "string", "format": "date-time" },
+        "data_fim_exibicao": { "type": "string", "format": "date-time" },
+        "ativo": { "type": "boolean" },
+        "data_criacao": { "type": "string", "format": "date-time" }
+      },
+      "required": ["titulo", "ativo"]
+    },
+    "Driver": {
+      "title": "Driver",
+      "description": "Delivery driver registered by a restaurant.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "nickname": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "cpf": { "type": "string" },
+        "vehicleType": { "type": "string", "enum": ["moto", "bicicleta", "carro", "a_pe"] },
+        "vehiclePlate": { "type": "string" },
+        "observations": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "availabilityStatus": { "type": "string", "enum": ["OFFLINE", "ONLINE", "ON_DELIVERY"] },
+        "currentOrderId": { "type": "string" },
+        "totalDeliveries": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "restaurantId", "userId", "name", "phone", "email", "status"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Menu category for a restaurant.",
+      "type": "object",
+      "properties": {
+        "restaurant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "descricao": { "type": "string" },
+        "ordem": { "type": "integer" },
+        "status": { "type": "string", "enum": ["ativo", "inativo"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurant_id", "nome"]
+    },
+    "Extra": {
+      "title": "Extra",
+      "description": "Additional item/extra for products.",
+      "type": "object",
+      "properties": {
+        "restaurant_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "preco": { "type": "number" },
+        "status": { "type": "string", "enum": ["ativo", "inativo"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurant_id", "nome", "preco"]
+    },
+    "Estado": {
+      "title": "Estado",
+      "description": "Brazilian State",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "sigla": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "data_criacao": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nome", "sigla", "ativo"]
+    },
+    "Cidade": {
+      "title": "Cidade",
+      "description": "City within a State",
+      "type": "object",
+      "properties": {
+        "estado_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "data_criacao": { "type": "string", "format": "date-time" }
+      },
+      "required": ["estado_id", "nome", "ativo"]
+    },
+    "Bairro": {
+      "title": "Bairro",
+      "description": "Neighborhood within a City",
+      "type": "object",
+      "properties": {
+        "cidade_id": { "type": "string" },
+        "nome": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "data_criacao": { "type": "string", "format": "date-time" }
+      },
+      "required": ["cidade_id", "nome", "ativo"]
+    },
+    "Promotion": {
+      "title": "Promotion",
+      "description": "Promotional offers for products or categories.",
+      "type": "object",
+      "properties": {
+        "restaurant_id": { "type": "string" },
+        "tipo_alvo": { "type": "string", "enum": ["produto", "categoria"] },
+        "alvo_id": { "type": "string", "description": "ID of the product or category" },
+        "tipo_desconto": { "type": "string", "enum": ["porcentagem", "valor"] },
+        "valor_desconto": { "type": "number" },
+        "data_validade": { "type": "string", "format": "date-time" },
+        "ativo": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurant_id", "tipo_alvo", "alvo_id", "tipo_desconto", "valor_desconto", "data_validade"]
+    },
+    "OptionGroup": {
+      "title": "OptionGroup",
+      "description": "A group of options for a product (e.g., 'Choose your meat').",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "descricao": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "ordem": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nome", "restaurantId"]
+    },
+    "OptionItem": {
+      "title": "OptionItem",
+      "description": "An individual option within a group (e.g., 'Beef').",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "preco": { "type": "number" },
+        "grupoId": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nome", "preco", "grupoId", "restaurantId"]
+    },
+    "Size": {
+      "title": "Size",
+      "description": "Product size options (e.g., 'Small', 'Medium', 'Large').",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "ordem": { "type": "integer" },
+        "status": { "type": "string", "enum": ["ativo", "inativo"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nome", "ordem", "status"]
+    },
+    "IntegrationLog": {
+      "title": "IntegrationLog",
+      "description": "Logs for third-party integrations (e.g., Mercado Pago).",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["webhook", "create_payment"] },
+        "provider": { "type": "string" },
+        "action": { "type": "string" },
+        "paymentId": { "type": "string" },
+        "orderId": { "type": "string" },
+        "status": { "type": "string" },
+        "payload": { "type": "object" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "provider", "created_at"]
+    },
+    "TransacaoCarteira": {
+      "title": "TransacaoCarteira",
+      "description": "Wallet transaction historical details.",
+      "type": "object",
+      "properties": {
+        "descricao": { "type": "string" },
+        "valor": { "type": "number" },
+        "tipo": { "type": "string", "enum": ["credito", "debito"] },
+        "data": { "type": "string", "format": "date-time" }
+      },
+      "required": ["descricao", "valor", "tipo", "data"]
+    },
+    "CupomCliente": {
+      "title": "CupomCliente",
+      "description": "Active coupons of a customer.",
+      "type": "object",
+      "properties": {
+        "codigo": { "type": "string" },
+        "tipo": { "type": "string" },
+        "valor": { "type": "number" },
+        "descricao": { "type": "string" },
+        "data_resgate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" }
+      },
+      "required": ["codigo", "valor", "status"]
+    },
+    "Favorito": {
+      "title": "Favorito",
+      "description": "User favorite restaurant reference.",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" }
+      }
+    },
+    "PrestadorServico": {
+      "title": "PrestadorServico",
+      "description": "Service provider and service registration details.",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "telefone": { "type": "string" },
+        "categoria": { "type": "string" },
+        "titulo": { "type": "string" },
+        "descricao": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "cidade": { "type": "string" },
+        "cidade_id": { "type": "string" },
+        "estado": { "type": "string" },
+        "estado_id": { "type": "string" },
+        "bairro": { "type": "string" },
+        "userId": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "totalWhatsappClicks": { "type": "integer" },
+        "uniqueWhatsappInterests": { "type": "integer" },
+        "lastWhatsappClickAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nome", "telefone", "categoria", "titulo", "descricao", "cidade_id", "estado_id", "userId"]
+    },
+    "ServicoInteresseWhatsapp": {
+      "title": "ServicoInteresseWhatsapp",
+      "description": "WhatsApp contact click event log for service provider listings.",
+      "type": "object",
+      "properties": {
+        "serviceId": { "type": "string" },
+        "serviceTitle": { "type": "string" },
+        "serviceOwnerId": { "type": "string" },
+        "clickedAt": { "type": "string", "format": "date-time" },
+        "source": { "type": "string" },
+        "pagePath": { "type": "string" },
+        "visitorUserId": { "type": "string" },
+        "anonymousSessionId": { "type": "string" },
+        "approximateCity": { "type": "string" },
+        "deviceType": { "type": "string" },
+        "serviceStatus": { "type": "boolean" }
+      },
+      "required": ["serviceId", "serviceOwnerId"]
+    },
+    "Delivery": {
+      "title": "Delivery",
+      "description": "Information about a specific delivery assignment for an order.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "deliveryAddress": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["ASSIGNED", "ACCEPTED", "REFUSED", "PICKED_UP", "DELIVERED", "FAILED"] },
+        "assignedAt": { "type": "string", "format": "date-time" },
+        "acceptedAt": { "type": "string", "format": "date-time" },
+        "pickedUpAt": { "type": "string", "format": "date-time" },
+        "deliveredAt": { "type": "string", "format": "date-time" },
+        "failedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "restaurantId", "driverId", "driverName", "status", "createdAt", "updatedAt"]
+    },
+    "DeliveryLog": {
+      "title": "DeliveryLog",
+      "description": "Historical audit logs for a delivery workflow.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "deliveryId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "action": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["orderId", "deliveryId", "driverId", "action", "message", "createdAt", "createdBy"]
+    }
+  },
+  "firestore": {
+    "/estados/{estadoId}": { "schema": "Estado", "description": "States" },
+    "/cidades/{cidadeId}": { "schema": "Cidade", "description": "Cities" },
+    "/bairros/{bairroId}": { "schema": "Bairro", "description": "Neighborhoods" },
+    "/users/{userId}": { "schema": "User", "description": "User profiles" },
+    "/users/{userId}/enderecos/{enderecoId}": { "schema": "Endereco", "description": "User addresses" },
+    "/users/{userId}/transacoes_carteira/{transactionId}": { "schema": "TransacaoCarteira", "description": "User wallet transaction logs" },
+    "/users/{userId}/cupons/{cupomId}": { "schema": "CupomCliente", "description": "User coupons" },
+    "/users/{userId}/favoritos/{favoritoId}": { "schema": "Favorito", "description": "User favorite restaurants" },
+    "/restaurants/{restaurantId}": { "schema": "Restaurant", "description": "Restaurant details" },
+    "/restaurants/{restaurantId}/categories/{categoryId}": { "schema": "Category", "description": "Restaurant menu categories" },
+    "/restaurants/{restaurantId}/drivers/{driverId}": { "schema": "Driver", "description": "Restaurant drivers list" },
+    "/restaurants/{restaurantId}/extras/{extraId}": { "schema": "Extra", "description": "Restaurant product extras" },
+    "/restaurants/{restaurantId}/products/{productId}": { "schema": "Product", "description": "Restaurant products" },
+    "/restaurants/{restaurantId}/promotions/{promotionId}": { "schema": "Promotion", "description": "Restaurant promotions" },
+    "/restaurants/{restaurantId}/optionGroups/{groupId}": { "schema": "OptionGroup", "description": "Restaurant option groups" },
+    "/restaurants/{restaurantId}/optionItems/{optionId}": { "schema": "OptionItem", "description": "Restaurant option items" },
+    "/restaurants/{restaurantId}/sizes/{sizeId}": { "schema": "Size", "description": "Restaurant product sizes" },
+    "/restaurants/{restaurantId}/horarios/{horarioId}": { "schema": "object", "description": "Restaurant operating hours" },
+    "/restaurants/{restaurantId}/bairros_entrega/{bairroId}": { "schema": "object", "description": "Restaurant delivery areas" },
+    "/restaurants/{restaurantId}/integration_logs/{logId}": { "schema": "IntegrationLog", "description": "Integration transaction logs" },
+    "/restaurants/{restaurantId}/deliveries/{deliveryId}": { "schema": "Delivery", "description": "Individual delivery transactions record" },
+    "/restaurants/{restaurantId}/deliveryLogs/{logId}": { "schema": "DeliveryLog", "description": "Audit trails for delivery activities" },
+    "/orders/{orderId}": { "schema": "Order", "description": "Marketplace orders" },
+    "/banners/{bannerId}": { "schema": "Banner", "description": "App banners" },
+    "/prestadores_servicos/{servicoId}": { "schema": "PrestadorServico", "description": "Service providers and their offered services" },
+    "/servicos_interesses_whatsapp/{interesseId}": { "schema": "ServicoInteresseWhatsapp", "description": "WhatsApp contact interest click events" }
+  }
+}

@@ -1,0 +1,385 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      // Use cached get() for efficiency
+      return isAuthenticated() && (
+        (request.auth.token.email == "felipeacompanhamento@gmail.com") ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario == 'admin'))
+      );
+    }
+
+    function isRestaurantOwner(restaurantId) {
+      // Avoid redundant isAdmin check if possible
+      return isAuthenticated() && (
+        request.auth.uid == restaurantId ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId == restaurantId) ||
+        (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isAnyRestaurant() {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/restaurants/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario in ['restaurant', 'restaurante']) ||
+        (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users
+    match /users/{userId} {
+      // Allow reading if it's the user themselves, an admin, a restaurant owner, or if the target user IS a restaurant or admin (safe query-optimized format)
+      allow read: if request.auth.uid == userId || 
+                    isAdmin() || 
+                    isAnyRestaurant() || 
+                    (resource != null && resource.data.tipo_usuario in ['restaurant', 'restaurante', 'admin']);
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      
+      match /enderecos/{enderecoId} {
+        allow read: if request.auth != null && (request.auth.uid == userId || (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) || isAnyRestaurant());
+        allow write: if request.auth != null && (request.auth.uid == userId || (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true));
+      }
+
+      match /transacoes_carteira/{transactionId} {
+        allow read, write: if request.auth != null && (request.auth.uid == userId || (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true));
+      }
+
+      match /cupons/{cupomId} {
+        allow read, write: if request.auth != null && (request.auth.uid == userId || (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true));
+      }
+
+      match /favoritos/{favoritoId} {
+        allow read, write: if request.auth != null && (request.auth.uid == userId || (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true));
+      }
+    }
+
+    // Restaurants
+    match /restaurants/{restaurantId} {
+      allow read: if true;
+      allow create: if isAuthenticated();
+      allow update: if isRestaurantOwner(restaurantId) || isAdmin() || 
+                    (isAuthenticated() && 
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['media_avaliacao', 'total_avaliacoes']) &&
+                     request.resource.data.media_avaliacao is number &&
+                     request.resource.data.total_avaliacoes is number);
+      allow delete: if isAdmin();
+
+      match /categories/{categoryId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /drivers/{driverId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (isAuthenticated() && request.auth.uid == driverId);
+        allow create: if isRestaurantOwner(restaurantId) || isAdmin();
+        allow update: if isRestaurantOwner(restaurantId) || isAdmin() || (
+          isAuthenticated() && 
+          request.auth.uid == driverId && 
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'availabilityStatus', 'lastLocation', 'currentOrderId', 'totalDeliveries', 'updatedAt'
+          ])
+        );
+        allow delete: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /extras/{extraId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /products/{productId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /promotions/{promotionId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /optionGroups/{groupId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /optionItems/{optionId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /sizes/{sizeId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /schedules/{scheduleId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /contract/{contractId} {
+        allow read, write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /delivery_areas/{areaId} {
+        allow read: if true;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /avaliacoes/{avaliacaoId} {
+        allow read: if true;
+        allow create: if isAuthenticated();
+        allow update, delete: if isRestaurantOwner(restaurantId) || isAdmin() || 
+                              (isAuthenticated() && request.auth.uid == resource.data.cliente_id);
+      }
+
+      match /integration_logs/{logId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin();
+        allow write: if false; // Only server (Admin SDK) writes to this collection
+      }
+
+      match /deliveries/{deliveryId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (
+          isAuthenticated() && (
+            resource.data.driverId == request.auth.uid || 
+            resource.data.assignedDriverId == request.auth.uid
+          )
+        );
+        allow create: if isRestaurantOwner(restaurantId) || isAdmin();
+        allow update: if isRestaurantOwner(restaurantId) || isAdmin() || (
+          isAuthenticated() && (
+            resource.data.driverId == request.auth.uid || 
+            resource.data.assignedDriverId == request.auth.uid
+          )
+        );
+        allow delete: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /deliveryLogs/{logId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (
+          isAuthenticated() && (
+            resource.data.driverId == request.auth.uid
+          )
+        );
+        allow create: if isRestaurantOwner(restaurantId) || isAdmin() || (
+          isAuthenticated() && (
+            request.resource.data.driverId == request.auth.uid
+          )
+        );
+        allow update, delete: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+    }
+
+    // Delivery Areas (Collection Group)
+    match /{path=**}/delivery_areas/{areaId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isRestaurantOwner(resource.data.restaurant_id) || 
+        isAdmin()
+      );
+    }
+
+    // Reviews (Collection Group)
+    match /{path=**}/avaliacoes/{avaliacaoId} {
+      allow read: if true;
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (
+        isRestaurantOwner(resource.data.restaurant_id) || 
+        isAdmin() ||
+        request.auth.uid == resource.data.cliente_id
+      );
+    }
+
+    // Schedules (Collection Group)
+    match /{path=**}/schedules/{scheduleId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isRestaurantOwner(resource.data.restaurant_id) || 
+        isAdmin()
+      );
+    }
+
+    // Products (Collection Group)
+    match /{path=**}/products/{productId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isRestaurantOwner(resource.data.restaurant_id) || 
+        isAdmin()
+      );
+    }
+
+    // Orders
+    match /restaurants/{restaurantId}/orders/{orderId} {
+      allow read: if isAuthenticated() && (
+        isRestaurantOwner(restaurantId) || 
+        isAdmin() ||
+        request.auth.uid == resource.data.cliente_id ||
+        resource.data.driverId == request.auth.uid ||
+        resource.data.entregador_id == request.auth.uid ||
+        resource.data.assignedDriverId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.cliente_id;
+      allow update: if isAuthenticated() && (
+        isRestaurantOwner(restaurantId) || 
+        isAdmin() ||
+        request.auth.uid == resource.data.cliente_id ||
+        (
+          (resource.data.driverId == request.auth.uid || resource.data.entregador_id == request.auth.uid || resource.data.assignedDriverId == request.auth.uid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'status_entrega', 'horario_saida', 'horario_entrega', 'driverId', 'entregador_id', 'driverName', 'historico_entrega', 'data_finalizado',
+            'deliveryStatus', 'deliveryType', 'assignedDriverId', 'assignedDriverName', 'assignedDriverPhone', 'assignedAt', 'assignedBy'
+          ])
+        )
+      );
+    }
+
+    // Orders (Collection Group for Clients and Admin)
+    match /{path=**}/orders/{orderId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.cliente_id || 
+        isRestaurantOwner(resource.data.restaurant_id) ||
+        isAdmin() ||
+        resource.data.driverId == request.auth.uid ||
+        resource.data.entregador_id == request.auth.uid ||
+        resource.data.assignedDriverId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.cliente_id;
+      allow update: if isAuthenticated() && (
+        request.auth.uid == resource.data.cliente_id || 
+        isRestaurantOwner(resource.data.restaurant_id) ||
+        isAdmin() ||
+        (
+          (resource.data.driverId == request.auth.uid || resource.data.entregador_id == request.auth.uid || resource.data.assignedDriverId == request.auth.uid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'status_entrega', 'horario_saida', 'horario_entrega', 'driverId', 'entregador_id', 'driverName', 'historico_entrega', 'data_finalizado',
+            'deliveryStatus', 'deliveryType', 'assignedDriverId', 'assignedDriverName', 'assignedDriverPhone', 'assignedAt', 'assignedBy'
+          ])
+        )
+      );
+    }
+
+    // Banners
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Categories (Global)
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Reports
+    match /reports/{reportId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+
+    // Reviews
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+
+    // Public Stats
+    match /public_stats/{statId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Global Collections
+    match /estados/{estadoId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /cidades/{cidadeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /bairros/{bairroId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usos']) &&
+        request.resource.data.usos == (('usos' in resource.data) ? resource.data.usos : 0) + 1
+      );
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isAdmin() || (isAuthenticated() && isRestaurantOwner(resource.data.restaurante_id));
+      allow write: if isAdmin();
+    }
+
+    match /prestadores_servicos/{servicoId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid || 
+        request.resource.data.user_id == request.auth.uid ||
+        isAdmin()
+      );
+      allow update: if (
+        (isAuthenticated() && (
+          resource.data.userId == request.auth.uid || 
+          resource.data.user_id == request.auth.uid || 
+          resource.data.cliente_id == request.auth.uid ||
+          isAdmin()
+        )) ||
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalWhatsappClicks', 'uniqueWhatsappInterests', 'lastWhatsappClickAt', 'updatedAt'])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /servicos_interesses_whatsapp/{interesseId} {
+      allow create: if true;
+      allow read: if isAuthenticated() && (resource.data.serviceOwnerId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    // Delivery Claim Tokens (Admin SDK Server-Only Access)
+    match /deliveryClaimTokens/{tokenId} {
+      allow read, write: if false;
+    }
+  }
+}
