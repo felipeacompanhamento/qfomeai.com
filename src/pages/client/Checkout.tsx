@@ -8,31 +8,6 @@ import { sendPushNotification } from '../../services/notificationService';
 import { ChevronLeft, MapPin, CreditCard, CheckCircle2, Loader2, Smartphone, Banknote, Wallet, Copy } from 'lucide-react';
 import { invalidateRestaurantCache } from '../../services/restaurantService';
 
-const normalizeCoordinate = (
-  value: unknown,
-  min: number,
-  max: number
-): number | null => {
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
-
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : Number(String(value).replace(',', '.'));
-
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-
-  if (parsed < min || parsed > max) {
-    return null;
-  }
-
-  return parsed;
-};
-
 export default function Checkout() {
   const { items, total, clearCart } = useCart();
   const { user, profile } = useAuth();
@@ -59,8 +34,7 @@ export default function Checkout() {
 
     const fetchRestaurantData = async () => {
       try {
-        const restaurantId = items[0]?.restaurant_id || (items[0] as any)?.restaurantId;
-        if (!restaurantId) return;
+        const restaurantId = items[0].restaurant_id;
         const restDoc = await getDoc(doc(db, 'restaurants', restaurantId));
         if (restDoc.exists()) {
           setRestaurantData(restDoc.data());
@@ -217,14 +191,8 @@ export default function Checkout() {
         return;
       }
 
-      const targetRestaurantId = items[0]?.restaurant_id || (items[0] as any)?.restaurantId;
-      if (!targetRestaurantId) {
-        setCouponError('Restaurante não identificado no carrinho.');
-        return;
-      }
-
       // Check scope
-      if (coupon.tipo_escopo === 'restaurante' && coupon.escopo_id !== targetRestaurantId) {
+      if (coupon.tipo_escopo === 'restaurante' && coupon.escopo_id !== items[0].restaurant_id) {
         setCouponError('Este cupom não é válido para este restaurante.');
         return;
       }
@@ -242,7 +210,7 @@ export default function Checkout() {
 
       if (coupon.tipo_escopo === 'categoria') {
         const productIds = items.map(i => i.id);
-        const productsSnap = await Promise.all(productIds.map(id => getDoc(doc(db, 'restaurants', targetRestaurantId, 'products', id))));
+        const productsSnap = await Promise.all(productIds.map(id => getDoc(doc(db, 'restaurants', items[0].restaurant_id, 'products', id))));
         const categoryProductIds = productsSnap.filter(p => p.exists() && p.data()?.categoria_id === coupon.escopo_id).map(p => p.id);
         
         if (categoryProductIds.length === 0) {
@@ -264,7 +232,7 @@ export default function Checkout() {
       if (coupon.limite_por_usuario && coupon.limite_por_usuario > 0 && user) {
         // Query orders in the current restaurant to check user usage
         const userUsesSnap = await getDocs(query(
-          collection(db, 'restaurants', targetRestaurantId, 'orders'), 
+          collection(db, 'restaurants', items[0].restaurant_id, 'orders'), 
           where('cliente_id', '==', user.uid)
         ));
         
@@ -296,51 +264,19 @@ export default function Checkout() {
   const handleFinishOrder = async () => {
     if (!user || (deliveryType === 'entrega' && !selectedAddress) || !paymentMethod) return;
     if (deliveryError) return;
-
-    const targetRestaurantId = items[0]?.restaurant_id || (items[0] as any)?.restaurantId;
-    if (!targetRestaurantId) {
-      alert("Erro ao identificar o restaurante. Verifique os itens do seu carrinho.");
-      return;
-    }
-
     setLoading(true);
     try {
       // Fetch latest restaurant data to ensure PIX settings are up to date
-      const restDoc = await getDoc(doc(db, 'restaurants', targetRestaurantId));
+      const restDoc = await getDoc(doc(db, 'restaurants', items[0].restaurant_id));
       const currentRestaurantData = restDoc.exists() ? restDoc.data() : restaurantData;
 
-      let selectedAddressData: any = null;
-
-      if (deliveryType === 'entrega' && selectedAddress) {
-        try {
-          const addressRef = doc(db, 'users', user.uid, 'enderecos', selectedAddress);
-          const addressSnapshot = await getDoc(addressRef);
-          if (addressSnapshot.exists()) {
-            selectedAddressData = { id: addressSnapshot.id, ...addressSnapshot.data() };
-          } else {
-            selectedAddressData = addresses.find(a => a.id === selectedAddress) || null;
-          }
-        } catch (err) {
-          console.warn("Error re-fetching selected address from Firestore, using local state fallback:", err);
-          selectedAddressData = addresses.find(a => a.id === selectedAddress) || null;
-        }
-      }
-
-      const deliveryLatitude = selectedAddressData
-        ? normalizeCoordinate(selectedAddressData.latitude, -90, 90)
-        : null;
-
-      const deliveryLongitude = selectedAddressData
-        ? normalizeCoordinate(selectedAddressData.longitude, -180, 180)
-        : null;
-
-      const hasCoordinates = deliveryLatitude !== null && deliveryLongitude !== null;
+      const selectedAddressData = deliveryType === 'entrega' ? addresses.find(a => a.id === selectedAddress) : null;
 
       const orderData = {
         cliente_id: user.uid,
         cliente_nome: profile?.nome || user.displayName || 'Cliente',
-        restaurant_id: targetRestaurantId,
-        restaurant_nome: items[0]?.restaurant_nome || '',
+        restaurant_id: items[0].restaurant_id,
+        restaurant_nome: items[0].restaurant_nome,
         status: 'pendente',
         tipo_entrega: deliveryType,
         valor_produtos: total,
@@ -353,38 +289,14 @@ export default function Checkout() {
         troco: paymentMethod === 'dinheiro' ? changeAmount : null,
         endereco_id: deliveryType === 'entrega' ? selectedAddress : null,
         endereco: selectedAddressData ? {
-          rua: selectedAddressData.rua || selectedAddressData.endereco || '',
-          numero: selectedAddressData.numero || '',
-          bairro: selectedAddressData.bairro || '',
-          cidade: selectedAddressData.cidade || '',
-          estado: selectedAddressData.estado || '',
+          rua: selectedAddressData.rua,
+          numero: selectedAddressData.numero,
+          bairro: selectedAddressData.bairro,
+          cidade: selectedAddressData.cidade,
+          estado: selectedAddressData.estado,
           complemento: selectedAddressData.complemento || '',
-          referencia: selectedAddressData.referencia || '',
-          ...(hasCoordinates ? {
-            latitude: deliveryLatitude,
-            longitude: deliveryLongitude
-          } : {})
+          referencia: selectedAddressData.referencia || ''
         } : null,
-        endereco_entrega: selectedAddressData ? {
-          endereco: selectedAddressData.rua || selectedAddressData.endereco || '',
-          rua: selectedAddressData.rua || selectedAddressData.endereco || '',
-          numero: selectedAddressData.numero || '',
-          bairro: selectedAddressData.bairro || '',
-          cidade: selectedAddressData.cidade || '',
-          estado: selectedAddressData.estado || '',
-          complemento: selectedAddressData.complemento || '',
-          referencia: selectedAddressData.referencia || '',
-          ...(hasCoordinates ? {
-            latitude: deliveryLatitude,
-            longitude: deliveryLongitude
-          } : {})
-        } : null,
-        coordenadas_entrega: hasCoordinates ? {
-          latitude: deliveryLatitude,
-          longitude: deliveryLongitude
-        } : null,
-        latitude_entrega: deliveryLatitude,
-        longitude_entrega: deliveryLongitude,
         cidade: deliveryType === 'entrega' ? selectedAddressData?.cidade : currentRestaurantData?.endereco?.cidade,
         estado: deliveryType === 'entrega' ? selectedAddressData?.estado : currentRestaurantData?.endereco?.estado,
         data_criacao: new Date().toISOString(),
@@ -401,7 +313,7 @@ export default function Checkout() {
       };
 
       // Create order directly in Firestore
-      const orderRef = await addDoc(collection(db, 'restaurants', targetRestaurantId, 'orders'), orderData);
+      const orderRef = await addDoc(collection(db, 'restaurants', items[0].restaurant_id, 'orders'), orderData);
       
       // Increment orders count
       try {
@@ -420,7 +332,7 @@ export default function Checkout() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               orderId: orderRef.id,
-              restaurantId: targetRestaurantId
+              restaurantId: items[0].restaurant_id
             })
           });
           
@@ -447,12 +359,12 @@ export default function Checkout() {
 
       // Send push notification to restaurant
       try {
-        const restaurantUserDoc = await getDoc(doc(db, 'users', targetRestaurantId));
+        const restaurantUserDoc = await getDoc(doc(db, 'users', items[0].restaurant_id));
         const restaurantData = restaurantUserDoc.data();
         let fcmToken = restaurantData?.fcmToken;
         
         if (!fcmToken) {
-          const restDoc = await getDoc(doc(db, 'restaurants', targetRestaurantId));
+          const restDoc = await getDoc(doc(db, 'restaurants', items[0].restaurant_id));
           fcmToken = restDoc.data()?.fcmToken;
         }
 
@@ -481,7 +393,7 @@ export default function Checkout() {
         }
       }
 
-      invalidateRestaurantCache(targetRestaurantId);
+      invalidateRestaurantCache(items[0].restaurant_id);
       clearCart();
       setOrderSuccess(true);
       navigate('/orders');

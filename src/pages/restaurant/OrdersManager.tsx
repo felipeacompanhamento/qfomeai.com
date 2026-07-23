@@ -30,36 +30,15 @@ interface Order {
   data_criacao: string;
   itens: OrderItem[];
   endereco_entrega?: {
-    endereco?: string;
-    rua?: string;
-    numero?: string;
-    bairro?: string;
-    cidade?: string;
-    estado?: string;
-    cep?: string;
+    rua: string;
+    numero: string;
+    bairro: string;
+    cidade: string;
+    estado: string;
+    cep: string;
     complemento?: string;
     referencia?: string;
-    latitude?: number;
-    longitude?: number;
   };
-  endereco?: {
-    rua?: string;
-    endereco?: string;
-    numero?: string;
-    bairro?: string;
-    cidade?: string;
-    estado?: string;
-    complemento?: string;
-    referencia?: string;
-    latitude?: number;
-    longitude?: number;
-  } | null;
-  coordenadas_entrega?: {
-    latitude: number;
-    longitude: number;
-  } | null;
-  latitude_entrega?: number | null;
-  longitude_entrega?: number | null;
 }
 
 interface OrdersManagerProps {

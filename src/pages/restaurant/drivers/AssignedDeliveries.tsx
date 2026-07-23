@@ -11,35 +11,11 @@ interface AssignedOrder {
   cliente_nome: string;
   cliente_telefone?: string;
   endereco_entrega?: {
-    endereco?: string;
-    rua?: string;
-    numero?: string;
-    bairro?: string;
-    cidade?: string;
-    estado?: string;
-    complemento?: string;
+    endereco: string;
+    numero: string;
+    bairro: string;
     referencia?: string;
-    latitude?: number;
-    longitude?: number;
   } | string;
-  endereco?: {
-    rua?: string;
-    endereco?: string;
-    numero?: string;
-    bairro?: string;
-    cidade?: string;
-    estado?: string;
-    complemento?: string;
-    referencia?: string;
-    latitude?: number;
-    longitude?: number;
-  } | null;
-  coordenadas_entrega?: {
-    latitude: number;
-    longitude: number;
-  } | null;
-  latitude_entrega?: number | null;
-  longitude_entrega?: number | null;
   status: string;
   status_entrega?: string; // 'waiting', 'out_for_delivery', 'delivered'
   valor_total: number;

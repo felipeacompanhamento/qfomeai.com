@@ -14,10 +14,9 @@ service cloud.firestore {
     function isAdmin() {
       // Use cached get() for efficiency
       return isAuthenticated() && (
-        (request.auth.token.email == "felipeacompanhamento@gmail.com") ||
+        (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario == 'admin'))
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
     }
 
@@ -352,34 +351,8 @@ service cloud.firestore {
 
     match /prestadores_servicos/{servicoId} {
       allow read: if true;
-      allow create: if isAuthenticated() && (
-        request.resource.data.userId == request.auth.uid || 
-        request.resource.data.user_id == request.auth.uid ||
-        isAdmin()
-      );
-      allow update: if (
-        (isAuthenticated() && (
-          resource.data.userId == request.auth.uid || 
-          resource.data.user_id == request.auth.uid || 
-          resource.data.cliente_id == request.auth.uid ||
-          isAdmin()
-        )) ||
-        (
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['totalWhatsappClicks', 'uniqueWhatsappInterests', 'lastWhatsappClickAt', 'updatedAt'])
-        )
-      );
-      allow delete: if isAdmin();
-    }
-
-    match /servicos_interesses_whatsapp/{interesseId} {
-      allow create: if true;
-      allow read: if isAuthenticated() && (resource.data.serviceOwnerId == request.auth.uid || isAdmin());
-      allow update, delete: if isAdmin();
-    }
-
-    // Delivery Claim Tokens (Admin SDK Server-Only Access)
-    match /deliveryClaimTokens/{tokenId} {
-      allow read, write: if false;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
     }
   }
 }

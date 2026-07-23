@@ -380,32 +380,9 @@
         "bairro": { "type": "string" },
         "userId": { "type": "string" },
         "ativo": { "type": "boolean" },
-        "totalWhatsappClicks": { "type": "integer" },
-        "uniqueWhatsappInterests": { "type": "integer" },
-        "lastWhatsappClickAt": { "type": "string", "format": "date-time" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["nome", "telefone", "categoria", "titulo", "descricao", "cidade_id", "estado_id", "userId"]
-    },
-    "ServicoInteresseWhatsapp": {
-      "title": "ServicoInteresseWhatsapp",
-      "description": "WhatsApp contact click event log for service provider listings.",
-      "type": "object",
-      "properties": {
-        "serviceId": { "type": "string" },
-        "serviceTitle": { "type": "string" },
-        "serviceOwnerId": { "type": "string" },
-        "clickedAt": { "type": "string", "format": "date-time" },
-        "source": { "type": "string" },
-        "pagePath": { "type": "string" },
-        "visitorUserId": { "type": "string" },
-        "anonymousSessionId": { "type": "string" },
-        "approximateCity": { "type": "string" },
-        "deviceType": { "type": "string" },
-        "serviceStatus": { "type": "boolean" }
-      },
-      "required": ["serviceId", "serviceOwnerId"]
     },
     "Delivery": {
       "title": "Delivery",
@@ -473,7 +450,6 @@
     "/restaurants/{restaurantId}/deliveryLogs/{logId}": { "schema": "DeliveryLog", "description": "Audit trails for delivery activities" },
     "/orders/{orderId}": { "schema": "Order", "description": "Marketplace orders" },
     "/banners/{bannerId}": { "schema": "Banner", "description": "App banners" },
-    "/prestadores_servicos/{servicoId}": { "schema": "PrestadorServico", "description": "Service providers and their offered services" },
-    "/servicos_interesses_whatsapp/{interesseId}": { "schema": "ServicoInteresseWhatsapp", "description": "WhatsApp contact interest click events" }
+    "/prestadores_servicos/{servicoId}": { "schema": "PrestadorServico", "description": "Service providers and their offered services" }
   }
 }

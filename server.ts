@@ -12,10 +12,6 @@ import type { Auth, UserRecord, DecodedIdToken } from 'firebase-admin/auth';
 import nodemailer from 'nodemailer';
 import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 import { MercadoPagoConfig, Payment, PaymentRefund } from 'mercadopago';
-import { requestIdMiddleware } from './server/external-api/middleware/requestId.js';
-import externalHealthRoutes from './server/external-api/routes/externalHealthRoutes.js';
-import internalClaimTokenRoutes from './server/external-api/routes/internalClaimTokenRoutes.js';
-import { externalErrorHandler } from './server/external-api/middleware/externalErrorHandler.js';
 
 // Catch unhandled rejections to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
@@ -432,11 +428,6 @@ async function startServer() {
   const port = process.env.PORT || 8080;
 
   app.use(express.json());
-  app.use(requestIdMiddleware);
-
-  // External Delivery API v1 Routes
-  app.use('/api/v1/external', externalHealthRoutes);
-  app.use('/api/v1/restaurants', internalClaimTokenRoutes);
 
   // Configurar headers para evitar problemas com Cross-Origin-Opener-Policy (COOP)
   // Isso é necessário para que o Firebase Auth Popup funcione corretamente
