@@ -11,6 +11,7 @@ import { OrdersHistoryPanel } from './components/OrdersHistoryPanel';
 import OrderDetails from '../components/OrderDetails';
 import { getCanonicalOrderState, getOrderKanbanColumn } from '../../../domain/order/orderLifecycle';
 import { RestaurantOrderCard } from './components/RestaurantOrderCard';
+import { printThermalOrder } from '../../../components/orders/OrderThermalPrint';
 
 interface RestaurantOrdersPageProps {
   orders: any[];
@@ -130,10 +131,8 @@ export function RestaurantOrdersPage({
 
   // Print Handler
   const handlePrint = useCallback((order: any) => {
-    if (typeof window !== 'undefined') {
-      window.print();
-    }
-  }, []);
+    printThermalOrder(order, restaurantProfile, profile);
+  }, [restaurantProfile, profile]);
 
   // Filtered orders for active mobile tab
   const mobileTabOrders = useMemo(() => {

@@ -367,92 +367,91 @@ async function testFirestoreConnection() {
   }
 }
 
-function startOrderTimeoutChecker() {
-  // Run every 1 minute
-  setInterval(async () => {
-    try {
-      const now = new Date();
-      const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+async function checkOrdersTimeoutForRestaurant(restaurantId: string): Promise<{ checkedOrders: number; processedOrders: number }> {
+  try {
+    const now = new Date();
+    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
 
-      // Query all restaurants first to avoid collectionGroup index requirement
-      console.log('[Order Timeout] Fetching restaurants...');
-      const restaurantsSnapshot = await db.collection('restaurants').get();
-      console.log(`[Order Timeout] Found ${restaurantsSnapshot.size} restaurants.`);
-      
-      for (const restDoc of restaurantsSnapshot.docs) {
-        const restaurantData = restDoc.data();
-        
-        // We only care about restaurants with MP enabled for this specific task
-        console.log(`[Order Timeout] Checking orders for restaurant ${restDoc.id}...`);
-        try {
-          const pendingOrdersSnapshot = await restDoc.ref.collection('orders')
-            .where('status', '==', 'pendente')
-            .where('forma_pagamento', '==', 'pix')
-            .where('pago', '==', false)
-            .get();
-          console.log(`[Order Timeout] Found ${pendingOrdersSnapshot.size} pending orders for restaurant ${restDoc.id}.`);
-          
-          if (pendingOrdersSnapshot.empty) continue;
-          
-          for (const orderDoc of pendingOrdersSnapshot.docs) {
-            const orderData = orderDoc.data();
-            
-            // Check if it's an MP PIX order and if it's expired (5 minutes)
-            if (orderData.mercadopago_payment_id && orderData.data_criacao && orderData.data_criacao <= fiveMinutesAgo) {
-              console.log(`[Auto-Cancel] Cancelando pedido ${orderDoc.id} por inatividade no pagamento PIX.`);
-              
-              // 1. Cancel in Mercado Pago if possible
-              if (restaurantData.mercadopago_access_token) {
-                try {
-                  const client = new MercadoPagoConfig({ accessToken: restaurantData.mercadopago_access_token });
-                  const payment = new Payment(client);
-                  
-                  // Get current status
-                  const mpPayment = await payment.get({ id: orderData.mercadopago_payment_id });
-                  if (mpPayment.status === 'pending') {
-                    await payment.cancel({ id: orderData.mercadopago_payment_id });
-                    console.log(`[Auto-Cancel] Pagamento MP ${orderData.mercadopago_payment_id} anulado.`);
-                  } else if (mpPayment.status === 'approved') {
-                    console.log(`[Auto-Cancel] Pagamento MP ${orderData.mercadopago_payment_id} já aprovado, pulando.`);
-                    continue; // Don't cancel if it was just paid
-                  }
-                } catch (mpErr: any) {
-                  console.error(`[Auto-Cancel] Erro ao anular PIX MP ${orderData.mercadopago_payment_id}:`, mpErr.message);
-                }
-              }
-  
-              // 2. Update order status
-              await orderDoc.ref.update({
-                status: 'cancelado',
-                motivo_cancelamento: 'Cancelado automaticamente por inatividade no pagamento (5 min)',
-                data_cancelamento: now.toISOString(),
-                updated_at: now.toISOString()
-              });
-  
-              // 3. Notify customer
-              if (orderData.cliente_id) {
-                const userDoc = await db.collection('users').doc(orderData.cliente_id).get();
-                const userData = userDoc.data();
-                if (userData?.fcmToken) {
-                  await sendPush(
-                    userData.fcmToken,
-                    "Pagamento Expirado ⏰",
-                    `Seu pedido #${orderDoc.id.slice(-6).toUpperCase()} foi cancelado porque o pagamento PIX não foi identificado em 5 minutos.`,
-                    orderDoc.id,
-                    "order_cancelled_timeout"
-                  );
-                }
-              }
-            }
-          }
-        } catch (err) {
-          console.error(`[Order Timeout] Error checking orders for restaurant ${restDoc.id}:`, err);
-        }
-      }
-    } catch (error) {
-      console.error('[Order Timeout] Error checking order timeouts:', error);
+    console.log(`[Order Timeout] Checking orders for authenticated restaurant ${restaurantId}`);
+    
+    const restDoc = await db.collection('restaurants').doc(restaurantId).get();
+    if (!restDoc.exists) {
+      console.warn(`[Order Timeout] Restaurant ${restaurantId} not found.`);
+      return { checkedOrders: 0, processedOrders: 0 };
     }
-  }, 60 * 1000);
+    
+    const restaurantData = restDoc.data() || {};
+    const pendingOrdersSnapshot = await restDoc.ref.collection('orders')
+      .where('status', '==', 'pendente')
+      .where('forma_pagamento', '==', 'pix')
+      .where('pago', '==', false)
+      .get();
+      
+    console.log(`[Order Timeout] Found ${pendingOrdersSnapshot.size} pending orders for authenticated restaurant ${restaurantId}`);
+    
+    if (pendingOrdersSnapshot.empty) {
+      return { checkedOrders: 0, processedOrders: 0 };
+    }
+    
+    let processedCount = 0;
+    for (const orderDoc of pendingOrdersSnapshot.docs) {
+      const orderData = orderDoc.data();
+      
+      // Check if it's an MP PIX order and if it's expired (5 minutes)
+      if (orderData.mercadopago_payment_id && orderData.data_criacao && orderData.data_criacao <= fiveMinutesAgo) {
+        console.log(`[Auto-Cancel] Cancelando pedido ${orderDoc.id} por inatividade no pagamento PIX.`);
+        
+        // 1. Cancel in Mercado Pago if possible
+        if (restaurantData.mercadopago_access_token) {
+          try {
+            const client = new MercadoPagoConfig({ accessToken: restaurantData.mercadopago_access_token });
+            const payment = new Payment(client);
+            
+            // Get current status
+            const mpPayment = await payment.get({ id: orderData.mercadopago_payment_id });
+            if (mpPayment.status === 'pending') {
+              await payment.cancel({ id: orderData.mercadopago_payment_id });
+              console.log(`[Auto-Cancel] Pagamento MP ${orderData.mercadopago_payment_id} anulado.`);
+            } else if (mpPayment.status === 'approved') {
+              console.log(`[Auto-Cancel] Pagamento MP ${orderData.mercadopago_payment_id} já aprovado, pulando.`);
+              continue; // Don't cancel if it was just paid
+            }
+          } catch (mpErr: any) {
+            console.error(`[Auto-Cancel] Erro ao anular PIX MP ${orderData.mercadopago_payment_id}:`, mpErr.message);
+          }
+        }
+
+        // 2. Update order status
+        await orderDoc.ref.update({
+          status: 'cancelado',
+          motivo_cancelamento: 'Cancelado automaticamente por inatividade no pagamento (5 min)',
+          data_cancelamento: now.toISOString(),
+          updated_at: now.toISOString()
+        });
+
+        // 3. Notify customer
+        if (orderData.cliente_id) {
+          const userDoc = await db.collection('users').doc(orderData.cliente_id).get();
+          const userData = userDoc.data();
+          if (userData?.fcmToken) {
+            await sendPush(
+              userData.fcmToken,
+              "Pagamento Expirado ⏰",
+              `Seu pedido #${orderDoc.id.slice(-6).toUpperCase()} foi cancelado porque o pagamento PIX não foi identificado em 5 minutos.`,
+              orderDoc.id,
+              "order_cancelled_timeout"
+            );
+          }
+        }
+        processedCount++;
+      }
+    }
+    
+    return { checkedOrders: pendingOrdersSnapshot.size, processedOrders: processedCount };
+  } catch (error) {
+    console.error(`[Order Timeout] Error checking order timeouts for restaurant ${restaurantId}:`, error);
+    throw error;
+  }
 }
 
 async function startServer() {
@@ -1914,6 +1913,29 @@ async function startServer() {
       res.status(401).json({ error: `Unauthorized: ${error.message}` });
     }
   };
+  
+  // POST: Check pending orders timeout for the authenticated restaurant
+  app.post('/api/orders/check-timeout', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const payloadRestaurantId = req.body?.restaurantId;
+
+      if (payloadRestaurantId && payloadRestaurantId !== restaurantId) {
+        return res.status(403).json({ error: 'Forbidden: You cannot check orders for other restaurants' });
+      }
+
+      const result = await checkOrdersTimeoutForRestaurant(restaurantId);
+      res.json({
+        success: true,
+        restaurantId,
+        checkedOrders: result.checkedOrders,
+        processedOrders: result.processedOrders
+      });
+    } catch (error: any) {
+      console.error('[Order Timeout API] Error checking timeouts:', error);
+      res.status(500).json({ error: error.message || 'Erro interno ao verificar timeouts' });
+    }
+  });
 
   // GET: List drivers of the logged-in restaurant
   app.get('/api/restaurant/drivers', verifyRestaurant, async (req: any, res: any) => {
@@ -2275,25 +2297,9 @@ async function startServer() {
         return res.status(409).json({ error: 'Não é possível atribuir entregador para pedidos já finalizados ou entregues.' });
       }
 
-      const deliveryStatusUpper = (orderData.deliveryStatus || '').toUpperCase();
-      if (['IN_TRANSIT', 'PICKED_UP'].includes(deliveryStatusUpper) || orderData.status_entrega === 'out_for_delivery' || orderData.status === 'delivering') {
-        return res.status(409).json({ error: 'Não é possível atribuir entregador para pedidos já em rota de entrega.' });
-      }
-
-      // Check if already assigned to a DIFFERENT driver
-      if (orderData.assignedDriverId && orderData.assignedDriverId !== driverId) {
-        return res.status(409).json({ error: 'Este pedido já está atribuído a outro entregador.' });
-      }
-
       const hasAddress = orderData.endereco_entrega || orderData.endereco;
       if (!hasAddress) {
         return res.status(409).json({ error: 'Não é possível atribuir entregador para pedidos sem endereço de entrega.' });
-      }
-
-      // Allow assignment only for active, valid operational states (e.g. recebido, aceito, preparo, pronto)
-      const allowedStatus = ['recebido', 'aceito', 'preparo', 'em preparo', 'pronto'];
-      if (!allowedStatus.includes(orderStatusLower)) {
-        return res.status(409).json({ error: `O status do pedido (${orderData.status}) não permite atribuição.` });
       }
       // ----------------------------
 
@@ -2314,6 +2320,10 @@ async function startServer() {
 
       const batch = db.batch();
 
+      // Preserve active status (e.g. 'saiu para entrega', 'em preparo', 'aceito') or default to 'pronto'
+      const activeStatuses = ['recebido', 'aceito', 'preparo', 'em preparo', 'pronto', 'saiu para entrega', 'entrega', 'delivering', 'out_for_delivery', 'in_transit'];
+      const currentStatus = activeStatuses.includes(orderStatusLower) ? orderData.status : 'pronto';
+
       const orderUpdates = {
         driverId: driverId,
         assignedDriverId: driverId,
@@ -2323,7 +2333,7 @@ async function startServer() {
         deliveryStatus: deliveryStatus,
         canonicalStatus: deliveryStatus,
         status_entrega: statusEntrega,
-        status: 'pronto',
+        status: currentStatus,
         assignedAt: now,
         acceptedAt: acceptedAt,
         updated_at: now,
@@ -2350,7 +2360,7 @@ async function startServer() {
         canonicalStatus: deliveryStatus,
         paymentStatus: orderData.pago ? 'PAID' : 'PENDING',
         status_entrega: statusEntrega,
-        status: 'pronto',
+        status: currentStatus,
         valor_total: orderData.valor_total || 0,
         valor_produtos: orderData.valor_produtos || 0,
         taxa_entrega: orderData.taxa_entrega || 0,
@@ -2561,8 +2571,9 @@ async function startServer() {
           driverUpdates.availabilityStatus = 'ONLINE';
         } else if (action === 'START') {
           newStatus = 'IN_TRANSIT';
+          orderUpdates.orderStatus = 'OUT_FOR_DELIVERY';
+          orderUpdates.canonicalStatus = 'OUT_FOR_DELIVERY';
           orderUpdates.deliveryStatus = 'IN_TRANSIT';
-          orderUpdates.canonicalStatus = 'IN_TRANSIT';
           orderUpdates.status_entrega = 'out_for_delivery';
           orderUpdates.status = 'delivering';
           orderUpdates.startedAt = now;
@@ -3912,7 +3923,8 @@ async function startServer() {
     testFirestoreConnection().catch(err => console.error('Background Firestore test failed:', err));
     
     // Start the background job to automatically cancel orders older than 5 minutes
-    startOrderTimeoutChecker();
+    // Now done on-demand per authenticated restaurant via /api/orders/check-timeout to avoid global loop
+    console.log('[Order Timeout] Global loop disabled. Checking on-demand per authenticated tenant.');
   });
 }
 

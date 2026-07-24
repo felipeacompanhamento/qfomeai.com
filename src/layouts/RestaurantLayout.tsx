@@ -55,6 +55,40 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
     };
     fetchPendingInvoices();
   }, [profile?.restaurantId]);
+  
+  React.useEffect(() => {
+    const restaurantId = profile?.restaurantId;
+    if (!restaurantId || !user) return;
+
+    const checkTimeouts = async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const response = await fetch('/api/orders/check-timeout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ restaurantId })
+        });
+        if (!response.ok) {
+          console.error('[Order Timeout Frontend] failed to trigger check:', response.statusText);
+        }
+      } catch (err) {
+        console.error('[Order Timeout Frontend] error during check:', err);
+      }
+    };
+
+    // Run once on mount/load
+    checkTimeouts();
+
+    // Run every 1 minute
+    const intervalId = setInterval(checkTimeouts, 60 * 1000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [profile?.restaurantId, user]);
 
   React.useEffect(() => {
     // Collapse menu on route change

@@ -68,6 +68,10 @@ const LEGACY_ORDER_STATUS_MAP: Record<string, OrderStatus> = {
   em_entrega: 'OUT_FOR_DELIVERY',
   despachado: 'OUT_FOR_DELIVERY',
   entrega: 'OUT_FOR_DELIVERY',
+  delivering: 'OUT_FOR_DELIVERY',
+  em_transito: 'OUT_FOR_DELIVERY',
+  em_trânsito: 'OUT_FOR_DELIVERY',
+  saiu_para_entrega: 'OUT_FOR_DELIVERY',
   delivered: 'DELIVERED',
   entregue: 'DELIVERED',
   delivered_pending_settlement: 'DELIVERED',
@@ -166,7 +170,22 @@ export function normalizeOrderStatus(order: any): OrderStatus {
   }
 
   const legacyStr = String(order.status || order.status_pedido || 'novo').toLowerCase().trim();
-  return LEGACY_ORDER_STATUS_MAP[legacyStr] || 'NEW';
+  const mappedStatus = LEGACY_ORDER_STATUS_MAP[legacyStr];
+  if (mappedStatus) {
+    return mappedStatus;
+  }
+
+  // Active delivery check as fallback: never return 'NEW' if there is evidence of delivery activity
+  const hasDriver = Boolean(order.driverId || order.assignedDriverId || order.entregador_id);
+  const activeDeliveryStatus = ['ASSIGNED', 'ACCEPTED', 'IN_TRANSIT', 'DELIVERED'].includes(order.deliveryStatus || '');
+  const activeLegacyDeliveryStatus = ['assigned', 'accepted', 'out_for_delivery', 'delivering', 'delivered'].includes(String(order.status_entrega || '').toLowerCase());
+  
+  if (hasDriver || activeDeliveryStatus || activeLegacyDeliveryStatus) {
+    console.warn(`[Order Lifecycle] Unknown order status '${order.status}' but active delivery detected. Mapping to OUT_FOR_DELIVERY.`);
+    return 'OUT_FOR_DELIVERY';
+  }
+
+  return 'NEW';
 }
 
 /**
@@ -271,26 +290,60 @@ export function getCanonicalOrderState(order: any): CanonicalOrderState {
   Determines the correct Kanban column ID for the restaurant view
  */
 export function getOrderKanbanColumn(order: any): string {
-  const { orderStatus, financialSettlementStatus } = getCanonicalOrderState(order);
+  const { orderStatus, deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(order);
 
-  if (orderStatus === 'NEW') return 'novo';
-  if (orderStatus === 'CONFIRMED') return 'confirmado';
-  if (orderStatus === 'PREPARING' || orderStatus === 'READY') return 'cozinha';
-
-  // CRITICAL RULE: Order stays in 'entrega' column while delivered but pending settlement!
+  // Histórico/Finalizado: 'FINALIZED', 'entregue', 'cancelado' (also settled)
   if (
-    orderStatus === 'OUT_FOR_DELIVERY' ||
-    (orderStatus === 'DELIVERED' && financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION')
+    orderStatus === 'FINALIZED' || 
+    orderStatus === 'CANCELLED' || 
+    financialSettlementStatus === 'SETTLED' ||
+    String(order?.status || '').toLowerCase() === 'finalizado' ||
+    String(order?.status || '').toLowerCase() === 'cancelado'
   ) {
-    return 'entrega';
-  }
-
-  if (orderStatus === 'FINALIZED' || financialSettlementStatus === 'SETTLED') {
     return 'finalizado';
   }
 
-  if (orderStatus === 'CANCELLED') return 'finalizado';
+  // Entrega: 'OUT_FOR_DELIVERY', 'saiu_para_entrega', status de entregador ativo (como 'ASSIGNED', 'ACCEPTED', 'IN_TRANSIT', 'DELIVERED' com confirmação pendente do restaurante, etc.)
+  const hasActiveDelivery = 
+    orderStatus === 'OUT_FOR_DELIVERY' ||
+    ['ASSIGNED', 'ACCEPTED', 'IN_TRANSIT', 'DELIVERED'].includes(deliveryStatus) ||
+    ['assigned', 'accepted', 'out_for_delivery', 'delivering', 'delivered'].includes(String(order?.status_entrega || '').toLowerCase()) ||
+    String(order?.status || '').toLowerCase() === 'delivering' ||
+    String(order?.status || '').toLowerCase() === 'entregue' ||
+    String(order?.status || '').toLowerCase() === 'delivered' ||
+    Boolean(order?.driverId || order?.assignedDriverId || order?.entregador_id);
 
+  if (hasActiveDelivery) {
+    return 'entrega';
+  }
+
+  // Cozinha: 'PREPARING', 'em_preparo', 'READY', 'pronto'
+  if (
+    orderStatus === 'PREPARING' || 
+    orderStatus === 'READY' ||
+    ['preparing', 'cozinha', 'preparo', 'in_preparation', 'ready', 'pronto'].includes(String(order?.status || '').toLowerCase())
+  ) {
+    return 'cozinha';
+  }
+
+  // Confirmado: 'CONFIRMED', 'confirmado', 'aceito'
+  if (
+    orderStatus === 'CONFIRMED' ||
+    ['confirmed', 'confirmado', 'aceito'].includes(String(order?.status || '').toLowerCase())
+  ) {
+    return 'confirmado';
+  }
+
+  // Novo: 'NEW', 'novo', 'pendente' (sem entrega ativa)
+  if (
+    orderStatus === 'NEW' ||
+    ['new', 'novo', 'pending', 'pendente', 'waiting'].includes(String(order?.status || '').toLowerCase())
+  ) {
+    return 'novo';
+  }
+
+  // Fallback to "entrega" if there is any doubt or unknown status, never default to "Novo"
+  console.warn(`[Kanban] Unknown order state for order ${order?.id}, placing in 'entrega' rather than 'novo'`, order);
   return 'entrega';
 }
 

@@ -42,6 +42,7 @@ import DeliverySettings from './drivers/DeliverySettings';
 
 import { registerPushNotifications } from '../../firebaseMessaging';
 import RestaurantLayout from '../../layouts/RestaurantLayout';
+import { printThermalOrder } from '../../components/orders/OrderThermalPrint';
 
 import OrderListItem, { getOrderCardStyle } from './components/OrderListItem';
 import OrderDetails from './components/OrderDetails';
@@ -1304,168 +1305,9 @@ function OrdersList({
     setSelectedOrder(order);
   }, []);
 
-  const handlePrint = React.useCallback((order: any, paperSize?: '48mm' | '72mm' | '112mm') => {
-    if (!order) return;
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('Por favor, permita popups para imprimir o pedido.');
-      return;
-    }
-
-    const size = paperSize || restaurantProfile?.defaultPaperSize || '72mm';
-    const width = size === '48mm' ? '181px' : size === '72mm' ? '272px' : '423px';
-    
-    let paymentMessage = '';
-    if (order.pago) {
-      paymentMessage = '*** PEDIDO JÁ PAGO ***\nNÃO COBRAR NA ENTREGA';
-    } else if (order?.forma_pagamento === 'pix' || order?.forma_pagamento === 'cartao_credito_online') {
-      paymentMessage = '*** PEDIDO JÁ PAGO ***\nNÃO COBRAR NA ENTREGA';
-    } else if (order?.forma_pagamento === 'dinheiro') {
-      paymentMessage = `COBRAR NA ENTREGA: DINHEIRO\nTROCO PARA: ${order?.troco || 'NÃO PRECISA'}`;
-    } else {
-      paymentMessage = `COBRAR NA ENTREGA:\n${order?.forma_pagamento?.toUpperCase() || 'MÁQUINA'}`;
-    }
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>Pedido #${order.id.slice(-6).toUpperCase()}</title>
-        <style>
-          @page { margin: 0; }
-          body {
-            font-family: monospace;
-            width: ${width};
-            margin: 0 auto;
-            padding: 10px;
-            font-size: 12px;
-            line-height: 1.4;
-            color: #000;
-          }
-          .text-center { text-align: center; }
-          .text-right { text-align: right; }
-          .font-bold { font-weight: bold; }
-          .mb-1 { margin-bottom: 4px; }
-          .mb-2 { margin-bottom: 8px; }
-          .mt-2 { margin-top: 8px; }
-          .divider { border-top: 1px dashed #000; margin: 8px 0; }
-          .flex { display: flex; justify-content: space-between; }
-          .item-row { display: flex; justify-content: space-between; margin-bottom: 2px; }
-          .item-name { flex: 1; padding-right: 8px; }
-          .item-price { white-space: nowrap; }
-          .extras { padding-left: 10px; font-size: 11px; }
-          .obs { padding-left: 10px; font-size: 11px; font-style: italic; }
-          .payment-msg { 
-            border: 1px solid #000; 
-            padding: 4px; 
-            text-align: center; 
-            font-weight: bold; 
-            margin-top: 8px;
-            font-size: 14px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="text-center font-bold mb-2" style="font-size: 16px;">
-          ${restaurantProfile?.nome_fantasia || profile?.nome || 'Restaurante'}
-        </div>
-        
-        <div class="text-center font-bold mb-1">
-          PEDIDO #${order.id.slice(-6).toUpperCase()}
-        </div>
-        <div class="text-center mb-2">
-          ${new Date(order.data_criacao).toLocaleString()}
-        </div>
-        
-        <div class="divider"></div>
-        
-        <div class="font-bold mb-1">CLIENTE:</div>
-        <div>${customerData?.nome || order.cliente_nome || 'Não informado'}</div>
-        <div>${customerData?.telefone || ''}</div>
-        
-        <div class="divider"></div>
-        
-        <div class="font-bold mb-1">ENDEREÇO DE ENTREGA:</div>
-        ${order.tipo_entrega === 'retirada' ? (
-          '<div>RETIRADA NO BALCÃO</div>'
-        ) : addressData ? (
-          `<div>${addressData.rua}, ${addressData.numero}</div>
-           ${addressData.complemento ? `<div>${addressData.complemento}</div>` : ''}
-           <div>${addressData.bairro}</div>
-           <div>${addressData.cidade} - ${addressData.estado}</div>
-           ${addressData.referencia ? `<div class="font-bold mt-1">REF: ${addressData.referencia}</div>` : ''}`
-        ) : (
-          '<div>Endereço não informado</div>'
-        )}
-        
-        <div class="divider"></div>
-        
-        <div class="font-bold mb-2">ITENS DO PEDIDO:</div>
-        ${order.itens.map((item: any) => `
-          <div class="item-row font-bold">
-            <div class="item-name">${item.quantidade}x ${item.nome}</div>
-            <div class="item-price">R$ ${(item.preco * item.quantidade).toFixed(2)}</div>
-          </div>
-          ${item.desconto_aplicado && item.desconto_aplicado > 0 ? `
-            <div class="item-row" style="font-size: 10px; color: #666; margin-top: -2px; margin-bottom: 2px;">
-              <div class="item-name">Desconto aplicado</div>
-              <div class="item-price">- R$ ${(item.desconto_aplicado * item.quantidade).toFixed(2)}</div>
-            </div>
-          ` : ''}
-          ${item.adicionais?.length ? item.adicionais.map((extra: any) => `
-            <div class="item-row extras">
-              <div class="item-name">+ ${extra.quantidade}x ${extra.nome}</div>
-              <div class="item-price">R$ ${(extra.preco * extra.quantidade).toFixed(2)}</div>
-            </div>
-          `).join('') : ''}
-          ${item.observacao ? `<div class="obs">Obs: ${item.observacao}</div>` : ''}
-        `).join('')}
-        
-        <div class="divider"></div>
-        
-        <div class="flex">
-          <span>Subtotal:</span>
-          <span>R$ ${order.valor_produtos?.toFixed(2) || '0.00'}</span>
-        </div>
-        <div class="flex">
-          <span>Taxa de Entrega:</span>
-          <span>R$ ${order.taxa_entrega?.toFixed(2) || '0.00'}</span>
-        </div>
-        ${order.valor_desconto > 0 ? `
-          <div class="flex">
-            <span>Desconto ${order.cupom_codigo ? `(${order.cupom_codigo})` : ''}:</span>
-            <span>- R$ ${order.valor_desconto.toFixed(2)}</span>
-          </div>
-        ` : ''}
-        <div class="flex font-bold mt-2" style="font-size: 14px;">
-          <span>TOTAL:</span>
-          <span>R$ ${order.valor_total?.toFixed(2) || '0.00'}</span>
-        </div>
-        
-        <div class="divider"></div>
-        
-        <div class="payment-msg">
-          ${paymentMessage.replace(/\n/g, '<br>')}
-        </div>
-        
-        <div class="text-center mt-2" style="font-size: 10px; margin-top: 16px;">
-          Gerado por Qfomeai
-        </div>
-        
-        <script>
-          window.onload = () => {
-            window.print();
-            setTimeout(() => window.close(), 500);
-          };
-        </script>
-      </body>
-      </html>
-    `;
-
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-  }, [restaurantProfile, profile?.nome, customerData, addressData]);
+  const handlePrint = React.useCallback((order: any) => {
+    printThermalOrder(order, restaurantProfile, profile);
+  }, [restaurantProfile, profile]);
 
   const handleEditPayment = React.useCallback(() => {
     if (!selectedOrder) return;
