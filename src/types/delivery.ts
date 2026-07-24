@@ -4,7 +4,9 @@ export type OperationalDeliveryStatus =
   | 'ACCEPTED' 
   | 'REJECTED' 
   | 'IN_TRANSIT' 
+  | 'DELIVERED_PENDING_SETTLEMENT'
   | 'DELIVERED' 
+  | 'FINALIZED'
   | 'FAILED' 
   | 'CANCELLED';
 
@@ -12,8 +14,43 @@ export type CanonicalDeliveryStatus =
   | 'UNASSIGNED' 
   | 'ASSIGNED' 
   | 'IN_TRANSIT' 
+  | 'DELIVERED_PENDING_SETTLEMENT'
   | 'DELIVERED' 
+  | 'FINALIZED'
   | 'FAILED';
+
+export interface DriverPaymentItem {
+  methodId: string;
+  methodName: string;
+  amount: number;
+}
+
+export interface DriverPaymentReport {
+  expectedAmount: number;
+  amountAlreadyPaid: number;
+  amountDue: number;
+  totalReported: number;
+  changeAmount: number;
+  netAmountReceived: number;
+  paymentMethods: DriverPaymentItem[];
+  observation?: string;
+  reportedAt: string;
+  reportedByDriverId: string;
+  reportedByDriverName?: string;
+}
+
+export interface RestaurantPaymentConfirmation {
+  paymentMethods: DriverPaymentItem[];
+  expectedAmount: number;
+  confirmedAmount: number;
+  changeAmount: number;
+  netAmountReceived: number;
+  observation?: string;
+  internalObservation?: string;
+  confirmedAt: string;
+  confirmedByUserId: string;
+  confirmedByUserName?: string;
+}
 
 export type FinancialDeliveryStatus = 
   | 'PENDING' 

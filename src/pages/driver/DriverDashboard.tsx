@@ -254,7 +254,7 @@ export default function DriverDashboard() {
             onMoveUp={(idx) => handleMoveOrder(idx, idx - 1)}
             onMoveDown={(idx) => handleMoveOrder(idx, idx + 1)}
             onStartDelivery={(order) => executeOrderAction(order, 'START')}
-            onCompleteDelivery={(order) => executeOrderAction(order, 'DELIVER')}
+            onCompleteDelivery={(order, paymentReport) => executeOrderAction(order, 'DELIVER', undefined, paymentReport)}
             onFailDelivery={(order, reason) => executeOrderAction(order, 'FAIL', reason)}
           />
         )}

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { RestaurantSettlementModal } from './RestaurantSettlementModal';
 import { 
   ShoppingBag, Clock, User, MapPin, CreditCard, Save, Edit2, ArrowLeft, Printer, X, Check, RefreshCcw, Bike, DollarSign, AlertCircle, ShieldCheck, FileText
 } from 'lucide-react';
@@ -823,112 +824,24 @@ const OrderDetails = ({
         </div>
       )}
 
-      {/* Modal de Baixa com Entregador */}
-      {showSettlementModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in text-left">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl flex flex-col space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-stone-100">
-              <div className="flex items-center gap-2 text-emerald-700">
-                <DollarSign className="w-6 h-6 stroke-[2.5]" />
-                <h3 className="text-lg font-bold text-stone-900">Baixa Financeira com Entregador</h3>
-              </div>
-              <button 
-                onClick={() => setShowSettlementModal(false)}
-                className="p-1.5 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-full transition-colors"
-                disabled={isSettling}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-100 space-y-1.5 text-xs">
-              <p className="text-stone-600">
-                <strong className="text-stone-800">Pedido:</strong> #{selectedOrder.id.slice(-6).toUpperCase()}
-              </p>
-              <p className="text-stone-600">
-                <strong className="text-stone-800">Entregador:</strong> {selectedOrder.assignedDriverName || selectedOrder.driverName || 'Não especificado'}
-              </p>
-              <p className="text-stone-600">
-                <strong className="text-stone-800">Forma de Pagamento:</strong> <span className="uppercase font-bold">{selectedOrder.forma_pagamento || 'Dinheiro/Entrega'}</span>
-              </p>
-              <p className="text-stone-600">
-                <strong className="text-stone-800">Valor Total do Pedido:</strong> <span className="font-extrabold text-emerald-700">R$ {Number(selectedOrder.valor_total || 0).toFixed(2)}</span>
-              </p>
-            </div>
-
-            {settleError && (
-              <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{settleError}</span>
-              </div>
-            )}
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Valor Repassado / Confirmado (R$)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={settlementAmount}
-                  onChange={(e) => setSettlementAmount(e.target.value)}
-                  className="w-full p-3 border border-stone-200 rounded-xl font-bold text-stone-900 focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
-                  placeholder="0.00"
-                  disabled={isSettling}
-                />
-                {parseFloat(settlementAmount || '0') !== Number(selectedOrder.valor_total || 0) && (
-                  <p className="text-[11px] text-amber-700 font-medium mt-1">
-                    ⚠️ Atenção: O valor digitado difere do valor total do pedido.
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">
-                  Observações de Baixa (opcional)
-                </label>
-                <textarea
-                  rows={2}
-                  value={settlementNotes}
-                  onChange={(e) => setSettlementNotes(e.target.value)}
-                  className="w-full p-2.5 border border-stone-200 rounded-xl text-xs text-stone-800 focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
-                  placeholder="Ex: Valor recebido integralmente em dinheiro no caixa..."
-                  disabled={isSettling}
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2 border-t border-stone-100">
-              <button
-                onClick={() => setShowSettlementModal(false)}
-                className="flex-1 py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-colors"
-                disabled={isSettling}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirmSettlement}
-                disabled={isSettling}
-                className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-200 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isSettling ? (
-                  <>
-                    <RefreshCcw className="w-4 h-4 animate-spin" />
-                    Baixando...
-                  </>
-                ) : (
-                  <>
-                    <Check className="w-4 h-4" />
-                    Confirmar Baixa
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal de Baixa / Conferência Financeira com Entregador */}
+      <RestaurantSettlementModal
+        order={selectedOrder}
+        isOpen={showSettlementModal}
+        onClose={() => setShowSettlementModal(false)}
+        onSuccess={() => {
+          setSelectedOrder({
+            ...selectedOrder,
+            status: 'finalizado',
+            deliveryStatus: 'FINALIZED',
+            pago: true,
+            paymentStatus: 'SETTLED',
+            financialSettlementStatus: 'SETTLED',
+            settledAt: new Date().toISOString()
+          });
+          setShowSettlementModal(false);
+        }}
+      />
 
       {/* Modal de Atribuição de Entregador */}
       {isAssignModalOpen && (

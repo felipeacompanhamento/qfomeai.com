@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Phone, MapPin, Navigation, CheckCircle, XCircle, DollarSign, MessageSquare, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
+import { Phone, MapPin, Navigation, CheckCircle, XCircle, DollarSign, MessageSquare, AlertTriangle, ArrowUp, ArrowDown, Clock } from 'lucide-react';
 import { AssignedOrder, LatLng } from '../types';
 import { buildOrderAddressFormatted } from '../utils/deliveryAddress';
 import { openSingleOrderInMaps } from '../services/driverMaps';
+import { DriverConfirmDeliveryModal } from './DriverConfirmDeliveryModal';
 
 interface DriverOrderCardProps {
   order: AssignedOrder;
@@ -12,7 +13,7 @@ interface DriverOrderCardProps {
   onAccept?: (order: AssignedOrder) => void;
   onReject?: (order: AssignedOrder) => void;
   onStartDelivery?: (order: AssignedOrder) => void;
-  onCompleteDelivery?: (order: AssignedOrder) => void;
+  onCompleteDelivery?: (order: AssignedOrder, paymentReport?: any) => void;
   onFailDelivery?: (order: AssignedOrder, reason: string) => void;
   // Reorder controls for Route tab
   isRouteTab?: boolean;
@@ -40,7 +41,7 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
 }) => {
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
   const [showFailModal, setShowFailModal] = useState(false);
-  const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [failReason, setFailReason] = useState('');
 
   const formattedAddress = buildOrderAddressFormatted(order);
@@ -56,8 +57,11 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
 
   const getStatusBadge = () => {
     switch (canonicalStatus) {
+      case 'DELIVERED_PENDING_SETTLEMENT':
+        return { label: 'Entregue', bg: 'bg-amber-50 text-amber-800 border-amber-200' };
+      case 'FINALIZED':
       case 'DELIVERED':
-        return { label: 'Entregue', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+        return { label: 'Finalizado', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
       case 'IN_TRANSIT':
         return { label: 'Em Entrega', bg: 'bg-blue-50 text-blue-700 border-blue-200' };
       case 'ACCEPTED':
@@ -260,7 +264,7 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
                 <button
                   type="button"
                   disabled={isLoading}
-                  onClick={() => setShowCompleteConfirm(true)}
+                  onClick={() => setShowCompleteModal(true)}
                   className="min-h-[44px] py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1 shadow-xs"
                 >
                   <CheckCircle className="w-4 h-4 text-white" />
@@ -269,8 +273,34 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
               </div>
             </div>
           )}
+
+          {canonicalStatus === 'DELIVERED_PENDING_SETTLEMENT' && (
+            <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="font-semibold">Aguardando conferência do restaurante</span>
+            </div>
+          )}
+
+          {(canonicalStatus === 'FINALIZED' || (canonicalStatus === 'DELIVERED' && order.financialSettlementStatus === 'SETTLED')) && (
+            <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="font-semibold">Conferência financeira concluída pelo restaurante</span>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Driver Confirm Delivery Payment Modal */}
+      <DriverConfirmDeliveryModal
+        order={order}
+        isOpen={showCompleteModal}
+        isLoading={isLoading}
+        onClose={() => setShowCompleteModal(false)}
+        onConfirm={(paymentReport) => {
+          setShowCompleteModal(false);
+          onCompleteDelivery?.(order, paymentReport);
+        }}
+      />
 
       {/* Reject Confirmation Modal */}
       {showRejectConfirm && (
@@ -303,36 +333,7 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
         </div>
       )}
 
-      {/* Complete Confirmation Modal */}
-      {showCompleteConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl">
-            <h3 className="text-base font-bold text-stone-900">Confirmar Entrega</h3>
-            <p className="text-xs text-stone-600">
-              Confirma a entrega do pedido #{orderNumber} para {customerName}?
-            </p>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowCompleteConfirm(false)}
-                className="px-4 py-2.5 rounded-xl border border-stone-300 text-xs font-bold text-stone-700 hover:bg-stone-50 min-h-[44px]"
-              >
-                Voltar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCompleteConfirm(false);
-                  onCompleteDelivery?.(order);
-                }}
-                className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 min-h-[44px]"
-              >
-                Confirmar Entrega
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Fail Reason Modal */}
       {showFailModal && (

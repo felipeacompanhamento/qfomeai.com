@@ -79,6 +79,7 @@ export interface OfflineActionItem {
   driverId?: string;
   availabilityStatus?: 'ONLINE' | 'OFFLINE';
   reason?: string;
+  paymentReport?: any;
   createdAt: string;
   retryCount?: number;
   lastError?: string;

@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Check, X, Clock, MapPin, CreditCard, ShoppingBag, ChevronRight, Phone, User, Bike, CheckCircle2, Megaphone, List, LayoutGrid } from 'lucide-react';
+import { Check, X, Clock, MapPin, CreditCard, ShoppingBag, ChevronRight, Phone, User, Bike, CheckCircle2, Megaphone, List, LayoutGrid, DollarSign } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import ReportModal from '../../components/ReportModal';
+import { RestaurantSettlementModal } from './components/RestaurantSettlementModal';
 
 interface OrderItem {
   id: string;
@@ -52,13 +53,14 @@ const statusKanbanMap: Record<string, string> = {
   preparo: "cozinha",
   pronto: "cozinha",
   entrega: "entrega",
-  entregue: "finalizado",
+  entregue: "entrega",
+  delivered_pending_settlement: "entrega",
   finalizado: "finalizado",
   cancelado: "finalizado",
   rejeitado: "finalizado"
 };
 
-const KanbanCard = React.memo(({ order, onUpdate }: { order: Order, onUpdate: (id: string, status: string) => void }) => {
+const KanbanCard = React.memo(({ order, onUpdate, onOpenSettlement }: { order: Order, onUpdate: (id: string, status: string) => void, onOpenSettlement?: (order: Order) => void }) => {
   const [clientName, setClientName] = useState<string>(order.cliente_nome || 'Cliente');
 
   useEffect(() => {
@@ -80,13 +82,18 @@ const KanbanCard = React.memo(({ order, onUpdate }: { order: Order, onUpdate: (i
     }
   }, [order.cliente_id, order.cliente_nome]);
 
+  const isPendingSettlement =
+    order.status === 'entregue' ||
+    order.status === 'delivered_pending_settlement' ||
+    (order as any).deliveryStatus === 'DELIVERED_PENDING_SETTLEMENT' ||
+    (order as any).financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
+
   const getNextStatus = (currentStatus: string) => {
     switch (currentStatus) {
       case 'pendente': return 'aceito';
       case 'aceito': return 'preparo';
       case 'preparo': return 'pronto';
       case 'pronto': return 'entrega';
-      case 'entrega': return 'entregue';
       default: return null;
     }
   };
@@ -101,14 +108,32 @@ const KanbanCard = React.memo(({ order, onUpdate }: { order: Order, onUpdate: (i
       </div>
       <h4 className="font-bold text-stone-800 truncate">{clientName}</h4>
       <p className="text-sm font-bold text-emerald-600">R$ {order.valor_total.toFixed(2)}</p>
-      <p className="text-xs text-stone-500 capitalize">{order.status}</p>
-      {nextStatus && (
-        <button
-          onClick={() => onUpdate(order.id, nextStatus)}
-          className="w-full mt-2 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-2 rounded-xl border border-emerald-200"
-        >
-          Avançar
-        </button>
+      
+      {isPendingSettlement ? (
+        <div className="space-y-2 pt-1 border-t border-stone-100">
+          <p className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+            Entregue — aguardando conferência
+          </p>
+          <button
+            onClick={() => onOpenSettlement?.(order)}
+            className="w-full text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5"
+          >
+            <DollarSign className="w-3.5 h-3.5" />
+            Conferir Recebimento
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-stone-500 capitalize">{order.status}</p>
+          {nextStatus && (
+            <button
+              onClick={() => onUpdate(order.id, nextStatus)}
+              className="w-full mt-2 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-2 rounded-xl border border-emerald-200"
+            >
+              Avançar
+            </button>
+          )}
+        </>
       )}
     </div>
   );
@@ -117,6 +142,7 @@ const KanbanCard = React.memo(({ order, onUpdate }: { order: Order, onUpdate: (i
 export default function OrdersManager({ orders, onUpdate }: OrdersManagerProps) {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrderForReport, setSelectedOrderForReport] = useState<Order | null>(null);
+  const [settlementOrder, setSettlementOrder] = useState<Order | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'pendente' | 'aceito' | 'despachado' | 'finalizado'>('pendente');
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
@@ -538,7 +564,7 @@ export default function OrdersManager({ orders, onUpdate }: OrdersManagerProps) 
                 <h3 className="font-bold text-stone-700 mb-4">{col.label}</h3>
                 <div className="flex-1 overflow-y-auto space-y-4">
                   {pedidosPorColuna[col.id].map(order => (
-                    <KanbanCard key={order.id} order={order} onUpdate={onUpdate} />
+                    <KanbanCard key={order.id} order={order} onUpdate={onUpdate} onOpenSettlement={(ord) => setSettlementOrder(ord)} />
                   ))}
                 </div>
               </div>
@@ -546,6 +572,19 @@ export default function OrdersManager({ orders, onUpdate }: OrdersManagerProps) 
           </div>
         </div>
       )}
+
+      {/* Restaurant Settlement Modal */}
+      <RestaurantSettlementModal
+        order={settlementOrder}
+        isOpen={!!settlementOrder}
+        onClose={() => setSettlementOrder(null)}
+        onSuccess={() => {
+          if (settlementOrder) {
+            onUpdate(settlementOrder.id, 'finalizado');
+          }
+          setSettlementOrder(null);
+        }}
+      />
 
       {/* Report Modal - Rendered only once outside loops */}
       {isModalOpen && selectedOrderForReport && (

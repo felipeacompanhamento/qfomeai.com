@@ -1012,7 +1012,8 @@ const statusKanbanMap: Record<string, string> = {
   preparo: "cozinha",
   pronto: "cozinha",
   entrega: "entrega",
-  entregue: "finalizado",
+  entregue: "entrega",
+  delivered_pending_settlement: "entrega",
   finalizado: "finalizado",
   cancelado: "finalizado",
   rejeitado: "finalizado"
@@ -1040,13 +1041,18 @@ const KanbanCard = React.memo(({ order, onUpdate, onClick, isUpdating }: { order
     }
   }, [order.cliente_id, order.cliente_nome]);
 
+  const isPendingSettlement =
+    order.status === 'entregue' ||
+    order.status === 'delivered_pending_settlement' ||
+    order.deliveryStatus === 'DELIVERED_PENDING_SETTLEMENT' ||
+    order.financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
+
   const getNextStatus = (currentStatus: string) => {
     switch (currentStatus) {
       case 'pendente': return 'aceito';
       case 'aceito': return 'preparo';
       case 'preparo': return 'pronto';
       case 'pronto': return 'entrega';
-      case 'entrega': return 'entregue';
       default: return null;
     }
   };
@@ -1064,23 +1070,42 @@ const KanbanCard = React.memo(({ order, onUpdate, onClick, isUpdating }: { order
       </div>
       <h4 className="font-bold text-stone-800 truncate">{clientName}</h4>
       <p className="text-sm font-bold text-emerald-600">R$ {order.valor_total.toFixed(2)}</p>
-      <p className="text-xs text-stone-500 capitalize">{order.status}</p>
-      {nextStatus && (
-        <button
-          onClick={(e) => { 
-            e.stopPropagation(); 
-            onUpdate(order.id, nextStatus); 
-          }}
-          disabled={isUpdating || (nextStatus === 'entregue' && !order.pago)}
-          className={`w-full mt-2 text-xs font-bold px-3 py-2 rounded-xl border transition-all ${
-            (isUpdating || (nextStatus === 'entregue' && !order.pago))
-              ? 'bg-stone-100 text-stone-400 border-stone-200 cursor-not-allowed'
-              : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
-          }`}
-          title={nextStatus === 'entregue' && !order.pago ? 'Marque o pedido como pago antes de finalizar' : ''}
-        >
-          {isUpdating ? 'Atualizando...' : 'Avançar'}
-        </button>
+
+      {isPendingSettlement ? (
+        <div className="space-y-2 pt-1 border-t border-stone-100">
+          <p className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+            Entregue — aguardando conferência
+          </p>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onClick();
+            }}
+            className="w-full text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5"
+          >
+            Conferir Recebimento
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-stone-500 capitalize">{order.status}</p>
+          {nextStatus && (
+            <button
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                onUpdate(order.id, nextStatus); 
+              }}
+              disabled={isUpdating}
+              className={`w-full mt-2 text-xs font-bold px-3 py-2 rounded-xl border transition-all ${
+                isUpdating
+                  ? 'bg-stone-100 text-stone-400 border-stone-200 cursor-not-allowed'
+                  : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
+              }`}
+            >
+              {isUpdating ? 'Atualizando...' : 'Avançar'}
+            </button>
+          )}
+        </>
       )}
     </div>
   );

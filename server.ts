@@ -2579,75 +2579,78 @@ async function startServer() {
 
           driverUpdates.currentOrderId = orderId;
           driverUpdates.availabilityStatus = 'ON_DELIVERY';
-        } else if (action === 'DELIVER') {
-          newStatus = 'DELIVERED';
+        } else if (action === 'DELIVER' || action === 'DELIVERED') {
+          newStatus = 'DELIVERED_PENDING_SETTLEMENT';
+          
+          const orderTotal = Number(orderData.valor_total || orderData.total || 0);
           const isPrepaid = orderData.pago === true || orderData.paymentStatus === 'PAID' || orderData.paymentStatus === 'SETTLED';
-          const paymentCollectedByDriver = req.body.paymentCollectedByDriver === true;
-          const paymentNotCollectedReason = req.body.paymentNotCollectedReason || failureReason || 'Não informado';
+          const amountAlreadyPaid = isPrepaid ? orderTotal : 0;
+          const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
+
+          // Parse payment report from driver
+          const paymentReportPayload = req.body.paymentReport || {};
+          const paymentMethods = Array.isArray(paymentReportPayload.paymentMethods) 
+            ? paymentReportPayload.paymentMethods 
+            : [];
+          const observation = (paymentReportPayload.observation || req.body.observation || '').trim();
+
+          const totalReported = paymentMethods.reduce((sum: number, pm: any) => sum + (Number(pm.amount) || 0), 0);
+
+          if (amountDue > 0 && totalReported < amountDue) {
+            return res.status(400).json({ error: 'O total recebido não pode ser menor que o valor pendente do pedido.' });
+          }
+
+          const changeAmount = amountDue > 0 ? Math.max(0, totalReported - amountDue) : 0;
+          const netAmountReceived = totalReported - changeAmount;
+
+          const driverPaymentReport = {
+            expectedAmount: orderTotal,
+            amountAlreadyPaid,
+            amountDue,
+            totalReported,
+            changeAmount,
+            netAmountReceived,
+            paymentMethods,
+            observation,
+            reportedAt: now,
+            reportedByDriverId: driver.id,
+            reportedByDriverName: driver.nome || driver.name || 'Entregador'
+          };
 
           orderUpdates.deliveredAt = now;
           orderUpdates.horario_entrega = now;
+          orderUpdates.deliveredByDriverId = driver.id;
+          orderUpdates.deliveredByDriverName = driver.nome || driver.name || 'Entregador';
+          orderUpdates.deliveryStatus = 'DELIVERED_PENDING_SETTLEMENT';
+          orderUpdates.canonicalStatus = 'DELIVERED_PENDING_SETTLEMENT';
+          orderUpdates.status_entrega = 'delivered';
+          orderUpdates.status = 'entregue'; // Keeps in "entrega" column in Kanban
+          orderUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
+          orderUpdates.driverPaymentReport = driverPaymentReport;
+
           deliveryUpdates.deliveredAt = now;
           deliveryUpdates.horario_entrega = now;
           deliveryUpdates.completedByDriverId = driver.id;
           deliveryUpdates.lastAssignedDriverId = driver.id;
           deliveryUpdates.responsibleDriverId = driver.id;
+          deliveryUpdates.deliveryStatus = 'DELIVERED_PENDING_SETTLEMENT';
+          deliveryUpdates.canonicalStatus = 'DELIVERED_PENDING_SETTLEMENT';
+          deliveryUpdates.status_entrega = 'delivered';
+          deliveryUpdates.status = 'entregue';
+          deliveryUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
+          deliveryUpdates.driverPaymentReport = driverPaymentReport;
 
-          if (isPrepaid) {
-            orderUpdates.status = 'finalizado';
-            orderUpdates.deliveryStatus = 'DELIVERED';
-            orderUpdates.canonicalStatus = 'DELIVERED';
-            orderUpdates.status_entrega = 'delivered';
-            orderUpdates.paymentStatus = 'SETTLED';
-            orderUpdates.pago = true;
-            orderUpdates.data_finalizado = now;
-
-            deliveryUpdates.status = 'finalizado';
-            deliveryUpdates.deliveryStatus = 'DELIVERED';
-            deliveryUpdates.canonicalStatus = 'DELIVERED';
-            deliveryUpdates.status_entrega = 'delivered';
-            deliveryUpdates.paymentStatus = 'SETTLED';
-            deliveryUpdates.pago = true;
-          } else if (paymentCollectedByDriver) {
-            orderUpdates.status = 'entregue';
-            orderUpdates.deliveryStatus = 'DELIVERED';
-            orderUpdates.canonicalStatus = 'DELIVERED';
-            orderUpdates.status_entrega = 'delivered';
-            orderUpdates.paymentStatus = 'AWAITING_DRIVER_SETTLEMENT';
-            orderUpdates.paymentCollectedByDriver = true;
-            orderUpdates.paymentCollectedAt = now;
-            orderUpdates.paymentCollectedAmount = orderData.valor_total || 0;
-            orderUpdates.paymentCollectedMethod = orderData.forma_pagamento || 'Cobrança na Entrega';
-            orderUpdates.pago = false;
-
-            deliveryUpdates.status = 'entregue';
-            deliveryUpdates.deliveryStatus = 'DELIVERED';
-            deliveryUpdates.canonicalStatus = 'DELIVERED';
-            deliveryUpdates.status_entrega = 'delivered';
-            deliveryUpdates.paymentStatus = 'AWAITING_DRIVER_SETTLEMENT';
-            deliveryUpdates.paymentCollectedByDriver = true;
-            deliveryUpdates.paymentCollectedAt = now;
-            deliveryUpdates.paymentCollectedAmount = orderData.valor_total || 0;
-            deliveryUpdates.paymentCollectedMethod = orderData.forma_pagamento || 'Cobrança na Entrega';
-            deliveryUpdates.pago = false;
-          } else {
-            orderUpdates.status = 'entregue';
-            orderUpdates.deliveryStatus = 'DELIVERED';
-            orderUpdates.canonicalStatus = 'DELIVERED';
-            orderUpdates.status_entrega = 'delivered';
-            orderUpdates.paymentStatus = 'PAYMENT_NOT_COLLECTED';
-            orderUpdates.paymentCollectedByDriver = false;
-            orderUpdates.paymentNotCollectedReason = paymentNotCollectedReason;
-            orderUpdates.pago = false;
-
-            deliveryUpdates.status = 'entregue';
-            deliveryUpdates.deliveryStatus = 'DELIVERED';
-            deliveryUpdates.canonicalStatus = 'DELIVERED';
-            deliveryUpdates.status_entrega = 'delivered';
-            deliveryUpdates.paymentStatus = 'PAYMENT_NOT_COLLECTED';
-            deliveryUpdates.paymentCollectedByDriver = false;
-            deliveryUpdates.paymentNotCollectedReason = paymentNotCollectedReason;
-            deliveryUpdates.pago = false;
+          // Audit events
+          try {
+            await db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId).collection('auditEvents').add({
+              type: 'DELIVERY_CONFIRMED_BY_DRIVER',
+              driverId: driver.id,
+              driverName: driver.nome || driver.name || 'Entregador',
+              driverPaymentReport,
+              timestamp: now
+            });
+          } catch (auditErr) {
+            console.warn('[DELIVER] Audit event log failed:', auditErr);
           }
 
           let nextOrderId: string | null = null;
@@ -2868,12 +2871,8 @@ async function startServer() {
   // POST: Settlement of payment collected by driver
   app.post('/api/restaurant/orders/:orderId/settle-driver-payment', verifyRestaurant, async (req: any, res: any) => {
     const { orderId } = req.params;
-    const { receivedAmount, notes, clientActionId } = req.body;
+    const { receivedAmount, paymentMethods, notes, internalNotes, clientActionId } = req.body;
     const restaurantId = req.user.restaurantId;
-
-    if (receivedAmount === undefined || receivedAmount === null || Number(receivedAmount) < 0) {
-      return res.status(400).json({ error: 'O valor recebido informado é inválido' });
-    }
 
     try {
       const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
@@ -2887,44 +2886,78 @@ async function startServer() {
       const orderData = orderDoc.data()!;
 
       // Verify status allows settlement
-      if (orderData.paymentStatus === 'SETTLED' && orderData.status === 'finalizado' && orderData.pago === true) {
+      if (orderData.financialSettlementStatus === 'SETTLED' && orderData.status === 'finalizado' && orderData.pago === true) {
         return res.status(400).json({ error: 'Este pedido já foi baixado e finalizado anteriormente.' });
       }
 
-      const isDelivered = orderData.deliveryStatus === 'DELIVERED' || orderData.status === 'entregue' || orderData.status === 'completed' || orderData.status === 'finalizado';
-      if (!isDelivered) {
-        return res.status(400).json({ error: 'Somente pedidos entregues podem receber baixa do pagamento.' });
+      const now = new Date().toISOString();
+      const orderTotal = Number(orderData.valor_total || orderData.total || 0);
+      const isPrepaid = (orderData.pago === true && orderData.status === 'finalizado') || orderData.paymentStatus === 'PAID';
+      const amountAlreadyPaid = isPrepaid ? orderTotal : (orderData.driverPaymentReport?.amountAlreadyPaid || 0);
+      const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
+
+      let confirmedPaymentMethods: any[] = [];
+      let confirmedTotal = 0;
+
+      if (Array.isArray(paymentMethods) && paymentMethods.length > 0) {
+        confirmedPaymentMethods = paymentMethods;
+        confirmedTotal = paymentMethods.reduce((sum: number, pm: any) => sum + (Number(pm.amount) || 0), 0);
+      } else if (receivedAmount !== undefined && receivedAmount !== null) {
+        confirmedTotal = Number(receivedAmount);
+        confirmedPaymentMethods = orderData.driverPaymentReport?.paymentMethods || [
+          { methodId: orderData.forma_pagamento || 'dinheiro', methodName: orderData.forma_pagamento || 'Dinheiro', amount: confirmedTotal }
+        ];
+      } else {
+        confirmedTotal = orderData.driverPaymentReport?.totalReported || orderTotal;
+        confirmedPaymentMethods = orderData.driverPaymentReport?.paymentMethods || [];
       }
 
-      const now = new Date().toISOString();
-      const numReceived = Number(receivedAmount);
-      const expectedAmount = Number(orderData.valor_total || 0);
-      const difference = numReceived - expectedAmount;
+      const changeAmount = amountDue > 0 ? Math.max(0, confirmedTotal - amountDue) : 0;
+      const netAmountReceived = confirmedTotal - changeAmount;
+
+      const restaurantPaymentConfirmation = {
+        paymentMethods: confirmedPaymentMethods,
+        expectedAmount: orderTotal,
+        confirmedAmount: confirmedTotal,
+        changeAmount,
+        netAmountReceived,
+        observation: notes || '',
+        internalObservation: internalNotes || '',
+        confirmedAt: now,
+        confirmedByUserId: req.user.uid,
+        confirmedByUserName: req.user.nome || req.user.displayName || req.user.email || 'Restaurante'
+      };
 
       const batch = db.batch();
 
       const orderUpdates = {
+        financialSettlementStatus: 'SETTLED',
+        financialSettledAt: now,
+        financialSettledByUserId: req.user.uid,
+        financialSettledByUserName: req.user.nome || req.user.displayName || req.user.email || 'Restaurante',
+        restaurantPaymentConfirmation,
+        deliveryStatus: 'FINALIZED',
+        canonicalStatus: 'FINALIZED',
         status: 'finalizado',
-        paymentStatus: 'SETTLED',
+        status_entrega: 'delivered',
         pago: true,
-        driverSettlementAt: now,
-        driverSettlementBy: req.user.uid,
-        driverSettlementAmount: numReceived,
-        driverSettlementNotes: notes || '',
-        driverSettlementDifference: difference,
+        paymentStatus: 'SETTLED',
         data_finalizado: now,
         updated_at: now
       };
 
       const deliveryUpdates = {
+        financialSettlementStatus: 'SETTLED',
+        financialSettledAt: now,
+        financialSettledByUserId: req.user.uid,
+        financialSettledByUserName: req.user.nome || req.user.displayName || req.user.email || 'Restaurante',
+        restaurantPaymentConfirmation,
+        deliveryStatus: 'FINALIZED',
+        canonicalStatus: 'FINALIZED',
         status: 'finalizado',
-        paymentStatus: 'SETTLED',
+        status_entrega: 'delivered',
         pago: true,
-        driverSettlementAt: now,
-        driverSettlementBy: req.user.uid,
-        driverSettlementAmount: numReceived,
-        driverSettlementNotes: notes || '',
-        driverSettlementDifference: difference,
+        paymentStatus: 'SETTLED',
         updatedAt: now
       };
 
@@ -2933,22 +2966,37 @@ async function startServer() {
 
       await batch.commit();
 
-      // Log financial event
+      // Log financial logs & launches
       try {
         await db.collection('restaurants').doc(restaurantId).collection('financialLogs').add({
           orderId,
-          type: 'DRIVER_SETTLEMENT',
-          receivedAmount: numReceived,
-          expectedAmount,
-          difference,
-          hasDivergence: difference !== 0,
+          type: 'FINANCIAL_SETTLEMENT_CONFIRMED',
+          receivedAmount: netAmountReceived,
+          expectedAmount: orderTotal,
+          driverPaymentReport: orderData.driverPaymentReport || null,
+          restaurantPaymentConfirmation,
           driverId: orderData.driverId || orderData.assignedDriverId || null,
           driverName: orderData.driverName || 'Entregador',
           settledBy: req.user.uid,
           notes: notes || '',
+          internalNotes: internalNotes || '',
           clientActionId: clientActionId || null,
           createdAt: now
         });
+
+        for (const pm of confirmedPaymentMethods) {
+          await db.collection('restaurants').doc(restaurantId).collection('financial_launches').add({
+            orderId,
+            type: 'INCOME',
+            category: 'DELIVERY_SALE',
+            paymentMethodId: pm.methodId || 'outro',
+            paymentMethodName: pm.methodName || 'Forma de Pagamento',
+            amount: Number(pm.amount) || 0,
+            status: 'CONFIRMED',
+            settledByUserId: req.user.uid,
+            createdAt: now
+          });
+        }
       } catch (logErr) {
         console.warn('Error recording financial log:', logErr);
       }
@@ -2976,8 +3024,7 @@ async function startServer() {
 
       res.json({
         success: true,
-        message: 'Baixa confirmada com sucesso',
-        difference,
+        message: 'Baixa financeira e finalização concluídas com sucesso',
         settledAt: now
       });
     } catch (error: any) {

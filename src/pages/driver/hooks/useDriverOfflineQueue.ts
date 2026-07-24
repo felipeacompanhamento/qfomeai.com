@@ -67,8 +67,10 @@ export const useDriverOfflineQueue = ({
                 'Authorization': `Bearer ${token}`
               },
               body: JSON.stringify({
+                action: item.type,
                 type: item.type,
                 reason: item.reason,
+                paymentReport: item.paymentReport,
                 clientActionId: item.clientActionId
               })
             });

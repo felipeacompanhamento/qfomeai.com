@@ -57,10 +57,26 @@ export function mapDeliveryStatus(operationalStatus: OperationalDeliveryStatus, 
         status: 'delivering'
       };
 
+    case 'DELIVERED_PENDING_SETTLEMENT':
+      return {
+        deliveryStatus: 'DELIVERED_PENDING_SETTLEMENT',
+        canonicalStatus: 'DELIVERED_PENDING_SETTLEMENT',
+        status_entrega: 'delivered',
+        status: 'entregue'
+      };
+
     case 'DELIVERED':
       return {
-        deliveryStatus: 'DELIVERED',
-        canonicalStatus: 'DELIVERED',
+        deliveryStatus: 'DELIVERED_PENDING_SETTLEMENT',
+        canonicalStatus: 'DELIVERED_PENDING_SETTLEMENT',
+        status_entrega: 'delivered',
+        status: 'entregue'
+      };
+
+    case 'FINALIZED':
+      return {
+        deliveryStatus: 'FINALIZED',
+        canonicalStatus: 'FINALIZED',
         status_entrega: 'delivered',
         status: 'completed'
       };

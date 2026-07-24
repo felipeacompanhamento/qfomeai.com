@@ -11,7 +11,7 @@ interface DriverRouteTabProps {
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onStartDelivery: (order: AssignedOrder) => void;
-  onCompleteDelivery: (order: AssignedOrder) => void;
+  onCompleteDelivery: (order: AssignedOrder, paymentReport?: any) => void;
   onFailDelivery: (order: AssignedOrder, reason: string) => void;
 }
 

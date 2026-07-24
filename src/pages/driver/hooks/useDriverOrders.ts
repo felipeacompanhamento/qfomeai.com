@@ -177,7 +177,7 @@ export const useDriverOrders = ({
   const historicalOrders = useMemo(() => {
     const activeFinished = orders.filter(o => {
       const s = getOrderDeliveryStatus(o);
-      return s === 'DELIVERED' || s === 'FAILED' || s === 'CANCELLED';
+      return s === 'DELIVERED_PENDING_SETTLEMENT' || s === 'DELIVERED' || s === 'FINALIZED' || s === 'FAILED' || s === 'CANCELLED';
     });
 
     const combinedMap = new Map<string, AssignedOrder>();
@@ -211,7 +211,8 @@ export const useDriverOrders = ({
   const executeOrderAction = useCallback(async (
     order: AssignedOrder,
     actionType: 'ACCEPT' | 'REJECT' | 'START' | 'DELIVER' | 'FAIL',
-    reason?: string
+    reason?: string,
+    paymentReport?: any
   ) => {
     if (!user || actionLoadingId) return;
 
@@ -226,7 +227,7 @@ export const useDriverOrders = ({
       ACCEPT: 'ACCEPTED',
       REJECT: 'FAILED',
       START: 'IN_TRANSIT',
-      DELIVER: 'DELIVERED',
+      DELIVER: 'DELIVERED_PENDING_SETTLEMENT',
       FAIL: 'FAILED'
     };
 
@@ -237,6 +238,9 @@ export const useDriverOrders = ({
         return {
           ...o,
           deliveryStatus: nextDeliveryStatus,
+          canonicalStatus: nextDeliveryStatus,
+          financialSettlementStatus: actionType === 'DELIVER' ? 'PENDING_RESTAURANT_CONFIRMATION' : o.financialSettlementStatus,
+          driverPaymentReport: paymentReport || o.driverPaymentReport,
           failureReason: reason || o.failureReason
         };
       }
@@ -255,6 +259,7 @@ export const useDriverOrders = ({
           body: JSON.stringify({
             action: actionType,
             reason,
+            paymentReport,
             clientActionId
           })
         });
@@ -282,6 +287,7 @@ export const useDriverOrders = ({
         restaurantId: order.restaurantId || order.restaurante_id,
         driverId: user.uid,
         reason,
+        paymentReport,
         createdAt: new Date().toISOString()
       });
 
