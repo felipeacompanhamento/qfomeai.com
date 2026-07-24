@@ -1,13 +1,21 @@
 import React, { useState } from 'react';
 import { RestaurantSettlementModal } from './RestaurantSettlementModal';
 import { 
-  ShoppingBag, Clock, User, MapPin, CreditCard, Save, Edit2, ArrowLeft, Printer, X, Check, RefreshCcw, Bike, DollarSign, AlertCircle, ShieldCheck, FileText
+  ShoppingBag, Clock, User, MapPin, CreditCard, Save, Edit2, ArrowLeft, Printer, X, Check, RefreshCcw, Bike, DollarSign, AlertCircle, ShieldCheck, FileText, CheckCircle2
 } from 'lucide-react';
 import { getRestaurantStatusText, getStatusColor } from './OrderListItem';
 import { db } from '../../../firebase';
 import { collection, query, where, getDocs, doc, updateDoc, setDoc } from 'firebase/firestore';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getPaymentStatusInfo } from '../../../utils/paymentStatus';
+import {
+  getCanonicalOrderState,
+  getOrderStatusLabel,
+  getDeliveryStatusLabel,
+  getFinancialStatusLabel,
+  canRestaurantSettleOrder,
+  getDriverCashAccountability
+} from '../../../domain/order/orderLifecycle';
 
 interface OrderDetailsProps {
   selectedOrder: any;
@@ -261,59 +269,69 @@ const OrderDetails = ({
         </div>
 
         {/* Status Badges Breakdown */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-1 border-t border-stone-200/60">
-          <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
-            <span className="text-stone-400 font-bold uppercase text-[10px]">Status Pedido:</span>
-            <span className="font-extrabold text-stone-800 uppercase">{getRestaurantStatusText(selectedOrder.status)}</span>
-          </div>
+        {(() => {
+          const canonicalState = getCanonicalOrderState(selectedOrder);
+          const pendingSettlement = canRestaurantSettleOrder(selectedOrder);
 
-          <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
-            <span className="text-stone-400 font-bold uppercase text-[10px]">Entrega:</span>
-            <span className={`font-extrabold uppercase ${
-              selectedOrder.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' :
-              (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'text-blue-700' :
-              selectedOrder.deliveryStatus === 'ACCEPTED' ? 'text-indigo-700' :
-              selectedOrder.deliveryStatus === 'FAILED' ? 'text-rose-700' : 'text-stone-600'
-            }`}>
-              {selectedOrder.deliveryStatus === 'DELIVERED' ? 'Entregue' :
-               (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'Em Rota' :
-               selectedOrder.deliveryStatus === 'ACCEPTED' ? 'Aceito' :
-               selectedOrder.deliveryStatus === 'FAILED' ? 'Falhou' :
-               selectedOrder.assignedDriverId ? 'Atribuído' : 'Não Atribuído'}
-            </span>
-          </div>
+          return (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-1 border-t border-stone-200/60">
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+                  <span className="text-stone-400 font-bold uppercase text-[10px]">Status Pedido:</span>
+                  <span className="font-extrabold text-stone-800 uppercase">{getOrderStatusLabel(selectedOrder)}</span>
+                </div>
 
-          <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
-            <span className="text-stone-400 font-bold uppercase text-[10px]">Financeiro:</span>
-            <span className={`font-extrabold uppercase px-2 py-0.5 rounded-md text-[10px] ${paymentInfo.badgeClass}`}>
-              {paymentInfo.label}
-            </span>
-          </div>
-        </div>
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+                  <span className="text-stone-400 font-bold uppercase text-[10px]">Entrega:</span>
+                  <span className={`font-extrabold uppercase ${
+                    canonicalState.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' :
+                    canonicalState.deliveryStatus === 'IN_TRANSIT' ? 'text-blue-700' :
+                    canonicalState.deliveryStatus === 'ACCEPTED' ? 'text-indigo-700' :
+                    canonicalState.deliveryStatus === 'FAILED' ? 'text-rose-700' : 'text-stone-600'
+                  }`}>
+                    {getDeliveryStatusLabel(selectedOrder)}
+                  </span>
+                </div>
 
-        {/* Banner de Aguardando Baixa do Entregador */}
-        {(selectedOrder.paymentStatus === 'AWAITING_DRIVER_SETTLEMENT' || (selectedOrder.paymentCollectedByDriver && !selectedOrder.pago)) && (
-          <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-start gap-3">
-              <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 mt-0.5">
-                <DollarSign className="w-5 h-5 stroke-[2.5]" />
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+                  <span className="text-stone-400 font-bold uppercase text-[10px]">Financeiro:</span>
+                  <span className={`font-extrabold uppercase px-2 py-0.5 rounded-md text-[10px] ${
+                    canonicalState.financialSettlementStatus === 'SETTLED' ? 'bg-emerald-100 text-emerald-800' :
+                    canonicalState.financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION' ? 'bg-amber-100 text-amber-800' :
+                    'bg-stone-100 text-stone-700'
+                  }`}>
+                    {getFinancialStatusLabel(selectedOrder)}
+                  </span>
+                </div>
               </div>
-              <div>
-                <h4 className="font-extrabold text-sm text-amber-950">Pagamento Recebido pelo Entregador</h4>
-                <p className="text-xs text-amber-800 font-medium leading-relaxed mt-0.5">
-                  O entregador <strong>{selectedOrder.assignedDriverName || selectedOrder.driverName || 'designado'}</strong> confirmou o recebimento na entrega. Aguardando repasse ao restaurante.
-                </p>
-              </div>
-            </div>
 
-            <button
-              onClick={handleOpenSettlement}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-200 shrink-0 self-start sm:self-center"
-            >
-              Confirmar Baixa
-            </button>
-          </div>
-        )}
+              {/* Banner de Aguardando Conferência Financeira */}
+              {pendingSettlement && (
+                <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 mt-0.5">
+                      <DollarSign className="w-5 h-5 stroke-[2.5]" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-sm text-amber-950">Entregue — Aguardando Conferência Financeira</h4>
+                      <p className="text-xs text-amber-800 font-medium leading-relaxed mt-0.5">
+                        O entregador <strong>{selectedOrder.deliveredByDriverName || selectedOrder.assignedDriverName || selectedOrder.driverName || 'designado'}</strong> confirmou a entrega. Realize a conferência do recebimento para dar baixa final no pedido.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleOpenSettlement}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-200 shrink-0 self-start sm:self-center flex items-center gap-1.5"
+                  >
+                    <DollarSign className="w-4 h-4" />
+                    Conferir Recebimento
+                  </button>
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Content */}
@@ -520,65 +538,158 @@ const OrderDetails = ({
           </div>
         </div>
 
-        {selectedOrder.tipo_entrega !== 'retirada' && (
-          <div className="bg-stone-50 p-6 rounded-2xl border border-stone-100 space-y-4">
-            <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
-              <Bike className="w-4 h-4" /> Status da Entrega
-            </h3>
-            {selectedOrder.assignedDriverId ? (
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-stone-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center">
-                    <Bike className="w-6 h-6" />
+        {selectedOrder.tipo_entrega !== 'retirada' && (() => {
+          const canonicalState = getCanonicalOrderState(selectedOrder);
+          const driverName = selectedOrder.deliveredByDriverName || selectedOrder.assignedDriverName || selectedOrder.driverName || 'Entregador';
+          const driverPhone = selectedOrder.assignedDriverPhone;
+          const report = selectedOrder.driverPaymentReport || null;
+
+          return (
+            <div className="bg-stone-50 p-6 rounded-2xl border border-stone-100 space-y-4">
+              <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
+                <Bike className="w-4 h-4" /> Status da Entrega
+              </h3>
+              {(canonicalState.deliveryStatus === 'DELIVERED' || selectedOrder.assignedDriverId || report) ? (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-stone-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center shrink-0">
+                      <Bike className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-stone-800">{driverName}</h4>
+                      {driverPhone && (
+                        <p className="text-sm text-stone-500 flex items-center gap-1.5 mt-0.5">
+                          <span>Telefone: {driverPhone}</span>
+                          <a 
+                            href={`https://wa.me/55${driverPhone.replace(/\D/g, '')}`}
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="text-emerald-600 hover:underline font-bold text-xs"
+                          >
+                            (Chamar no WhatsApp)
+                          </a>
+                        </p>
+                      )}
+                      {(selectedOrder.deliveredAt || selectedOrder.horario_entrega) && (
+                        <p className="text-xs text-stone-400 mt-1">
+                          Entregue em: {new Date(selectedOrder.deliveredAt || selectedOrder.horario_entrega).toLocaleString('pt-BR')}
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <div>
-                    <h4 className="font-bold text-stone-800">{selectedOrder.assignedDriverName || selectedOrder.driverName || 'Entregador'}</h4>
-                    {selectedOrder.assignedDriverPhone && (
-                      <p className="text-sm text-stone-500 flex items-center gap-1.5 mt-0.5">
-                        <span>Telefone: {selectedOrder.assignedDriverPhone}</span>
-                        <a 
-                          href={`https://wa.me/55${selectedOrder.assignedDriverPhone.replace(/\D/g, '')}`}
-                          target="_blank" 
-                          rel="noreferrer"
-                          className="text-emerald-600 hover:underline font-bold text-xs"
-                        >
-                          (Chamar no WhatsApp)
-                        </a>
-                      </p>
-                    )}
+                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase ${
+                      canonicalState.deliveryStatus === 'DELIVERED' 
+                        ? (canonicalState.financialSettlementStatus === 'SETTLED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900') 
+                        : canonicalState.deliveryStatus === 'IN_TRANSIT' ? 'bg-amber-50 text-amber-600'
+                        : canonicalState.deliveryStatus === 'ACCEPTED' ? 'bg-indigo-50 text-indigo-600'
+                        : 'bg-yellow-50 text-yellow-600'
+                    }`}>
+                      {canonicalState.deliveryStatus === 'DELIVERED' 
+                        ? (canonicalState.financialSettlementStatus === 'SETTLED' ? 'Entregue e Conferido' : 'Entregue — Aguardando Conferência') 
+                        : getDeliveryStatusLabel(selectedOrder)}
+                    </span>
                   </div>
                 </div>
-                <div>
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase ${
-                    selectedOrder.deliveryStatus === 'ACCEPTED' ? 'bg-indigo-50 text-indigo-600' :
-                    (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'bg-amber-50 text-amber-600' :
-                    selectedOrder.deliveryStatus === 'DELIVERED' ? 'bg-emerald-50 text-emerald-600' :
-                    selectedOrder.deliveryStatus === 'REFUSED' ? 'bg-red-50 text-red-600' :
-                    selectedOrder.deliveryStatus === 'FAILED' ? 'bg-stone-100 text-stone-600' :
-                    'bg-yellow-50 text-yellow-600'
-                  }`}>
-                    {selectedOrder.deliveryStatus === 'ACCEPTED' ? 'Aceito' :
-                     (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'Em Entrega' :
-                     selectedOrder.deliveryStatus === 'DELIVERED' ? 'Entregue' :
-                     selectedOrder.deliveryStatus === 'REFUSED' ? 'Recusado' :
-                     selectedOrder.deliveryStatus === 'FAILED' ? 'Falhou / Devolvido' :
-                     'Pendente Aceite'}
+              ) : (
+                <div className="bg-amber-50 rounded-xl p-4 border border-amber-100 flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
+                    <span className="font-bold text-sm">!</span>
+                  </div>
+                  <div>
+                    <p className="text-sm text-amber-800 font-bold">Nenhum entregador atribuído</p>
+                    <p className="text-xs text-amber-600 mt-1">Este pedido é para entrega, mas ainda não foi repassado ao seu time de entregadores. Clique no botão de enviar ao entregador no rodapé de ações para designar um profissional da sua frota.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Seção Obrigatória de Conferência do Recebimento */}
+        {(canRestaurantSettleOrder(selectedOrder) || selectedOrder.driverPaymentReport) && (() => {
+          const report = selectedOrder.driverPaymentReport || {};
+          const orderTotal = Number(selectedOrder.valor_total || selectedOrder.total || 0);
+          const amountAlreadyPaid = Number(report.amountAlreadyPaid || 0);
+          const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
+          const reportedTotal = Number(report.totalReported || amountDue);
+          const changeAmount = Number(report.changeAmount || 0);
+          const netAmount = Number(report.netAmountReceived || (reportedTotal - changeAmount));
+
+          return (
+            <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-amber-500/20 pb-3">
+                <div className="flex items-center gap-2 text-amber-950 font-extrabold text-sm uppercase tracking-wider">
+                  <DollarSign className="w-5 h-5 text-amber-600" />
+                  Conferência do Recebimento
+                </div>
+                <span className="bg-amber-500 text-white font-extrabold text-[10px] px-2.5 py-1 rounded-full uppercase tracking-wider">
+                  Pendente de Conferência
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Valor do Pedido</span>
+                  <span className="font-extrabold text-stone-800 text-sm">R$ {orderTotal.toFixed(2)}</span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Já Pago (Online)</span>
+                  <span className="font-extrabold text-emerald-600 text-sm">R$ {amountAlreadyPaid.toFixed(2)}</span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Saldo Esperado</span>
+                  <span className="font-extrabold text-amber-700 text-sm">R$ {amountDue.toFixed(2)}</span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Valor Informado</span>
+                  <span className="font-extrabold text-indigo-700 text-sm">R$ {reportedTotal.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {report.paymentMethods && report.paymentMethods.length > 0 && (
+                <div className="bg-white p-3 rounded-xl border border-amber-200 space-y-1 text-xs">
+                  <span className="text-stone-400 font-semibold text-[10px] uppercase block mb-1">
+                    Formas de Pagamento Informadas pelo Entregador:
                   </span>
+                  {report.paymentMethods.map((pm: any, idx: number) => (
+                    <div key={idx} className="flex justify-between items-center text-stone-700 font-medium">
+                      <span>• {pm.methodName || pm.methodId}:</span>
+                      <span className="font-bold">R$ {Number(pm.amount || 0).toFixed(2)}</span>
+                    </div>
+                  ))}
                 </div>
+              )}
+
+              <div className="flex flex-wrap gap-4 text-xs font-semibold text-stone-700">
+                {changeAmount > 0 && (
+                  <span className="bg-amber-100 text-amber-900 px-3 py-1.5 rounded-lg border border-amber-200">
+                    Troco Devolvido: <strong>R$ {changeAmount.toFixed(2)}</strong>
+                  </span>
+                )}
+                <span className="bg-emerald-100 text-emerald-900 px-3 py-1.5 rounded-lg border border-emerald-200">
+                  Valor Líquido Recebido: <strong>R$ {netAmount.toFixed(2)}</strong>
+                </span>
               </div>
-            ) : (
-              <div className="bg-amber-50 rounded-xl p-4 border border-amber-100 flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
-                  <span className="font-bold text-sm">!</span>
+
+              {report.observation && (
+                <div className="bg-white p-3 rounded-xl border border-amber-200 text-xs text-stone-600 italic">
+                  <strong>Observação do entregador:</strong> "{report.observation}"
                 </div>
-                <div>
-                  <p className="text-sm text-amber-800 font-bold">Nenhum entregador atribuído</p>
-                  <p className="text-xs text-amber-600 mt-1">Este pedido é para entrega, mas ainda não foi repassado ao seu time de entregadores. Clique no botão de enviar ao entregador no rodapé de ações para designar um profissional da sua frota.</p>
-                </div>
+              )}
+
+              <div className="pt-2">
+                <button
+                  onClick={handleOpenSettlement}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider"
+                >
+                  <CheckCircle2 className="w-5 h-5" />
+                  Conferir Recebimento e Dar Baixa
+                </button>
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         {/* Items */}
         <div className="space-y-4">
@@ -760,11 +871,19 @@ const OrderDetails = ({
           </button>
         )}
         
-        {['entregue', 'finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) && (
+        {canRestaurantSettleOrder(selectedOrder) ? (
+          <button 
+            onClick={handleOpenSettlement}
+            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-sm"
+          >
+            <DollarSign className="w-5 h-5" />
+            Conferir Recebimento e Finalizar
+          </button>
+        ) : ['finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'FINALIZED' ? (
           <div className="text-center text-stone-400 font-bold py-2">
             Este pedido já foi {getRestaurantStatusText(selectedOrder.status).toLowerCase()}.
           </div>
-        )}
+        ) : null}
       </div>
       {/* Modal de Estorno */}
       {showRefundModal && (

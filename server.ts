@@ -2621,10 +2621,11 @@ async function startServer() {
           orderUpdates.horario_entrega = now;
           orderUpdates.deliveredByDriverId = driver.id;
           orderUpdates.deliveredByDriverName = driver.nome || driver.name || 'Entregador';
-          orderUpdates.deliveryStatus = 'DELIVERED_PENDING_SETTLEMENT';
-          orderUpdates.canonicalStatus = 'DELIVERED_PENDING_SETTLEMENT';
+          orderUpdates.orderStatus = 'DELIVERED';
+          orderUpdates.deliveryStatus = 'DELIVERED';
+          orderUpdates.canonicalStatus = 'DELIVERED';
           orderUpdates.status_entrega = 'delivered';
-          orderUpdates.status = 'entregue'; // Keeps in "entrega" column in Kanban
+          orderUpdates.status = 'entregue'; // Keeps in "entrega" column in Kanban while pending settlement
           orderUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
           orderUpdates.driverPaymentReport = driverPaymentReport;
 
@@ -2633,8 +2634,9 @@ async function startServer() {
           deliveryUpdates.completedByDriverId = driver.id;
           deliveryUpdates.lastAssignedDriverId = driver.id;
           deliveryUpdates.responsibleDriverId = driver.id;
-          deliveryUpdates.deliveryStatus = 'DELIVERED_PENDING_SETTLEMENT';
-          deliveryUpdates.canonicalStatus = 'DELIVERED_PENDING_SETTLEMENT';
+          deliveryUpdates.orderStatus = 'DELIVERED';
+          deliveryUpdates.deliveryStatus = 'DELIVERED';
+          deliveryUpdates.canonicalStatus = 'DELIVERED';
           deliveryUpdates.status_entrega = 'delivered';
           deliveryUpdates.status = 'entregue';
           deliveryUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
@@ -2931,12 +2933,13 @@ async function startServer() {
       const batch = db.batch();
 
       const orderUpdates = {
+        orderStatus: 'FINALIZED',
+        deliveryStatus: 'DELIVERED',
         financialSettlementStatus: 'SETTLED',
         financialSettledAt: now,
         financialSettledByUserId: req.user.uid,
         financialSettledByUserName: req.user.nome || req.user.displayName || req.user.email || 'Restaurante',
         restaurantPaymentConfirmation,
-        deliveryStatus: 'FINALIZED',
         canonicalStatus: 'FINALIZED',
         status: 'finalizado',
         status_entrega: 'delivered',
@@ -2947,12 +2950,13 @@ async function startServer() {
       };
 
       const deliveryUpdates = {
+        orderStatus: 'FINALIZED',
+        deliveryStatus: 'DELIVERED',
         financialSettlementStatus: 'SETTLED',
         financialSettledAt: now,
         financialSettledByUserId: req.user.uid,
         financialSettledByUserName: req.user.nome || req.user.displayName || req.user.email || 'Restaurante',
         restaurantPaymentConfirmation,
-        deliveryStatus: 'FINALIZED',
         canonicalStatus: 'FINALIZED',
         status: 'finalizado',
         status_entrega: 'delivered',
