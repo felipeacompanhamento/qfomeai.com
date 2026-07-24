@@ -324,7 +324,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
                 <Home className="w-6 h-6" />
               </Link>
             </header>
-            <div className="p-4 lg:p-8">
+            <div className={location.pathname.includes('/orders') ? "p-1 sm:p-2 flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden" : "p-4 lg:p-8"}>
               {children}
             </div>
           </main>

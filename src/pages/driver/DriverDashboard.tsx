@@ -17,6 +17,8 @@ import { DriverNewOrders } from './components/DriverNewOrders';
 import { DriverRouteTab } from './components/DriverRouteTab';
 import { DriverHistoryTab } from './components/DriverHistoryTab';
 import { DriverAccountTab } from './components/DriverAccountTab';
+import { alertSoundService } from '../../services/alertSoundService';
+import { VolumeX } from 'lucide-react';
 
 const generateUUID = (): string => {
   if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
@@ -48,6 +50,17 @@ export default function DriverDashboard() {
 
   // Driver Document State
   const [driverDoc, setDriverDoc] = useState<DriverInfo | null>(null);
+
+  // Audio state
+  const [isAudioBlocked, setIsAudioBlocked] = useState(false);
+
+  useEffect(() => {
+    alertSoundService.attachUnlockListeners();
+    const unsub = alertSoundService.subscribeBlockedStatus((blocked) => {
+      setIsAudioBlocked(blocked);
+    });
+    return unsub;
+  }, []);
 
   // Active Tab State
   const [activeTab, setActiveTab] = useState<DriverTab>('novas');
@@ -220,6 +233,23 @@ export default function DriverDashboard() {
         syncError={syncError}
         onSyncClick={processOfflineQueue}
       />
+
+      {/* Audio Blocked Banner */}
+      {isAudioBlocked && newOrders.length > 0 && (
+        <div className="bg-amber-500 text-stone-950 px-4 py-2.5 text-xs font-bold flex items-center justify-between shrink-0 shadow-xs border-b border-amber-600">
+          <div className="flex items-center gap-2">
+            <VolumeX className="w-4 h-4 shrink-0 text-stone-900" />
+            <span>Som de alerta bloqueado pelo navegador</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => alertSoundService.unlockAudio()}
+            className="bg-stone-900 text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-stone-800 transition-all active:scale-95 shrink-0"
+          >
+            Ativar Som
+          </button>
+        </div>
+      )}
 
       {/* Feedback Messages */}
       {(availabilityError || actionError) && (

@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { User } from 'firebase/auth';
 import { collection, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { AssignedOrder } from '../types';
+import { alertSoundService } from '../../../services/alertSoundService';
 import {
   saveCachedOrders,
   getCachedOrders,
@@ -153,6 +154,38 @@ export const useDriverOrders = ({
     return orders.filter(o => getOrderDeliveryStatus(o) === 'ASSIGNED');
   }, [orders]);
 
+  // Manage intermittent alert sound for new assigned orders
+  const activeAssignedIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!user) {
+      alertSoundService.stopAllAlerts();
+      activeAssignedIdsRef.current.clear();
+      return;
+    }
+
+    const settings = alertSoundService.getDriverSettings(user.uid);
+    const currentAssignedIds = new Set(newOrders.map(o => o.id));
+
+    // Stop alerts for order IDs that are no longer in newOrders
+    activeAssignedIdsRef.current.forEach(orderId => {
+      if (!currentAssignedIds.has(orderId)) {
+        alertSoundService.stopIntermittentAlert(`driver-assignment:${orderId}`);
+      }
+    });
+
+    if (settings.soundEnabled && currentAssignedIds.size > 0) {
+      newOrders.forEach(o => {
+        const key = `driver-assignment:${o.id}`;
+        if (!alertSoundService.isAlertActive(key)) {
+          alertSoundService.startIntermittentAlert(key, { vibration: settings.vibrationEnabled });
+        }
+      });
+    }
+
+    activeAssignedIdsRef.current = currentAssignedIds;
+  }, [newOrders, user]);
+
   const routeOrders = useMemo(() => {
     const activeRouteList = orders.filter(o => {
       const s = getOrderDeliveryStatus(o);
@@ -219,6 +252,9 @@ export const useDriverOrders = ({
     setActionLoadingId(order.id);
     setActionError(null);
     setActionSuccess(null);
+
+    // Stop intermittent alert sound immediately for this order
+    alertSoundService.stopIntermittentAlert(`driver-assignment:${order.id}`);
 
     const clientActionId = generateUUID();
 

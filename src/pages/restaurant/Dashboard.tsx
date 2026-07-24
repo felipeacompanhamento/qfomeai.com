@@ -45,6 +45,7 @@ import RestaurantLayout from '../../layouts/RestaurantLayout';
 
 import OrderListItem, { getOrderCardStyle } from './components/OrderListItem';
 import OrderDetails from './components/OrderDetails';
+import RestaurantOrdersPage from './orders/RestaurantOrdersPage';
 
 export default function RestaurantDashboard() {
   const { user, profile, refreshUser } = useAuth();
@@ -97,6 +98,7 @@ export default function RestaurantDashboard() {
   const updatingOrdersRef = useRef<Set<string>>(new Set());
   const location = useLocation();
   const navigate = useNavigate();
+  const isOrdersPage = location.pathname.includes('/orders');
 
   const handleResendVerification = async () => {
     if (!user || !user.email) return;
@@ -586,44 +588,46 @@ export default function RestaurantDashboard() {
         </div>
       )}
 
-      <header className="flex items-center justify-between mb-8">
-        <div>
-          <h2 className="text-2xl font-bold text-stone-800">Olá, {profile?.nome}</h2>
-          <p className="text-stone-500 text-sm">Gerencie seu restaurante em tempo real.</p>
-        </div>
-        
-        <div className="hidden sm:flex items-center gap-4">
-          <button
-            onClick={async () => {
-              if (user) {
-                const { registerPushNotifications } = await import('../../firebaseMessaging');
-                const token = await registerPushNotifications(user.uid);
-                if (token) {
-                  alert('Notificações ativadas com sucesso!');
-                } else {
-                  alert('Não foi possível ativar as notificações. Verifique as permissões do navegador.');
-                }
-              }
-            }}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-600 font-bold text-sm rounded-full hover:bg-stone-50 transition-all shadow-sm"
-            title="Ativar Notificações"
-          >
-            <Bell className="w-4 h-4" />
-            <span>Notificações</span>
-          </button>
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm ${hasNewOrder ? 'bg-red-100 text-red-600 animate-bounce' : 'bg-emerald-100 text-emerald-600'}`}>
-            {hasNewOrder ? <BellRing className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-            <span>{hasNewOrder ? 'Novo Pedido!' : 'Tudo em dia'}</span>
+      {!isOrdersPage && (
+        <header className="flex items-center justify-between mb-8">
+          <div>
+            <h2 className="text-2xl font-bold text-stone-800">Olá, {profile?.nome}</h2>
+            <p className="text-stone-500 text-sm">Gerencie seu restaurante em tempo real.</p>
           </div>
-        </div>
-      </header>
+          
+          <div className="hidden sm:flex items-center gap-4">
+            <button
+              onClick={async () => {
+                if (user) {
+                  const { registerPushNotifications } = await import('../../firebaseMessaging');
+                  const token = await registerPushNotifications(user.uid);
+                  if (token) {
+                    alert('Notificações ativadas com sucesso!');
+                  } else {
+                    alert('Não foi possível ativar as notificações. Verifique as permissões do navegador.');
+                  }
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-600 font-bold text-sm rounded-full hover:bg-stone-50 transition-all shadow-sm"
+              title="Ativar Notificações"
+            >
+              <Bell className="w-4 h-4" />
+              <span>Notificações</span>
+            </button>
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm ${hasNewOrder ? 'bg-red-100 text-red-600 animate-bounce' : 'bg-emerald-100 text-emerald-600'}`}>
+              {hasNewOrder ? <BellRing className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
+              <span>{hasNewOrder ? 'Novo Pedido!' : 'Tudo em dia'}</span>
+            </div>
+          </div>
+        </header>
+      )}
 
       <Routes>
         <Route path="/" element={<DashboardStats orders={orders} />} />
         <Route path="dashboard" element={<DashboardStats orders={orders} />} />
         <Route path="desempenho" element={<PerformanceDashboard orders={orders} />} />
         <Route path="orders" element={
-          <OrdersList 
+          <RestaurantOrdersPage 
             orders={orders} 
             setOrders={setOrders} 
             onUpdate={handleUpdateStatus} 
