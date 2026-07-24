@@ -131,6 +131,12 @@ const OrderDetails = ({
         ...selectedOrder,
         pago: true,
         paymentStatus: 'SETTLED',
+        financialSettlementStatus: 'SETTLED',
+        orderStatus: 'FINALIZED',
+        deliveryStatus: 'DELIVERED',
+        canonicalStatus: 'FINALIZED',
+        status: 'finalizado',
+        status_entrega: 'delivered',
         settledAt: new Date().toISOString()
       });
 
@@ -307,7 +313,7 @@ const OrderDetails = ({
 
               {/* Banner de Aguardando Conferência Financeira */}
               {pendingSettlement && (
-                <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 text-amber-900 flex items-center justify-between gap-3 shadow-xs">
                   <div className="flex items-start gap-3">
                     <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 mt-0.5">
                       <DollarSign className="w-5 h-5 stroke-[2.5]" />
@@ -315,18 +321,10 @@ const OrderDetails = ({
                     <div>
                       <h4 className="font-extrabold text-sm text-amber-950">Entregue — Aguardando Conferência Financeira</h4>
                       <p className="text-xs text-amber-800 font-medium leading-relaxed mt-0.5">
-                        O entregador <strong>{selectedOrder.deliveredByDriverName || selectedOrder.assignedDriverName || selectedOrder.driverName || 'designado'}</strong> confirmou a entrega. Realize a conferência do recebimento para dar baixa final no pedido.
+                        O entregador <strong>{selectedOrder.deliveredByDriverName || selectedOrder.assignedDriverName || selectedOrder.driverName || 'designado'}</strong> confirmou a entrega. Use o botão no rodapé para conferir e dar baixa.
                       </p>
                     </div>
                   </div>
-
-                  <button
-                    onClick={handleOpenSettlement}
-                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-200 shrink-0 self-start sm:self-center flex items-center gap-1.5"
-                  >
-                    <DollarSign className="w-4 h-4" />
-                    Conferir Recebimento
-                  </button>
                 </div>
               )}
             </>
@@ -607,7 +605,18 @@ const OrderDetails = ({
         })()}
 
         {/* Seção Obrigatória de Conferência do Recebimento */}
-        {(canRestaurantSettleOrder(selectedOrder) || selectedOrder.driverPaymentReport) && (() => {
+        {(() => {
+          const canonicalState = getCanonicalOrderState(selectedOrder);
+          const isSettled = canonicalState.financialSettlementStatus === 'SETTLED' ||
+                            canonicalState.orderStatus === 'FINALIZED' ||
+                            selectedOrder.financialSettlementStatus === 'SETTLED' ||
+                            selectedOrder.status === 'finalizado';
+          const isPendingSettlement = canRestaurantSettleOrder(selectedOrder);
+
+          if (!isPendingSettlement && !isSettled && !selectedOrder.driverPaymentReport) {
+            return null;
+          }
+
           const report = selectedOrder.driverPaymentReport || {};
           const orderTotal = Number(selectedOrder.valor_total || selectedOrder.total || 0);
           const amountAlreadyPaid = Number(report.amountAlreadyPaid || 0);
@@ -617,38 +626,52 @@ const OrderDetails = ({
           const netAmount = Number(report.netAmountReceived || (reportedTotal - changeAmount));
 
           return (
-            <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-amber-500/20 pb-3">
-                <div className="flex items-center gap-2 text-amber-950 font-extrabold text-sm uppercase tracking-wider">
-                  <DollarSign className="w-5 h-5 text-amber-600" />
+            <div className={`rounded-2xl p-5 space-y-4 border-2 transition-all ${
+              isSettled 
+                ? 'bg-emerald-50/80 border-emerald-500/30' 
+                : 'bg-amber-500/10 border-amber-500/30'
+            }`}>
+              <div className="flex items-center justify-between border-b border-stone-200/60 pb-3">
+                <div className="flex items-center gap-2 text-stone-900 font-extrabold text-sm uppercase tracking-wider">
+                  {isSettled ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  ) : (
+                    <DollarSign className="w-5 h-5 text-amber-600" />
+                  )}
                   Conferência do Recebimento
                 </div>
-                <span className="bg-amber-500 text-white font-extrabold text-[10px] px-2.5 py-1 rounded-full uppercase tracking-wider">
-                  Pendente de Conferência
-                </span>
+                {isSettled ? (
+                  <span className="bg-emerald-600 text-white font-extrabold text-[10px] px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    CONFERIDO E BAIXADO
+                  </span>
+                ) : (
+                  <span className="bg-amber-500 text-white font-extrabold text-[10px] px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    PENDENTE DE CONFERÊNCIA
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                   <span className="text-stone-400 font-semibold text-[10px] uppercase block">Valor do Pedido</span>
                   <span className="font-extrabold text-stone-800 text-sm">R$ {orderTotal.toFixed(2)}</span>
                 </div>
-                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                   <span className="text-stone-400 font-semibold text-[10px] uppercase block">Já Pago (Online)</span>
                   <span className="font-extrabold text-emerald-600 text-sm">R$ {amountAlreadyPaid.toFixed(2)}</span>
                 </div>
-                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                   <span className="text-stone-400 font-semibold text-[10px] uppercase block">Saldo Esperado</span>
                   <span className="font-extrabold text-amber-700 text-sm">R$ {amountDue.toFixed(2)}</span>
                 </div>
-                <div className="bg-white p-3 rounded-xl border border-amber-200">
+                <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                   <span className="text-stone-400 font-semibold text-[10px] uppercase block">Valor Informado</span>
                   <span className="font-extrabold text-indigo-700 text-sm">R$ {reportedTotal.toFixed(2)}</span>
                 </div>
               </div>
 
               {report.paymentMethods && report.paymentMethods.length > 0 && (
-                <div className="bg-white p-3 rounded-xl border border-amber-200 space-y-1 text-xs">
+                <div className="bg-white p-3 rounded-xl border border-stone-200/80 space-y-1 text-xs">
                   <span className="text-stone-400 font-semibold text-[10px] uppercase block mb-1">
                     Formas de Pagamento Informadas pelo Entregador:
                   </span>
@@ -673,20 +696,10 @@ const OrderDetails = ({
               </div>
 
               {report.observation && (
-                <div className="bg-white p-3 rounded-xl border border-amber-200 text-xs text-stone-600 italic">
+                <div className="bg-white p-3 rounded-xl border border-stone-200/80 text-xs text-stone-600 italic">
                   <strong>Observação do entregador:</strong> "{report.observation}"
                 </div>
               )}
-
-              <div className="pt-2">
-                <button
-                  onClick={handleOpenSettlement}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider"
-                >
-                  <CheckCircle2 className="w-5 h-5" />
-                  Conferir Recebimento e Dar Baixa
-                </button>
-              </div>
             </div>
           );
         })()}
