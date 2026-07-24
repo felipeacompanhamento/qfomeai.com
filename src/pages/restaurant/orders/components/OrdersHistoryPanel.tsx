@@ -150,7 +150,8 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
               {historyOrders.map((order) => {
                 const isCancelled = order.orderStatus === 'CANCELLED' || order.status === 'cancelado';
                 const orderCode = (order.id || '').slice(-6).toUpperCase();
-                const customer = order.nome_cliente || order.customerName || 'Cliente';
+                const fullCustomer = order.cliente_nome || order.nome_cliente || order.customerName || 'Cliente';
+                const customer = fullCustomer.trim().split(' ')[0] || 'Cliente';
                 const total = Number(order.total || order.valor_total || 0);
                 const dateStr = order.data_criacao || order.createdAt || '';
                 const formattedDate = dateStr ? new Date(dateStr).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'Data n/d';

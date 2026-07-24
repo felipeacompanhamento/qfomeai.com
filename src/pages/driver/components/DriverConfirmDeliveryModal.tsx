@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, CheckCircle, AlertTriangle, Plus, Trash2, DollarSign, Wallet } from 'lucide-react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../firebase';
 import { AssignedOrder } from '../types';
 
 interface PaymentLine {
@@ -33,10 +35,13 @@ export const DriverConfirmDeliveryModal: React.FC<DriverConfirmDeliveryModalProp
   onConfirm,
   isLoading
 }) => {
-  if (!isOpen || !order) return null;
+  const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
+  const [observation, setObservation] = useState('');
+  
+  const [customerName, setCustomerName] = useState<string>('Cliente');
 
-  const orderTotal = Number(order.valor_total || order.total || order.totalValue || 0);
-  const isPaidOnline = order.pago === true || order.paymentStatus === 'PAID' || order.paymentStatus === 'SETTLED';
+  const orderTotal = order ? Number(order.valor_total || order.total || order.totalValue || 0) : 0;
+  const isPaidOnline = order ? (order.pago === true || order.paymentStatus === 'PAID' || order.paymentStatus === 'SETTLED') : false;
   const amountAlreadyPaid = isPaidOnline ? orderTotal : 0;
   const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
 
@@ -51,12 +56,31 @@ export const DriverConfirmDeliveryModal: React.FC<DriverConfirmDeliveryModalProp
     return { id: 'dinheiro', label: 'Dinheiro' };
   };
 
-  const initialMethod = mapInitialMethod(order.forma_pagamento || order.paymentMethod);
-
-  const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
-  const [observation, setObservation] = useState('');
+  const initialMethod = order ? mapInitialMethod(order.forma_pagamento || order.paymentMethod) : { id: 'dinheiro', label: 'Dinheiro' };
 
   useEffect(() => {
+    if (!isOpen || !order) return;
+    const nameFromOrder = order.cliente_nome || order.customerName || order.nome_cliente || order.cliente?.nome || 'Cliente';
+    if (nameFromOrder === 'Cliente' && order.cliente_id) {
+      const fetchClientName = async () => {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', order.cliente_id));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setCustomerName(userData.nome || userData.displayName || 'Cliente');
+          }
+        } catch (error) {
+          console.error("Error fetching client name:", error);
+        }
+      };
+      fetchClientName();
+    } else {
+      setCustomerName(nameFromOrder);
+    }
+  }, [isOpen, order?.id, order?.cliente_id, order?.cliente_nome, order?.customerName, order?.nome_cliente, order?.cliente?.nome]);
+
+  useEffect(() => {
+    if (!isOpen || !order) return;
     if (amountDue > 0) {
       setPaymentLines([
         {
@@ -70,7 +94,9 @@ export const DriverConfirmDeliveryModal: React.FC<DriverConfirmDeliveryModalProp
       setPaymentLines([]);
     }
     setObservation('');
-  }, [order.id, amountDue]);
+  }, [isOpen, order?.id, amountDue]);
+
+  if (!isOpen || !order) return null;
 
   const handleAddLine = () => {
     const newId = String(Date.now());
@@ -159,7 +185,7 @@ export const DriverConfirmDeliveryModal: React.FC<DriverConfirmDeliveryModalProp
             <div>
               <h3 className="text-base font-extrabold text-stone-900">Confirmar Entrega</h3>
               <p className="text-xs text-stone-500 font-medium">
-                Pedido {shortOrderId} • {order.customerName || order.nome_cliente || 'Cliente'}
+                Pedido {shortOrderId} • {customerName}
               </p>
             </div>
           </div>

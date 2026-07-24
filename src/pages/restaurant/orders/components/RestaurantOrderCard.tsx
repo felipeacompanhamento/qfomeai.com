@@ -34,7 +34,8 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
   const timeInfo = getOrderStageTimeInfo(order, columnId, nowMs);
 
   const orderCode = (order.id || '').slice(-6).toUpperCase();
-  const customerName = order.nome_cliente || order.customerName || order.cliente?.nome || 'Cliente';
+  const fullCustomerName = order.cliente_nome || order.nome_cliente || order.customerName || order.cliente?.nome || 'Cliente';
+  const customerName = fullCustomerName.trim().split(' ')[0] || 'Cliente';
   const customerPhone = order.telefone_cliente || order.customerPhone || order.cliente?.telefone || '';
   const neighborhood = order.endereco?.bairro || order.bairro || order.bairro_entrega || '';
   const total = Number(order.total || order.valor_total || 0);

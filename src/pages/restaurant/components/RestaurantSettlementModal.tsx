@@ -31,21 +31,20 @@ export const RestaurantSettlementModal: React.FC<RestaurantSettlementModalProps>
   onClose,
   onSuccess
 }) => {
-  if (!isOpen || !order) return null;
-
-  const orderTotal = Number(order.valor_total || order.total || 0);
-  const driverReport = order.driverPaymentReport || null;
-
-  const amountAlreadyPaid = driverReport?.amountAlreadyPaid ?? (order.pago && order.status === 'finalizado' ? orderTotal : 0);
-  const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
-
   const [paymentLines, setPaymentLines] = useState<PaymentLine[]>([]);
   const [notes, setNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const orderTotal = order ? Number(order.valor_total || order.total || 0) : 0;
+  const driverReport = order?.driverPaymentReport || null;
+
+  const amountAlreadyPaid = driverReport?.amountAlreadyPaid ?? (order?.pago && order?.status === 'finalizado' ? orderTotal : 0);
+  const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
+
   useEffect(() => {
+    if (!isOpen || !order) return;
     if (driverReport?.paymentMethods?.length > 0) {
       setPaymentLines(
         driverReport.paymentMethods.map((pm: any, idx: number) => ({
@@ -69,7 +68,9 @@ export const RestaurantSettlementModal: React.FC<RestaurantSettlementModalProps>
     setNotes(driverReport?.observation || '');
     setInternalNotes('');
     setError(null);
-  }, [order.id, driverReport, amountDue]);
+  }, [isOpen, order?.id, driverReport, amountDue]);
+
+  if (!isOpen || !order) return null;
 
   const handleAddLine = () => {
     setPaymentLines(prev => [

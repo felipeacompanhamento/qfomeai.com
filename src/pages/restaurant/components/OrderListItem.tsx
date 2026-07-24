@@ -95,7 +95,7 @@ const OrderListItem = React.memo(({ order, isSelected, onClick }: OrderListItemP
       </div>
       
       <div className="mb-2">
-        <p className="font-bold text-stone-800 truncate">{clientName}</p>
+        <p className="font-bold text-stone-800 truncate">{clientName.trim().split(' ')[0] || 'Cliente'}</p>
         <p className="text-xs text-stone-500 truncate mt-0.5">
           {order.itens?.map((i: any) => `${i.quantidade}x ${i.nome}`).join(', ')}
         </p>

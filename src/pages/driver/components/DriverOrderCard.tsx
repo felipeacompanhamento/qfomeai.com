@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Phone, MapPin, Navigation, CheckCircle, XCircle, DollarSign, MessageSquare, AlertTriangle, ArrowUp, ArrowDown, Clock } from 'lucide-react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../firebase';
 import { AssignedOrder, LatLng } from '../types';
 import { buildOrderAddressFormatted } from '../utils/deliveryAddress';
 import { openSingleOrderInMaps } from '../services/driverMaps';
@@ -44,8 +46,31 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [failReason, setFailReason] = useState('');
 
+  const [customerName, setCustomerName] = useState<string>(
+    order.cliente_nome || order.customerName || order.nome_cliente || order.cliente?.nome || 'Cliente'
+  );
+
+  useEffect(() => {
+    const nameFromOrder = order.cliente_nome || order.customerName || order.nome_cliente || order.cliente?.nome || 'Cliente';
+    if (nameFromOrder === 'Cliente' && order.cliente_id) {
+      const fetchClientName = async () => {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', order.cliente_id));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setCustomerName(userData.nome || userData.displayName || 'Cliente');
+          }
+        } catch (error) {
+          console.error("Error fetching client name:", error);
+        }
+      };
+      fetchClientName();
+    } else {
+      setCustomerName(nameFromOrder);
+    }
+  }, [order.cliente_id, order.cliente_nome, order.customerName, order.nome_cliente, order.cliente?.nome]);
+
   const formattedAddress = buildOrderAddressFormatted(order);
-  const customerName = order.customerName || order.nome_cliente || order.cliente?.nome || 'Cliente';
   const customerPhone = order.customerPhone || order.telefone_cliente || order.cliente?.telefone || '';
   const cleanPhone = customerPhone.replace(/\D/g, '');
 

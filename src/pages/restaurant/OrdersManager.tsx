@@ -106,7 +106,7 @@ const KanbanCard = React.memo(({ order, onUpdate, onOpenSettlement }: { order: O
         <span className="text-xs font-bold text-stone-500">#{order.id.slice(-5).toUpperCase()}</span>
         <span className="text-xs font-bold text-stone-400">{new Date(order.data_criacao).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
       </div>
-      <h4 className="font-bold text-stone-800 truncate">{clientName}</h4>
+      <h4 className="font-bold text-stone-800 truncate">{clientName.trim().split(' ')[0] || 'Cliente'}</h4>
       <p className="text-sm font-bold text-emerald-600">R$ {order.valor_total.toFixed(2)}</p>
       
       {isPendingSettlement ? (
@@ -295,7 +295,7 @@ export default function OrdersManager({ orders, onUpdate }: OrdersManagerProps) 
                             {formatTime(order.data_criacao)}
                           </span>
                         </div>
-                        <h4 className="font-bold text-stone-800 truncate">{order.cliente_nome || 'Cliente'}</h4>
+                        <h4 className="font-bold text-stone-800 truncate">{(order.cliente_nome || 'Cliente').trim().split(' ')[0] || 'Cliente'}</h4>
                         <div className="flex justify-between items-center mt-3">
                           <span className="text-sm font-bold text-emerald-600">R$ {order.valor_total.toFixed(2)}</span>
                           <ChevronRight className={`w-4 h-4 ${selectedOrderId === order.id ? 'text-emerald-500' : 'text-stone-300'}`} />
