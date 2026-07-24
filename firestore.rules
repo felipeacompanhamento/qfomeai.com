@@ -165,14 +165,16 @@ service cloud.firestore {
         allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (
           isAuthenticated() && (
             resource.data.driverId == request.auth.uid || 
-            resource.data.assignedDriverId == request.auth.uid
+            resource.data.assignedDriverId == request.auth.uid ||
+            (resource.data.responsibleDriverId == request.auth.uid)
           )
         );
         allow create: if isRestaurantOwner(restaurantId) || isAdmin();
         allow update: if isRestaurantOwner(restaurantId) || isAdmin() || (
           isAuthenticated() && (
             resource.data.driverId == request.auth.uid || 
-            resource.data.assignedDriverId == request.auth.uid
+            resource.data.assignedDriverId == request.auth.uid ||
+            (resource.data.responsibleDriverId == request.auth.uid)
           )
         );
         allow delete: if isRestaurantOwner(restaurantId) || isAdmin();
@@ -239,7 +241,8 @@ service cloud.firestore {
         resource.data.driverId == request.auth.uid ||
         resource.data.assignedDriverId == request.auth.uid ||
         resource.data.customerId == request.auth.uid ||
-        resource.data.cliente_id == request.auth.uid
+        resource.data.cliente_id == request.auth.uid ||
+        (resource.data.responsibleDriverId == request.auth.uid)
       );
       allow write: if isAuthenticated() && (
         isRestaurantOwner(resource.data.restaurantId) ||
@@ -270,7 +273,12 @@ service cloud.firestore {
       allow update: if isAuthenticated() && (
         isRestaurantOwner(restaurantId) || 
         isAdmin() ||
-        request.auth.uid == resource.data.cliente_id ||
+        (
+          request.auth.uid == resource.data.cliente_id &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'avaliacao', 'comentario_avaliacao', 'nota_avaliacao', 'confirmado_cliente', 'confirmado_cliente_em'
+          ])
+        ) ||
         (
           (resource.data.driverId == request.auth.uid || resource.data.entregador_id == request.auth.uid || resource.data.assignedDriverId == request.auth.uid) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -293,9 +301,14 @@ service cloud.firestore {
       );
       allow create: if isAuthenticated() && request.auth.uid == request.resource.data.cliente_id;
       allow update: if isAuthenticated() && (
-        request.auth.uid == resource.data.cliente_id || 
         isRestaurantOwner(resource.data.restaurant_id) ||
         isAdmin() ||
+        (
+          request.auth.uid == resource.data.cliente_id &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'avaliacao', 'comentario_avaliacao', 'nota_avaliacao', 'confirmado_cliente', 'confirmado_cliente_em'
+          ])
+        ) ||
         (
           (resource.data.driverId == request.auth.uid || resource.data.entregador_id == request.auth.uid || resource.data.assignedDriverId == request.auth.uid) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([

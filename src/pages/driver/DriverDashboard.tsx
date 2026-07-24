@@ -50,7 +50,88 @@ interface AssignedOrder {
   observacoes?: string;
   restaurante_id: string;
   paymentCollectedByDriver?: boolean;
+  deliveryStatus?: string;
 }
+
+const normalizeLegacyDeliveryStatus = (statusEntrega?: string, status?: string): string => {
+  const se = statusEntrega ? statusEntrega.toLowerCase() : '';
+  const sp = status ? status.toLowerCase() : '';
+
+  if (se === 'waiting' || se === 'pending') {
+    return 'ASSIGNED';
+  }
+  if (se === 'accepted') {
+    return 'ACCEPTED';
+  }
+  if (se === 'out_for_delivery' || se === 'delivering' || se === 'picked_up' || sp === 'delivering') {
+    return 'IN_TRANSIT';
+  }
+  if (se === 'delivered' || sp === 'completed' || sp === 'finalizado' || sp === 'entregue') {
+    return 'DELIVERED';
+  }
+  if (se === 'rejected' || se === 'refused' || se === 'not_delivered' || se === 'failed') {
+    return 'FAILED';
+  }
+  if (sp === 'cancelled' || sp === 'cancelado' || se === 'cancelled') {
+    return 'CANCELLED';
+  }
+  return 'ASSIGNED';
+};
+
+const getOrderDeliveryStatus = (order: AssignedOrder): string => {
+  return (
+    order.deliveryStatus ||
+    normalizeLegacyDeliveryStatus(
+      order.status_entrega,
+      order.status
+    )
+  );
+};
+
+const getDeliveryStatusLabel = (status: string): string => {
+  switch (status) {
+    case 'ASSIGNED':
+      return 'Aguardando aceite';
+    case 'ACCEPTED':
+      return 'Aceito';
+    case 'IN_TRANSIT':
+      return 'Em entrega';
+    case 'DELIVERED':
+      return 'Entregue';
+    case 'FAILED':
+      return 'Não entregue';
+    case 'CANCELLED':
+      return 'Cancelado';
+    default:
+      return 'Não atribuído';
+  }
+};
+
+const getDeliveryStatusBadgeClass = (status: string): string => {
+  switch (status) {
+    case 'ASSIGNED':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
+    case 'ACCEPTED':
+      return 'bg-blue-50 text-blue-700 border-blue-200';
+    case 'IN_TRANSIT':
+      return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+    case 'DELIVERED':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'FAILED':
+      return 'bg-red-50 text-red-700 border-red-200';
+    case 'CANCELLED':
+      return 'bg-stone-100 text-stone-600 border-stone-200';
+    default:
+      return 'bg-stone-50 text-stone-600 border-stone-150';
+  }
+};
+
+const generateUUID = (): string => {
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return Math.random().toString(36).substring(2, 15) + '-' + Date.now().toString(36);
+};
 
 interface DriverInfo {
   id: string;
@@ -95,6 +176,7 @@ export default function DriverDashboard() {
   // Driver core state
   const [driverDoc, setDriverDoc] = useState<DriverInfo | null>(null);
   const [orders, setOrders] = useState<AssignedOrder[]>([]);
+  const [historicalDeliveries, setHistoricalDeliveries] = useState<AssignedOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -125,7 +207,7 @@ export default function DriverDashboard() {
 
   // Active route tracking
   const activeDelivery = useMemo(() => {
-    return orders.find(o => o.status_entrega === 'out_for_delivery' || o.status === 'delivering');
+    return orders.find(o => getOrderDeliveryStatus(o) === 'IN_TRANSIT');
   }, [orders]);
 
   const activeRouteIds = useMemo(() => {
@@ -147,27 +229,27 @@ export default function DriverDashboard() {
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const deliveriesToday = useMemo(() => {
-    return orders.filter(o => {
-      const isDone = o.status_entrega === 'delivered' || o.status === 'completed' || o.status === 'finalizado';
+    return historicalDeliveries.filter(o => {
+      const isDone = getOrderDeliveryStatus(o) === 'DELIVERED';
       if (!isDone) return false;
       const createdDate = o.data_criacao ? o.data_criacao.split('T')[0] : '';
       return createdDate === todayStr;
     }).length;
-  }, [orders, todayStr]);
+  }, [historicalDeliveries, todayStr]);
 
   const pendingSettlementAmount = useMemo(() => {
-    return orders.reduce((sum, o) => {
-      const isDelivered = o.status_entrega === 'delivered' || o.status === 'completed' || o.status === 'finalizado' || o.status === 'entregue';
+    return historicalDeliveries.reduce((sum, o) => {
+      const isDelivered = getOrderDeliveryStatus(o) === 'DELIVERED';
       const isAwaitingSettlement = o.paymentStatus === 'AWAITING_DRIVER_SETTLEMENT' || (o.paymentCollectedByDriver && !o.pago);
       if (isDelivered && isAwaitingSettlement) {
         return sum + Number(o.valor_total || 0);
       }
       return sum;
     }, 0);
-  }, [orders]);
+  }, [historicalDeliveries]);
 
   const inRouteCount = useMemo(() => {
-    return orders.filter(o => o.status_entrega === 'out_for_delivery' || o.status === 'delivering').length;
+    return orders.filter(o => getOrderDeliveryStatus(o) === 'IN_TRANSIT').length;
   }, [orders]);
 
   // 1. Monitor network state
@@ -202,8 +284,9 @@ export default function DriverDashboard() {
 
     for (const item of queue) {
       try {
-        if (item.type === 'driver_action') {
+        if (item.type === 'DELIVERY_ACTION' || item.type === 'driver_action') {
           const token = await user?.getIdToken();
+          const clientActionId = item.clientActionId || generateUUID();
           const res = await fetch(`/api/driver/orders/${item.orderId}/action`, {
             method: 'POST',
             headers: {
@@ -212,7 +295,11 @@ export default function DriverDashboard() {
             },
             body: JSON.stringify({
               action: item.action,
-              failureReason: item.failureReason
+              reason: item.reason,
+              failureReason: item.failureReason,
+              paymentCollectedByDriver: item.paymentCollectedByDriver,
+              paymentNotCollectedReason: item.paymentNotCollectedReason,
+              clientActionId
             })
           });
           if (!res.ok) {
@@ -220,13 +307,24 @@ export default function DriverDashboard() {
             throw new Error(errJson.error || 'Erro na sincronização offline');
           }
           processedCount++;
-        } else if (item.type === 'order_status') {
-          const orderRef = doc(db, 'orders', item.orderId);
-          await updateDoc(orderRef, item.data);
-          processedCount++;
-        } else if (item.type === 'driver_status') {
-          const driverRef = doc(db, 'restaurants', item.restaurantId, 'drivers', item.driverId);
-          await updateDoc(driverRef, item.data);
+        } else if (item.type === 'DRIVER_AVAILABILITY' || item.type === 'driver_status') {
+          const token = await user?.getIdToken();
+          const clientActionId = item.clientActionId || generateUUID();
+          const res = await fetch(`/api/driver/availability`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              availabilityStatus: item.availabilityStatus,
+              clientActionId
+            })
+          });
+          if (!res.ok) {
+            const errJson = await res.json();
+            throw new Error(errJson.error || 'Erro na sincronização de disponibilidade offline');
+          }
           processedCount++;
         }
       } catch (err) {
@@ -322,30 +420,47 @@ export default function DriverDashboard() {
     });
 
     // Subscribe to orders assigned or assignable for this driver
-    // Fast query setup: we listen to restaurant orders or active global orders filter
-    // Let's use orders subcollection or active query on orders
     const ordersRef = collection(db, 'restaurants', restaurantId, 'orders');
-    const q = query(ordersRef);
 
-    const unsubOrders = onSnapshot(q, (snapshot) => {
-      const allOrders = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as AssignedOrder[];
+    // We execute 3 parallel queries to stay secure under Firestore rules
+    // (which only allow reading orders where driverId, entregador_id, or assignedDriverId is the driver's UID)
+    const q1 = query(ordersRef, where('assignedDriverId', '==', user.uid));
+    const q2 = query(ordersRef, where('driverId', '==', user.uid));
+    const q3 = query(ordersRef, where('entregador_id', '==', user.uid));
 
-      // Drivers can only see:
-      // 1. Orders assigned with their driverId (or code entregador_id)
-      const filteredOrders = allOrders.filter(order => 
-        order.driverId === user.uid || 
-        order.entregador_id === user.uid
-      );
+    // Also subscribe to history through deliveries collection using the permanent responsibleDriverId
+    const deliveriesRef = collection(db, 'restaurants', restaurantId, 'deliveries');
+    const qHistory = query(deliveriesRef, where('responsibleDriverId', '==', user.uid));
 
-      setOrders(filteredOrders);
+    let list1: AssignedOrder[] = [];
+    let list2: AssignedOrder[] = [];
+    let list3: AssignedOrder[] = [];
+
+    const mergeAndSet = () => {
+      const mergedObj: Record<string, AssignedOrder> = {};
+      list1.forEach(o => { if (o && o.id) mergedObj[o.id] = o; });
+      list2.forEach(o => { if (o && o.id) mergedObj[o.id] = o; });
+      list3.forEach(o => { if (o && o.id) mergedObj[o.id] = o; });
+      const merged = Object.values(mergedObj);
+      
+      setOrders(merged);
       setLoading(false);
-      // Cache orders
-      localStorage.setItem(`@qfomeai:cached_orders_${user.uid}`, JSON.stringify(filteredOrders));
-    }, (err) => {
+      localStorage.setItem(`@qfomeai:cached_orders_${user.uid}`, JSON.stringify(merged));
+    };
+
+    const handleError = (err: any) => {
       console.error('Error listening to delivery orders:', err);
+      // Item 11: No console, registre: UID do entregador, restaurantId, nome da consulta, código do erro.
+      console.error('[DriverDashboard Subscription Error]:', {
+        driverUid: user.uid,
+        restaurantId,
+        queryName: 'orders_subscription_all',
+        errorCode: err?.code || err?.message || err
+      });
+
+      // Item 11: Exiba uma mensagem clara em desenvolvimento
+      setError(`Não foi possível carregar as entregas atribuídas. Código: ${err?.code || 'permission-denied'}`);
+
       // Fallback cache loading
       try {
         const cachedO = localStorage.getItem(`@qfomeai:cached_orders_${user.uid}`);
@@ -354,32 +469,64 @@ export default function DriverDashboard() {
         }
       } catch {}
       setLoading(false);
+    };
+
+    const unsub1 = onSnapshot(q1, (snapshot) => {
+      list1 = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as AssignedOrder[];
+      mergeAndSet();
+    }, handleError);
+
+    const unsub2 = onSnapshot(q2, (snapshot) => {
+      list2 = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as AssignedOrder[];
+      mergeAndSet();
+    }, handleError);
+
+    const unsub3 = onSnapshot(q3, (snapshot) => {
+      list3 = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as AssignedOrder[];
+      mergeAndSet();
+    }, handleError);
+
+    const unsubHistory = onSnapshot(qHistory, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as AssignedOrder[];
+      setHistoricalDeliveries(docs);
+    }, (err) => {
+      console.error('[DriverDashboard History Subscription Error]:', err);
     });
 
     return () => {
       unsubDriver();
-      unsubOrders();
+      unsub1();
+      unsub2();
+      unsub3();
+      unsubHistory();
     };
   }, [user, profile, isDriverProfileActive]);
 
   // 6. Partition orders into tabs
   const tabOrders = useMemo(() => {
-    return orders.filter(order => {
-      const statusEntrega = order.status_entrega || 'pending';
-      const statusPedido = order.status;
+    const listToFilter = activeTab === 'finalizadas' ? historicalDeliveries : orders;
+    return listToFilter.filter(order => {
+      const status = getOrderDeliveryStatus(order);
 
       if (activeTab === 'novas') {
-        // Assigned but not out for delivery yet
-        return statusEntrega === 'accepted' || statusEntrega === 'pending';
-      } else if (activeTab === 'andamento') {
-        // Out for delivery
-        return statusEntrega === 'out_for_delivery';
-      } else {
-        // Completed/Failed
-        return statusEntrega === 'delivered' || statusEntrega === 'not_delivered' || statusEntrega === 'rejected' || statusPedido === 'completed' || statusPedido === 'finalizado';
+        return status === 'ASSIGNED' || status === 'ACCEPTED';
       }
+
+      if (activeTab === 'andamento') {
+        return status === 'IN_TRANSIT';
+      }
+
+      if (activeTab === 'finalizadas') {
+        return (
+          status === 'DELIVERED' ||
+          status === 'FAILED' ||
+          status === 'CANCELLED'
+        );
+      }
+
+      return true;
     });
-  }, [orders, activeTab]);
+  }, [orders, historicalDeliveries, activeTab]);
 
   // 7. Status change actions
   const handleUpdateStatus = async (order: AssignedOrder, actionType: 'accept' | 'reject' | 'deliver' | 'complete' | 'failed', reason?: string) => {
@@ -416,6 +563,7 @@ export default function DriverDashboard() {
     };
 
     const serverAction = actionMap[actionType];
+    const clientActionId = generateUUID();
 
     if (isOnline) {
       try {
@@ -428,7 +576,8 @@ export default function DriverDashboard() {
           },
           body: JSON.stringify({
             action: serverAction,
-            failureReason: reason
+            failureReason: reason,
+            clientActionId
           })
         });
 
@@ -448,10 +597,12 @@ export default function DriverDashboard() {
     } else {
       // Offline Flow
       savePendingQueue({
-        type: 'driver_action',
+        type: 'DELIVERY_ACTION',
+        clientActionId,
         orderId: order.id,
         action: serverAction,
-        failureReason: reason
+        failureReason: reason,
+        createdAt: new Date().toISOString()
       });
 
       setSuccess('Modo Offline: Atualização agendada para sincronia!');
@@ -468,6 +619,8 @@ export default function DriverDashboard() {
     setError(null);
     setSuccess(null);
 
+    const clientActionId = generateUUID();
+
     try {
       if (isOnline) {
         const token = await user.getIdToken();
@@ -480,7 +633,8 @@ export default function DriverDashboard() {
           body: JSON.stringify({
             action: 'DELIVER',
             paymentCollectedByDriver: collected,
-            paymentNotCollectedReason: collected ? '' : paymentNotCollectedReason
+            paymentNotCollectedReason: collected ? '' : paymentNotCollectedReason,
+            clientActionId
           })
         });
 
@@ -493,11 +647,13 @@ export default function DriverDashboard() {
         setTimeout(() => setSuccess(null), 3500);
       } else {
         savePendingQueue({
-          type: 'driver_action',
+          type: 'DELIVERY_ACTION',
+          clientActionId,
           orderId: order.id,
           action: 'DELIVER',
           paymentCollectedByDriver: collected,
-          paymentNotCollectedReason: collected ? '' : paymentNotCollectedReason
+          paymentNotCollectedReason: collected ? '' : paymentNotCollectedReason,
+          createdAt: new Date().toISOString()
         });
         setSuccess('Offline: Entrega registrada e aguardando sincronia!');
         setTimeout(() => setSuccess(null), 3500);
@@ -523,6 +679,8 @@ export default function DriverDashboard() {
     setIsSubmittingFailure(true);
     setError(null);
 
+    const clientActionId = generateUUID();
+
     try {
       if (isOnline) {
         const token = await user.getIdToken();
@@ -534,7 +692,8 @@ export default function DriverDashboard() {
           },
           body: JSON.stringify({
             action: 'FAIL',
-            failureReason: finalReason
+            failureReason: finalReason,
+            clientActionId
           })
         });
 
@@ -547,10 +706,12 @@ export default function DriverDashboard() {
         setTimeout(() => setSuccess(null), 3500);
       } else {
         savePendingQueue({
-          type: 'driver_action',
+          type: 'DELIVERY_ACTION',
+          clientActionId,
           orderId: order.id,
           action: 'FAIL',
-          failureReason: finalReason
+          failureReason: finalReason,
+          createdAt: new Date().toISOString()
         });
         setSuccess('Offline: Motivo de falha salvo e aguardando conexão.');
         setTimeout(() => setSuccess(null), 3500);
@@ -571,30 +732,46 @@ export default function DriverDashboard() {
 
     const nextStatus = driverDoc.availabilityStatus === 'OFFLINE' ? 'ONLINE' : 'OFFLINE';
     setLoading(true);
+    const clientActionId = generateUUID();
 
     if (isOnline) {
       try {
-        const driverRef = doc(db, 'restaurants', profile.restaurantId, 'drivers', user.uid);
-        await updateDoc(driverRef, {
-          availabilityStatus: nextStatus,
-          updatedAt: new Date().toISOString()
+        const token = await user.getIdToken();
+        const res = await fetch('/api/driver/availability', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            availabilityStatus: nextStatus,
+            clientActionId
+          })
         });
-      } catch (err) {
+
+        if (!res.ok) {
+          const errJson = await res.json();
+          throw new Error(errJson.error || 'Erro ao atualizar status');
+        }
+
+        // Optimistic / explicit update of local state
+        setDriverDoc(prev => prev ? { ...prev, availabilityStatus: nextStatus } : null);
+        setSuccess('Status atualizado com sucesso!');
+        setTimeout(() => setSuccess(null), 3000);
+      } catch (err: any) {
         console.error('Error toggling online state:', err);
-        setError('Não foi possível atualizar o status de disponibilidade.');
+        setError(`Não foi possível atualizar o status de disponibilidade: ${err.message || err}`);
+        setTimeout(() => setError(null), 4000);
       } finally {
         setLoading(false);
       }
     } else {
       // Offline queue availability
       savePendingQueue({
-        type: 'driver_status',
-        restaurantId: profile.restaurantId,
-        driverId: user.uid,
-        data: {
-          availabilityStatus: nextStatus,
-          updatedAt: new Date().toISOString()
-        }
+        type: 'DRIVER_AVAILABILITY',
+        availabilityStatus: nextStatus,
+        clientActionId,
+        createdAt: new Date().toISOString()
       });
 
       // Optimistic state update
@@ -625,8 +802,19 @@ export default function DriverDashboard() {
   };
 
   const acceptedOrders = useMemo(() => {
-    return orders.filter(o => o.status_entrega === 'accepted' || (o.driverId === user?.uid && o.status_entrega === 'pending'));
-  }, [orders, user?.uid]);
+    return orders.filter(order => getOrderDeliveryStatus(order) === 'ACCEPTED');
+  }, [orders]);
+
+  const activeOrders = useMemo(() => {
+    return orders.filter(order => {
+      const status = getOrderDeliveryStatus(order);
+      return (
+        status === 'ASSIGNED' ||
+        status === 'ACCEPTED' ||
+        status === 'IN_TRANSIT'
+      );
+    });
+  }, [orders]);
 
   useEffect(() => {
     const acceptedIds = acceptedOrders.map(o => o.id);
@@ -1217,7 +1405,7 @@ export default function DriverDashboard() {
             ) : (
               <div className="space-y-4">
                 {tabOrders.map((order) => {
-                  const statusEntrega = order.status_entrega || 'pending';
+                  const canonicalStatus = getOrderDeliveryStatus(order);
                   const isItemActionLoading = actionLoadingId === order.id;
 
                   return (
@@ -1236,20 +1424,8 @@ export default function DriverDashboard() {
                           </span>
                         </div>
 
-                        <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border ${
-                          statusEntrega === 'delivered' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                          statusEntrega === 'out_for_delivery' ? 'bg-blue-50 text-blue-700 border-blue-100' :
-                          statusEntrega === 'accepted' ? 'bg-amber-50 text-amber-700 border-amber-100' :
-                          statusEntrega === 'not_delivered' ? 'bg-red-50 text-red-700 border-red-100' :
-                          'bg-stone-50 text-stone-600 border-stone-150'
-                        }`}>
-                          {statusEntrega === 'delivered' ? 'Entregue' :
-                           statusEntrega === 'out_for_delivery' ? 'Em Entrega' :
-                           statusEntrega === 'accepted' ? 'Aceito' :
-                           statusEntrega === 'not_delivered' ? 'Falhado' :
-                           statusEntrega === 'rejected' ? 'Rejeitado_E' :
-                           'Aguardando'
-                          }
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border ${getDeliveryStatusBadgeClass(canonicalStatus)}`}>
+                          {getDeliveryStatusLabel(canonicalStatus)}
                         </span>
                       </div>
 
@@ -1296,9 +1472,10 @@ export default function DriverDashboard() {
                       </div>
 
                       {/* Action buttons depending on state */}
-                      {activeTab === 'novas' && statusEntrega === 'pending' && (
+                      {canonicalStatus === 'ASSIGNED' && (
                         <div className="grid grid-cols-2 gap-3 pt-3 border-t border-stone-100">
                           <button
+                            type="button"
                             onClick={() => handleUpdateStatus(order, 'reject')}
                             disabled={isItemActionLoading}
                             className="py-3.5 bg-stone-50 hover:bg-stone-100 border border-stone-250 text-stone-700 text-xs font-bold rounded-2xl active:scale-95 transition-all text-center"
@@ -1306,6 +1483,7 @@ export default function DriverDashboard() {
                             Recusar
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleUpdateStatus(order, 'accept')}
                             disabled={isItemActionLoading}
                             className="py-3.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold rounded-2xl active:scale-95 transition-all text-center flex items-center justify-center gap-1.5"
@@ -1316,9 +1494,10 @@ export default function DriverDashboard() {
                         </div>
                       )}
 
-                      {activeTab === 'novas' && statusEntrega === 'accepted' && (
+                      {canonicalStatus === 'ACCEPTED' && (
                         <div className="pt-3 border-t border-stone-100">
                           <button
+                            type="button"
                             onClick={() => handleUpdateStatus(order, 'deliver')}
                             disabled={isItemActionLoading}
                             className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-2xl active:scale-95 transition-all text-center uppercase tracking-widest flex items-center justify-center gap-2 shadow-xs"
@@ -1329,9 +1508,10 @@ export default function DriverDashboard() {
                         </div>
                       )}
 
-                      {activeTab === 'andamento' && (
+                      {canonicalStatus === 'IN_TRANSIT' && (
                         <div className="grid grid-cols-2 gap-3 pt-3 border-t border-stone-100">
                           <button
+                            type="button"
                             onClick={() => handleUpdateStatus(order, 'failed')}
                             disabled={isItemActionLoading}
                             className="py-3.5 bg-stone-100 hover:bg-red-50 text-stone-600 font-bold rounded-2xl text-xs active:scale-[0.98] transition-all"
@@ -1339,6 +1519,7 @@ export default function DriverDashboard() {
                             Não Entregue
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleUpdateStatus(order, 'complete')}
                             disabled={isItemActionLoading}
                             className="py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-2xl text-xs active:scale-[0.98] transition-all flex items-center justify-center gap-1 shadow-xs"

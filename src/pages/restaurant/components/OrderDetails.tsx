@@ -77,9 +77,7 @@ const OrderDetails = ({
 
   const paymentInfo = getPaymentStatusInfo(
     selectedOrder?.paymentStatus,
-    selectedOrder?.pago,
-    selectedOrder?.forma_pagamento,
-    selectedOrder?.paymentCollectedByDriver
+    selectedOrder?.pago
   );
 
   const handleOpenSettlement = () => {
@@ -272,12 +270,12 @@ const OrderDetails = ({
             <span className="text-stone-400 font-bold uppercase text-[10px]">Entrega:</span>
             <span className={`font-extrabold uppercase ${
               selectedOrder.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' :
-              selectedOrder.deliveryStatus === 'PICKED_UP' ? 'text-blue-700' :
+              (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'text-blue-700' :
               selectedOrder.deliveryStatus === 'ACCEPTED' ? 'text-indigo-700' :
               selectedOrder.deliveryStatus === 'FAILED' ? 'text-rose-700' : 'text-stone-600'
             }`}>
               {selectedOrder.deliveryStatus === 'DELIVERED' ? 'Entregue' :
-               selectedOrder.deliveryStatus === 'PICKED_UP' ? 'Em Rota' :
+               (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'Em Rota' :
                selectedOrder.deliveryStatus === 'ACCEPTED' ? 'Aceito' :
                selectedOrder.deliveryStatus === 'FAILED' ? 'Falhou' :
                selectedOrder.assignedDriverId ? 'Atribuído' : 'Não Atribuído'}
@@ -286,7 +284,7 @@ const OrderDetails = ({
 
           <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
             <span className="text-stone-400 font-bold uppercase text-[10px]">Financeiro:</span>
-            <span className={`font-extrabold uppercase ${paymentInfo.color}`}>
+            <span className={`font-extrabold uppercase px-2 py-0.5 rounded-md text-[10px] ${paymentInfo.badgeClass}`}>
               {paymentInfo.label}
             </span>
           </div>
@@ -552,14 +550,14 @@ const OrderDetails = ({
                 <div>
                   <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase ${
                     selectedOrder.deliveryStatus === 'ACCEPTED' ? 'bg-indigo-50 text-indigo-600' :
-                    selectedOrder.deliveryStatus === 'PICKED_UP' ? 'bg-amber-50 text-amber-600' :
+                    (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'bg-amber-50 text-amber-600' :
                     selectedOrder.deliveryStatus === 'DELIVERED' ? 'bg-emerald-50 text-emerald-600' :
                     selectedOrder.deliveryStatus === 'REFUSED' ? 'bg-red-50 text-red-600' :
                     selectedOrder.deliveryStatus === 'FAILED' ? 'bg-stone-100 text-stone-600' :
                     'bg-yellow-50 text-yellow-600'
                   }`}>
                     {selectedOrder.deliveryStatus === 'ACCEPTED' ? 'Aceito' :
-                     selectedOrder.deliveryStatus === 'PICKED_UP' ? 'Em Entrega' :
+                     (selectedOrder.deliveryStatus === 'IN_TRANSIT' || selectedOrder.deliveryStatus === 'PICKED_UP') ? 'Em Entrega' :
                      selectedOrder.deliveryStatus === 'DELIVERED' ? 'Entregue' :
                      selectedOrder.deliveryStatus === 'REFUSED' ? 'Recusado' :
                      selectedOrder.deliveryStatus === 'FAILED' ? 'Falhou / Devolvido' :
