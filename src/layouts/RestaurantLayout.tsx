@@ -3,13 +3,14 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, ShoppingBag, Utensils, Clock, Settings, 
   X, LogOut, ChevronDown, ChevronRight, Tags, PlusCircle, Plus, 
-  Percent, Users, CreditCard, MapPin, User, Lock, Menu, Printer, TrendingUp, ChevronLeft, Home, DollarSign, ExternalLink, MessageSquare, Bike
+  Percent, Users, CreditCard, MapPin, User, Lock, Menu, Printer, TrendingUp, ChevronLeft, Home, DollarSign, ExternalLink, MessageSquare, Bike, Store
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import EmailVerificationBanner from '../components/EmailVerificationBanner';
 import { Mail, AlertCircle, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { normalizeRestaurantFeatures, RestaurantFeatures, DEFAULT_RESTAURANT_FEATURES } from '../domain/restaurant/restaurantFeatures';
 
 interface RestaurantLayoutProps {
   children: React.ReactNode;
@@ -25,6 +26,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [pendingInvoices, setPendingInvoices] = useState<any[]>([]);
   const [restaurantSlug, setRestaurantSlug] = useState<string>('');
+  const [restaurantFeatures, setRestaurantFeatures] = useState<RestaurantFeatures>(DEFAULT_RESTAURANT_FEATURES);
 
   React.useEffect(() => {
     if (!profile?.restaurantId) return;
@@ -33,10 +35,12 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
         const docRef = doc(db, 'restaurants', profile.restaurantId);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setRestaurantSlug(docSnap.data().slug || '');
+          const data = docSnap.data();
+          setRestaurantSlug(data.slug || '');
+          setRestaurantFeatures(normalizeRestaurantFeatures(data));
         }
       } catch (error) {
-        console.error("Error fetching restaurant slug:", error);
+        console.error("Error fetching restaurant features:", error);
       }
     };
     fetchRestaurantData();
@@ -122,6 +126,8 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
     { title: "Dashboard", path: "/restaurant/dashboard", icon: LayoutDashboard },
     { title: "Desempenho", path: "/restaurant/desempenho", icon: TrendingUp },
     { title: "Pedidos", path: "/restaurant/orders", icon: ShoppingBag, badge: pendingOrdersCount },
+    ...(restaurantFeatures.counterEnabled ? [{ title: "Venda no Balcão", path: "/restaurant/balcao", icon: Store }] : []),
+    ...(restaurantFeatures.waiterEnabled ? [{ title: "Garçons", path: "/restaurant/waiters", icon: Users }] : []),
     {
       title: "Cardápio",
       icon: Utensils,

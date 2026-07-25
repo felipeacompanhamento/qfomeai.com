@@ -423,6 +423,32 @@
         "createdBy": { "type": "string" }
       },
       "required": ["orderId", "deliveryId", "driverId", "action", "message", "createdAt", "createdBy"]
+    },
+    "Waiter": {
+      "title": "Waiter",
+      "description": "Waitstaff member of a restaurant with access controls and permissions.",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" },
+        "nome": { "type": "string" },
+        "email": { "type": "string" },
+        "telefone": { "type": "string" },
+        "cpf": { "type": "string" },
+        "pin": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "permissoes": {
+          "type": "object",
+          "properties": {
+            "canCreateOrder": { "type": "boolean" },
+            "canCancelItem": { "type": "boolean" },
+            "canApplyDiscount": { "type": "boolean" },
+            "canCloseTable": { "type": "boolean" },
+            "canTransferTable": { "type": "boolean" }
+          }
+        },
+        "data_criacao": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "nome", "ativo", "permissoes"]
     }
   },
   "firestore": {
@@ -437,6 +463,7 @@
     "/restaurants/{restaurantId}": { "schema": "Restaurant", "description": "Restaurant details" },
     "/restaurants/{restaurantId}/categories/{categoryId}": { "schema": "Category", "description": "Restaurant menu categories" },
     "/restaurants/{restaurantId}/drivers/{driverId}": { "schema": "Driver", "description": "Restaurant drivers list" },
+    "/restaurants/{restaurantId}/waiters/{waiterId}": { "schema": "Waiter", "description": "Restaurant waitstaff list" },
     "/restaurants/{restaurantId}/extras/{extraId}": { "schema": "Extra", "description": "Restaurant product extras" },
     "/restaurants/{restaurantId}/products/{productId}": { "schema": "Product", "description": "Restaurant products" },
     "/restaurants/{restaurantId}/promotions/{promotionId}": { "schema": "Promotion", "description": "Restaurant promotions" },

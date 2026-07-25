@@ -12,6 +12,9 @@ import OrderDetails from '../components/OrderDetails';
 import { getCanonicalOrderState, getOrderKanbanColumn } from '../../../domain/order/orderLifecycle';
 import { RestaurantOrderCard } from './components/RestaurantOrderCard';
 import { printThermalOrder } from '../../../components/orders/OrderThermalPrint';
+import { db } from '../../../firebase';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { cacheOrders } from '../../../utils/cacheOrders';
 
 interface RestaurantOrdersPageProps {
   orders: any[];
@@ -28,6 +31,7 @@ interface RestaurantOrdersPageProps {
 
 export function RestaurantOrdersPage({
   orders,
+  setOrders,
   onUpdate,
   restaurantProfile,
   onRefresh,
@@ -46,12 +50,152 @@ export function RestaurantOrdersPage({
   const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
+  // Detail loading states
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [customerData, setCustomerData] = useState<any>(null);
+  const [addressData, setAddressData] = useState<any>(null);
+
   // Address & Payment Edit States for OrderDetails Modal
   const [isEditingAddress, setIsEditingAddress] = useState(false);
   const [editAddress, setEditAddress] = useState<any>({});
   const [isEditingPayment, setIsEditingPayment] = useState(false);
   const [editPaymentMethod, setEditPaymentMethod] = useState('');
   const [editTroco, setEditTroco] = useState('');
+
+  // Fetch client and address details when an order is selected
+  useEffect(() => {
+    if (!selectedOrder) return;
+    const fetchDetails = async () => {
+      setLoadingDetails(true);
+      try {
+        if (selectedOrder.cliente_id) {
+          const userDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id));
+          if (userDoc.exists()) {
+            setCustomerData(userDoc.data());
+          } else {
+            setCustomerData(selectedOrder.cliente || null);
+          }
+        } else {
+          setCustomerData(selectedOrder.cliente || null);
+        }
+        
+        if (selectedOrder.endereco_entrega) {
+          setAddressData(selectedOrder.endereco_entrega);
+        } else if (selectedOrder.cliente_id && selectedOrder.endereco_id) {
+          const addrDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id, 'enderecos', selectedOrder.endereco_id));
+          if (addrDoc.exists()) {
+            setAddressData(addrDoc.data());
+          } else {
+            setAddressData(selectedOrder.endereco || null);
+          }
+        } else {
+          setAddressData(selectedOrder.endereco || null);
+        }
+      } catch (error) {
+        console.error("Error fetching details", error);
+        setCustomerData(selectedOrder.cliente || null);
+        setAddressData(selectedOrder.endereco_entrega || selectedOrder.endereco || null);
+      } finally {
+        setLoadingDetails(false);
+      }
+    };
+    fetchDetails();
+  }, [selectedOrder]);
+
+  // Handle Edit Payment
+  const handleEditPayment = useCallback(() => {
+    if (!selectedOrder) return;
+    setEditPaymentMethod(selectedOrder?.forma_pagamento || '');
+    setEditTroco(selectedOrder?.troco || '');
+    setIsEditingPayment(true);
+  }, [selectedOrder]);
+
+  // Handle Save Payment
+  const handleSavePayment = useCallback(async () => {
+    if (!profile?.restaurantId || !selectedOrder || !setOrders) return;
+    try {
+      const updateData = {
+        forma_pagamento: editPaymentMethod,
+        troco: editPaymentMethod === 'dinheiro' ? editTroco : null
+      };
+      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
+      
+      setOrders((prevOrders: any[]) => {
+        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? { ...o, ...updateData } : o);
+        cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
+        return updatedOrders;
+      });
+      
+      setIsEditingPayment(false);
+      setSelectedOrder((prev: any) => ({
+        ...prev,
+        ...updateData
+      }));
+    } catch (error) {
+      console.error("Error updating payment", error);
+    }
+  }, [profile?.restaurantId, selectedOrder, editPaymentMethod, editTroco, setOrders]);
+
+  // Handle Toggle Paid Status
+  const handleTogglePaid = useCallback(async () => {
+    if (!profile?.restaurantId || !selectedOrder || !setOrders) return;
+    
+    // Prevent manual toggle for Mercado Pago PIX orders
+    if (selectedOrder.forma_pagamento === 'pix' && selectedOrder.mercadopago_payment_id) {
+      alert("O status de pagamento de pedidos via Mercado Pago é atualizado automaticamente.");
+      return;
+    }
+
+    try {
+      const novoStatusPago = !selectedOrder.pago;
+      const updateData = { pago: novoStatusPago };
+      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
+      
+      setOrders((prevOrders: any[]) => {
+        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? { ...o, ...updateData } : o);
+        cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
+        return updatedOrders;
+      });
+      
+      setSelectedOrder((prev: any) => ({
+        ...prev,
+        ...updateData
+      }));
+    } catch (error) {
+      console.error("Error updating payment status", error);
+    }
+  }, [profile?.restaurantId, selectedOrder, setOrders]);
+
+  // Handle Edit Address
+  const handleEditAddress = useCallback(() => {
+    if (!selectedOrder) return;
+    setEditAddress(addressData || selectedOrder.endereco_entrega || selectedOrder.endereco || { rua: '', numero: '', bairro: '', cidade: '', estado: '', complemento: '', referencia: '' });
+    setIsEditingAddress(true);
+  }, [selectedOrder, addressData]);
+
+  // Handle Save Address
+  const handleSaveAddress = useCallback(async () => {
+    if (!profile?.restaurantId || !selectedOrder || !setOrders) return;
+    try {
+      const updateData = { endereco_entrega: editAddress };
+      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
+      
+      setOrders((prevOrders: any[]) => {
+        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? { ...o, ...updateData } : o);
+        cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
+        return updatedOrders;
+      });
+      
+      setIsEditingAddress(false);
+      setAddressData(editAddress);
+      setSelectedOrder((prev: any) => ({
+        ...prev,
+        ...updateData
+      }));
+    } catch (error) {
+      console.error("Error updating address", error);
+    }
+  }, [profile?.restaurantId, selectedOrder, editAddress, setOrders]);
 
   // Handle URL query parameter orderId
   useEffect(() => {
@@ -253,24 +397,24 @@ export function RestaurantOrdersPage({
             <OrderDetails
               selectedOrder={selectedOrder}
               setSelectedOrder={setSelectedOrder}
-              customerData={selectedOrder.cliente || {}}
-              addressData={selectedOrder.endereco || {}}
-              loadingDetails={false}
+              customerData={customerData}
+              addressData={addressData}
+              loadingDetails={loadingDetails}
               handlePrint={handlePrint}
               isEditingAddress={isEditingAddress}
-              handleSaveAddress={() => setIsEditingAddress(false)}
-              handleEditAddress={() => setIsEditingAddress(true)}
+              handleSaveAddress={handleSaveAddress}
+              handleEditAddress={handleEditAddress}
               editAddress={editAddress}
               setEditAddress={setEditAddress}
               isEditingPayment={isEditingPayment}
-              handleSavePayment={() => setIsEditingPayment(false)}
-              handleEditPayment={() => setIsEditingPayment(true)}
+              handleSavePayment={handleSavePayment}
+              handleEditPayment={handleEditPayment}
               editPaymentMethod={editPaymentMethod}
               setEditPaymentMethod={setEditPaymentMethod}
               editTroco={editTroco}
               setEditTroco={setEditTroco}
               onUpdate={onUpdate}
-              handleTogglePaid={() => {}}
+              handleTogglePaid={handleTogglePaid}
               isUpdating={updatingOrderId === selectedOrder.id}
             />
           </div>

@@ -8,6 +8,8 @@ import { CreditCard, Banknote, Smartphone, Wallet, Save, Loader2 } from 'lucide-
 interface PaymentMethodConfig {
   entrega: boolean;
   retirada: boolean;
+  balcao: boolean;
+  consumoLocal: boolean;
 }
 
 interface PaymentMethods {
@@ -18,10 +20,10 @@ interface PaymentMethods {
 }
 
 const defaultMethods: PaymentMethods = {
-  dinheiro: { entrega: false, retirada: false },
-  pix: { entrega: false, retirada: false },
-  credito: { entrega: false, retirada: false },
-  debito: { entrega: false, retirada: false }
+  dinheiro: { entrega: false, retirada: false, balcao: false, consumoLocal: false },
+  pix: { entrega: false, retirada: false, balcao: false, consumoLocal: false },
+  credito: { entrega: false, retirada: false, balcao: false, consumoLocal: false },
+  debito: { entrega: false, retirada: false, balcao: false, consumoLocal: false }
 };
 
 export default function RestaurantPayments() {
@@ -49,7 +51,19 @@ export default function RestaurantPayments() {
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data.formas_pagamento) {
-            setMethods({ ...defaultMethods, ...data.formas_pagamento });
+            const loaded = data.formas_pagamento;
+            const normalizeConfig = (conf: any) => ({
+              entrega: !!conf?.entrega,
+              retirada: !!conf?.retirada,
+              balcao: !!conf?.balcao,
+              consumoLocal: !!conf?.consumoLocal
+            });
+            setMethods({
+              dinheiro: normalizeConfig(loaded.dinheiro),
+              pix: normalizeConfig(loaded.pix),
+              credito: normalizeConfig(loaded.credito),
+              debito: normalizeConfig(loaded.debito)
+            });
           }
           if (data.chave_pix) {
             setChavePix(data.chave_pix);
@@ -68,7 +82,7 @@ export default function RestaurantPayments() {
     loadPayments();
   }, [profile?.uid, profile?.restaurantId]);
 
-  const handleToggle = (method: keyof PaymentMethods, type: 'entrega' | 'retirada') => {
+  const handleToggle = (method: keyof PaymentMethods, type: keyof PaymentMethodConfig) => {
     setMethods(prev => ({
       ...prev,
       [method]: {
@@ -255,9 +269,13 @@ export default function RestaurantPayments() {
           const Icon = option.icon;
           const isEntrega = methods[option.id].entrega;
           const isRetirada = methods[option.id].retirada;
+          const isBalcao = methods[option.id].balcao;
+          const isConsumoLocal = methods[option.id].consumoLocal;
+
+          const activeCount = [isEntrega, isRetirada, isBalcao, isConsumoLocal].filter(Boolean).length;
 
           return (
-            <div key={option.id} className="bg-white p-6 rounded-3xl border border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-6 shadow-sm hover:border-emerald-200 transition-all">
+            <div key={option.id} className="bg-white p-6 rounded-3xl border border-stone-200 flex flex-col lg:flex-row lg:items-center justify-between gap-6 shadow-sm hover:border-emerald-200 transition-all">
               <div className="flex items-center gap-4">
                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${option.bg} ${option.color}`}>
                   <Icon className="w-7 h-7" />
@@ -265,14 +283,12 @@ export default function RestaurantPayments() {
                 <div>
                   <h3 className="text-lg font-bold text-stone-800">{option.label}</h3>
                   <p className="text-sm text-stone-500">
-                    {!isEntrega && !isRetirada ? 'Não aceito' : 
-                     isEntrega && isRetirada ? 'Aceito em Entrega e Retirada' :
-                     isEntrega ? 'Aceito apenas em Entrega' : 'Aceito apenas em Retirada'}
+                    {activeCount === 0 ? 'Não aceito em nenhum canal' : `${activeCount} canal(is) habilitado(s)`}
                   </p>
                 </div>
               </div>
 
-              <div className="flex flex-row gap-6 sm:gap-8 bg-stone-50 p-4 rounded-2xl border border-stone-100">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-stone-50 p-4 rounded-2xl border border-stone-100">
                 <label className="flex flex-col items-center gap-2 cursor-pointer group">
                   <span className="text-xs font-bold text-stone-500 uppercase tracking-wider group-hover:text-stone-800 transition-colors">Entrega</span>
                   <div className="relative">
@@ -282,12 +298,10 @@ export default function RestaurantPayments() {
                       checked={isEntrega}
                       onChange={() => handleToggle(option.id, 'entrega')}
                     />
-                    <div className={`block w-14 h-8 rounded-full transition-colors ${isEntrega ? 'bg-emerald-500' : 'bg-stone-200'}`}></div>
-                    <div className={`absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform shadow-sm ${isEntrega ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                    <div className={`block w-12 h-7 rounded-full transition-colors ${isEntrega ? 'bg-emerald-500' : 'bg-stone-200'}`}></div>
+                    <div className={`absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${isEntrega ? 'translate-x-5' : 'translate-x-0'}`}></div>
                   </div>
                 </label>
-
-                <div className="w-px bg-stone-200"></div>
 
                 <label className="flex flex-col items-center gap-2 cursor-pointer group">
                   <span className="text-xs font-bold text-stone-500 uppercase tracking-wider group-hover:text-stone-800 transition-colors">Retirada</span>
@@ -298,8 +312,36 @@ export default function RestaurantPayments() {
                       checked={isRetirada}
                       onChange={() => handleToggle(option.id, 'retirada')}
                     />
-                    <div className={`block w-14 h-8 rounded-full transition-colors ${isRetirada ? 'bg-emerald-500' : 'bg-stone-200'}`}></div>
-                    <div className={`absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform shadow-sm ${isRetirada ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                    <div className={`block w-12 h-7 rounded-full transition-colors ${isRetirada ? 'bg-emerald-500' : 'bg-stone-200'}`}></div>
+                    <div className={`absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${isRetirada ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                  </div>
+                </label>
+
+                <label className="flex flex-col items-center gap-2 cursor-pointer group">
+                  <span className="text-xs font-bold text-stone-500 uppercase tracking-wider group-hover:text-stone-800 transition-colors">Balcão</span>
+                  <div className="relative">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only"
+                      checked={isBalcao}
+                      onChange={() => handleToggle(option.id, 'balcao')}
+                    />
+                    <div className={`block w-12 h-7 rounded-full transition-colors ${isBalcao ? 'bg-emerald-500' : 'bg-stone-200'}`}></div>
+                    <div className={`absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${isBalcao ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                  </div>
+                </label>
+
+                <label className="flex flex-col items-center gap-2 cursor-pointer group">
+                  <span className="text-xs font-bold text-stone-500 uppercase tracking-wider group-hover:text-stone-800 transition-colors">Consumo</span>
+                  <div className="relative">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only"
+                      checked={isConsumoLocal}
+                      onChange={() => handleToggle(option.id, 'consumoLocal')}
+                    />
+                    <div className={`block w-12 h-7 rounded-full transition-colors ${isConsumoLocal ? 'bg-emerald-500' : 'bg-stone-200'}`}></div>
+                    <div className={`absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform shadow-sm ${isConsumoLocal ? 'translate-x-5' : 'translate-x-0'}`}></div>
                   </div>
                 </label>
               </div>

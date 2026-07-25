@@ -810,7 +810,7 @@ const OrderDetails = ({
           </button>
         )}
 
-        {selectedOrder.status === 'preparo' && (
+        {['preparo', 'cozinha'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               onUpdate(selectedOrder.id, 'pronto');
@@ -826,19 +826,20 @@ const OrderDetails = ({
         {selectedOrder.status === 'pronto' && (
           <button 
             onClick={() => {
-              const nextStatus = selectedOrder.tipo_entrega === 'retirada' ? 'entregue' : 'entrega';
+              const isOnSite = ['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega);
+              const nextStatus = isOnSite ? 'entregue' : 'entrega';
               onUpdate(selectedOrder.id, nextStatus);
             }}
-            disabled={isUpdating || (selectedOrder.tipo_entrega === 'retirada' && !selectedOrder.pago)}
-            title={selectedOrder.tipo_entrega === 'retirada' && !selectedOrder.pago ? 'Marque o pedido como pago antes de finalizar' : ''}
+            disabled={isUpdating || (['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) && !selectedOrder.pago)}
+            title={['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) && !selectedOrder.pago ? 'Marque o pedido como pago antes de finalizar' : ''}
             className={`w-full py-3 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${
-              (isUpdating || (selectedOrder.tipo_entrega === 'retirada' && !selectedOrder.pago))
+              (isUpdating || (['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) && !selectedOrder.pago))
                 ? 'bg-stone-300 cursor-not-allowed' 
                 : 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200'
             }`}
           >
             {isUpdating ? <Clock className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-            {isUpdating ? 'Processando...' : (selectedOrder.tipo_entrega === 'retirada' ? 'Marcar como Entregue' : 'Saiu para Entrega')}
+            {isUpdating ? 'Processando...' : (['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) ? 'Marcar como Entregue' : 'Saiu para Entrega')}
           </button>
         )}
 
@@ -860,7 +861,7 @@ const OrderDetails = ({
           </button>
         )}
 
-        {['aceito', 'preparo', 'pronto', 'entrega'].includes(selectedOrder.status) && (
+        {['aceito', 'preparo', 'cozinha', 'pronto', 'entrega'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               onUpdate(selectedOrder.id, 'cancelado', 'Cancelado pelo restaurante');
@@ -872,7 +873,7 @@ const OrderDetails = ({
           </button>
         )}
 
-        {selectedOrder.tipo_entrega !== 'retirada' && ['aceito', 'preparo', 'pronto', 'entrega'].includes(selectedOrder.status) && (
+        {!['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) && ['aceito', 'preparo', 'cozinha', 'pronto', 'entrega'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               fetchDrivers();

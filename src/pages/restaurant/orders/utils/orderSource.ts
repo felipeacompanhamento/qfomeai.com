@@ -3,14 +3,9 @@
  * Preparado para futuras expansões do Qfomeai
  */
 
-export type OrderSource = 
-  | 'DELIVERY'
-  | 'TAKEAWAY'
-  | 'COUNTER'
-  | 'WAITER'
-  | 'TABLE'
-  | 'ONLINE_APP'
-  | 'MANUAL';
+import { OrderSource } from '../../../../domain/order/orderSource';
+
+export type { OrderSource };
 
 export interface OrderSourceDetails {
   source: OrderSource;

@@ -15,6 +15,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage, handleFirestoreError, OperationType } from '../firebase';
 import { invalidateRestaurantCache } from './restaurantService';
+import { ProductSalesChannels, ProductChannelPricing } from '../domain/product/productChannels';
 
 export interface ProductSize {
   nome: string;
@@ -44,6 +45,8 @@ export interface Product {
     max: number;
   }[];
   created_at?: any;
+  salesChannels?: ProductSalesChannels;
+  channelPricing?: ProductChannelPricing;
 }
 
 export const productService = {

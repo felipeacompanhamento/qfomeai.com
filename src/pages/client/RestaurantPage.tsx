@@ -14,6 +14,7 @@ import { ChevronLeft, Star, Clock, Info, Plus, Minus, ShoppingBag, AlertCircle, 
 import { isRestaurantOpen } from '../../utils/restaurantStatus';
 import RatingsModal from '../../components/RatingsModal';
 import { debounce } from 'lodash';
+import { isProductAvailableForChannel, getProductPriceForChannel } from '../../domain/product/productChannels';
 
 export default function RestaurantPage() {
   const { slug } = useParams();
@@ -122,38 +123,46 @@ export default function RestaurantPage() {
       
       return {
         ...category,
-        products: products.filter(p => p.categoria_id === category.id && p.ativo !== false).map(p => {
-          const prodPromo = activePromotions.find(p => p.tipo_alvo === 'produto' && p.alvo_id === p.id);
-          const promo = prodPromo || catPromo;
-          
-          if (promo) {
-            let discountedPrice = p.preco;
-            if (promo.tipo_desconto === 'porcentagem') {
-              discountedPrice = p.preco * (1 - promo.valor_desconto / 100);
-            } else {
-              discountedPrice = p.preco - promo.valor_desconto;
+        products: products
+          .filter(p => p.categoria_id === category.id && p.ativo !== false && isProductAvailableForChannel(p, 'delivery'))
+          .map(p => {
+            const deliveryPrice = getProductPriceForChannel(p, 'delivery');
+            const prodPromo = activePromotions.find(promo => promo.tipo_alvo === 'produto' && promo.alvo_id === p.id);
+            const promo = prodPromo || catPromo;
+            const baseProduct = { ...p, preco: deliveryPrice };
+            
+            if (promo) {
+              let discountedPrice = deliveryPrice;
+              if (promo.tipo_desconto === 'porcentagem') {
+                discountedPrice = deliveryPrice * (1 - promo.valor_desconto / 100);
+              } else {
+                discountedPrice = deliveryPrice - promo.valor_desconto;
+              }
+              return { ...baseProduct, originalPrice: deliveryPrice, preco: discountedPrice, promo: promo };
             }
-            return { ...p, originalPrice: p.preco, preco: discountedPrice, promo: promo };
-          }
-          return p;
-        })
+            return baseProduct;
+          })
       };
     }).filter(c => c.products.length > 0);
 
     // Products without category
-    const uncategorizedProducts = products.filter(p => !p.categoria_id && p.ativo !== false).map(p => {
-      const prodPromo = activePromotions.find(p => p.tipo_alvo === 'produto' && p.alvo_id === p.id);
-      if (prodPromo) {
-        let discountedPrice = p.preco;
-        if (prodPromo.tipo_desconto === 'porcentagem') {
-          discountedPrice = p.preco * (1 - prodPromo.valor_desconto / 100);
-        } else {
-          discountedPrice = p.preco - prodPromo.valor_desconto;
+    const uncategorizedProducts = products
+      .filter(p => !p.categoria_id && p.ativo !== false && isProductAvailableForChannel(p, 'delivery'))
+      .map(p => {
+        const deliveryPrice = getProductPriceForChannel(p, 'delivery');
+        const prodPromo = activePromotions.find(promo => promo.tipo_alvo === 'produto' && promo.alvo_id === p.id);
+        const baseProduct = { ...p, preco: deliveryPrice };
+        if (prodPromo) {
+          let discountedPrice = deliveryPrice;
+          if (prodPromo.tipo_desconto === 'porcentagem') {
+            discountedPrice = deliveryPrice * (1 - prodPromo.valor_desconto / 100);
+          } else {
+            discountedPrice = deliveryPrice - prodPromo.valor_desconto;
+          }
+          return { ...baseProduct, originalPrice: deliveryPrice, preco: discountedPrice, promo: prodPromo };
         }
-        return { ...p, originalPrice: p.preco, preco: discountedPrice, promo: prodPromo };
-      }
-      return p;
-    });
+        return baseProduct;
+      });
     
     if (uncategorizedProducts.length > 0) {
       categorized.push({

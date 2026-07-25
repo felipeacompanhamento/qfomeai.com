@@ -143,10 +143,8 @@ export function normalizeOrderStatus(order: any): OrderStatus {
     return rawCanonical as OrderStatus;
   }
 
-  // Explicit settlement finished check
+  // Explicit operational finalized check
   if (
-    order.financialSettlementStatus === 'SETTLED' ||
-    order.paymentStatus === 'SETTLED' ||
     order.status === 'finalizado' ||
     order.status === 'completed' ||
     order.status === 'finalized'
@@ -163,7 +161,7 @@ export function normalizeOrderStatus(order: any): OrderStatus {
     Boolean(order.driverPaymentReport) ||
     Boolean(order.deliveredAt)
   ) {
-    if (order.financialSettlementStatus === 'SETTLED' || order.pago === true) {
+    if (order.status === 'finalizado' || order.status === 'completed' || order.status === 'finalized' || order.orderStatus === 'FINALIZED') {
       return 'FINALIZED';
     }
     return 'DELIVERED';
@@ -292,12 +290,13 @@ export function getCanonicalOrderState(order: any): CanonicalOrderState {
 export function getOrderKanbanColumn(order: any): string {
   const { orderStatus, deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(order);
 
-  // Histórico/Finalizado: 'FINALIZED', 'entregue', 'cancelado' (also settled)
+  // Histórico/Finalizado: 'FINALIZED', 'cancelado'
   if (
     orderStatus === 'FINALIZED' || 
     orderStatus === 'CANCELLED' || 
-    financialSettlementStatus === 'SETTLED' ||
     String(order?.status || '').toLowerCase() === 'finalizado' ||
+    String(order?.status || '').toLowerCase() === 'completed' ||
+    String(order?.status || '').toLowerCase() === 'finalized' ||
     String(order?.status || '').toLowerCase() === 'cancelado'
   ) {
     return 'finalizado';

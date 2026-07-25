@@ -33,6 +33,7 @@ import Footer from './components/Footer';
 import { registerPushNotifications, setupForegroundNotificationListener } from './firebaseMessaging';
 import NotificationGuideModal from './components/NotificationGuideModal';
 import DriverDashboard from './pages/driver/DriverDashboard';
+import { WaiterLoginPage, WaiterDashboardPage } from './pages/waiter/WaiterArea';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -44,31 +45,69 @@ function ScrollToTop() {
   return null;
 }
 
-const ProtectedRoute = ({ children, role }: { children: React.ReactNode, role?: 'admin' | 'restaurant' | 'driver' }) => {
+const ProtectedRoute = ({ children, role }: { children: React.ReactNode, role?: 'admin' | 'restaurant' | 'driver' | 'waiter' }) => {
   const { user, profile, isAdmin, isRestaurant, isDriver, loading } = useAuth();
 
   if (loading) return <div className="flex items-center justify-center h-screen font-sans">Carregando...</div>;
-  if (!user) return <Navigate to="/login" />;
+
+  if (role === 'waiter') {
+    if (loading) return <div className="flex items-center justify-center h-screen font-sans">Carregando...</div>;
+    if (!user) return <Navigate to="/garcom/login" replace />;
+
+    const isWaiter = profile?.tipo_usuario === 'waiter' || profile?.role === 'WAITER' || profile?.role === 'waiter';
+    if (!isWaiter) return <Navigate to="/garcom/login?error=not_waiter" replace />;
+
+    const status = String(profile?.status || '').toUpperCase();
+    const hasRestaurant = typeof profile?.restaurantId === 'string' && profile.restaurantId.trim().length > 0;
+    const waiterId = typeof profile?.waiterId === 'string' ? profile.waiterId : '';
+    const hasValidWaiterId = waiterId.length > 0 && waiterId === user.uid;
+
+    if (status === 'BLOCKED') {
+      return <Navigate to="/garcom/login?error=blocked" replace />;
+    }
+
+    if (status === 'INACTIVE' || profile?.active === false) {
+      return <Navigate to="/garcom/login?error=inactive" replace />;
+    }
+
+    if (!hasRestaurant || !hasValidWaiterId) {
+      return <Navigate to="/garcom/login?error=unconfigured" replace />;
+    }
+
+    if (status !== 'ACTIVE') {
+      return <Navigate to="/garcom/login?error=unconfigured" replace />;
+    }
+
+    return <>{children}</>;
+  }
+
+  if (!user) return <Navigate to="/login" replace />;
+
+  const isWaiter = profile?.tipo_usuario === 'waiter' || profile?.role === 'WAITER';
 
   if (isDriver) {
     if (role === 'driver') {
       return <>{children}</>;
     }
-    return <Navigate to="/entregador" />;
+    return <Navigate to="/entregador" replace />;
+  }
+
+  if (isWaiter) {
+    return <Navigate to="/garcom" replace />;
   }
   
   // Check if onboarding is complete for clients
   if (!profile?.onboarding_completo && !isAdmin && !isRestaurant) {
-    return <Navigate to="/onboarding" />;
+    return <Navigate to="/onboarding" replace />;
   }
 
   // Check email verification for restaurants
   if (role === 'restaurant' && !user.emailVerified) {
-    return <Navigate to="/profile" />;
+    return <Navigate to="/profile" replace />;
   }
 
-  if (role === 'admin' && !isAdmin) return <Navigate to="/" />;
-  if (role === 'restaurant' && !isRestaurant) return <Navigate to="/" />;
+  if (role === 'admin' && !isAdmin) return <Navigate to="/" replace />;
+  if (role === 'restaurant' && !isRestaurant) return <Navigate to="/" replace />;
 
   return <>{children}</>;
 };
@@ -214,6 +253,14 @@ function AppRoutes() {
           <Route path="/entregador/*" element={
             <ProtectedRoute role="driver">
               <DriverDashboard />
+            </ProtectedRoute>
+          } />
+
+          {/* Garçom / Waiter Routes */}
+          <Route path="/garcom/login" element={<WaiterLoginPage />} />
+          <Route path="/garcom/*" element={
+            <ProtectedRoute role="waiter">
+              <WaiterDashboardPage />
             </ProtectedRoute>
           } />
 

@@ -412,6 +412,21 @@ export default function AccountSettings() {
                   />
                   <span className="text-sm font-medium text-stone-700">Retirada</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox"
+                    checked={restaurantData.features?.counterEnabled ?? false}
+                    onChange={e => setRestaurantData({
+                      ...restaurantData,
+                      features: {
+                        ...(restaurantData.features || {}),
+                        counterEnabled: e.target.checked
+                      }
+                    })}
+                    className="w-5 h-5 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-sm font-medium text-stone-700">Balcão (PDV)</span>
+                </label>
               </div>
             </div>
 

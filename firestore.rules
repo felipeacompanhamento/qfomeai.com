@@ -20,16 +20,25 @@ service cloud.firestore {
       );
     }
 
-    function isRestaurantOwner(restaurantId) {
-      // Avoid redundant isAdmin check if possible
+    function isRestaurantAdmin(restaurantId) {
       return isAuthenticated() && (
-        request.auth.uid == restaurantId ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId == restaurantId) ||
         (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        request.auth.uid == restaurantId ||
+        (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId == restaurantId &&
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario in ['restaurant', 'restaurante', 'admin', 'owner'] ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['RESTAURANT', 'ADMIN', 'OWNER']) &&
+          !(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario == 'waiter' ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAITER')
+        )
       );
+    }
+
+    function isRestaurantOwner(restaurantId) {
+      return isRestaurantAdmin(restaurantId);
     }
 
     function isAnyRestaurant() {
@@ -43,6 +52,10 @@ service cloud.firestore {
       );
     }
 
+    function isWaiterProfile(data) {
+      return data != null && (data.tipo_usuario == 'waiter' || data.role == 'WAITER');
+    }
+
     // Default Deny
     match /{document=**} {
       allow read, write: if false;
@@ -50,16 +63,33 @@ service cloud.firestore {
 
     // Users
     match /users/{userId} {
-      // Allow reading if it's the user themselves, an admin, a restaurant owner, or if the target user IS a restaurant or admin (safe query-optimized format)
+      // Restrict user reading to self, admin, or employees/waiters of the authenticated restaurant
       allow read: if request.auth.uid == userId || 
                     isAdmin() || 
-                    isAnyRestaurant() || 
-                    (resource != null && resource.data.tipo_usuario in ['restaurant', 'restaurante', 'admin']);
+                    (resource != null && resource.data.restaurantId != null && isRestaurantAdmin(resource.data.restaurantId));
       allow create: if isAuthenticated() && isOwner(userId);
-      allow update: if isOwner(userId) || isAdmin();
+      allow update: if isAdmin() ||
+        (
+          isOwner(userId) &&
+          !isWaiterProfile(resource.data) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'tipo_usuario', 'restaurantId', 'waiterId', 'status', 'active', 'permissions', 'createdBy'])
+        ) ||
+        (
+          isOwner(userId) &&
+          isWaiterProfile(resource.data) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt'])
+        );
       
       match /enderecos/{enderecoId} {
-        allow read: if request.auth != null && (request.auth.uid == userId || (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) || isAnyRestaurant());
+        allow read: if request.auth != null && (
+          request.auth.uid == userId || 
+          (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
+          isAdmin() ||
+          (
+            exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario in ['restaurant', 'restaurante', 'admin']
+          )
+        );
         allow write: if request.auth != null && (request.auth.uid == userId || (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true));
       }
 
@@ -103,6 +133,20 @@ service cloud.firestore {
           ])
         );
         allow delete: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /waiters/{waiterId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (
+          isAuthenticated() &&
+          request.auth.uid == waiterId &&
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId == restaurantId &&
+          (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario == 'waiter' ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAITER'
+          )
+        );
+        allow write: if false;
       }
 
       match /extras/{extraId} {
@@ -193,6 +237,10 @@ service cloud.firestore {
         );
         allow update, delete: if isRestaurantOwner(restaurantId) || isAdmin();
       }
+
+      match /processedActions/{actionId} {
+        allow read, write: if false;
+      }
     }
 
     // Delivery Areas (Collection Group)
@@ -269,7 +317,15 @@ service cloud.firestore {
         resource.data.entregador_id == request.auth.uid ||
         resource.data.assignedDriverId == request.auth.uid
       );
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.cliente_id;
+      allow create: if isAuthenticated() && 
+        (!('source' in request.resource.data) || request.resource.data.source != 'COUNTER') &&
+        request.resource.data.cliente_id == request.auth.uid &&
+        (!('restaurantId' in request.resource.data) || request.resource.data.restaurantId == restaurantId) &&
+        (!('restaurante_id' in request.resource.data) || request.resource.data.restaurante_id == restaurantId) &&
+        (!('restaurant_id' in request.resource.data) || request.resource.data.restaurant_id == restaurantId) &&
+        (!('status' in request.resource.data) || request.resource.data.status in ['pendente', 'aguardando_pagamento']) &&
+        (!('status_entrega' in request.resource.data) || request.resource.data.status_entrega in ['waiting', 'pending']) &&
+        (!('deliveryStatus' in request.resource.data) || request.resource.data.deliveryStatus in ['UNASSIGNED', 'PENDING']);
       allow update: if isAuthenticated() && (
         isRestaurantOwner(restaurantId) || 
         isAdmin() ||
@@ -299,24 +355,13 @@ service cloud.firestore {
         resource.data.entregador_id == request.auth.uid ||
         resource.data.assignedDriverId == request.auth.uid
       );
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.cliente_id;
-      allow update: if isAuthenticated() && (
-        isRestaurantOwner(resource.data.restaurant_id) ||
-        isAdmin() ||
-        (
-          request.auth.uid == resource.data.cliente_id &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'avaliacao', 'comentario_avaliacao', 'nota_avaliacao', 'confirmado_cliente', 'confirmado_cliente_em'
-          ])
-        ) ||
-        (
-          (resource.data.driverId == request.auth.uid || resource.data.entregador_id == request.auth.uid || resource.data.assignedDriverId == request.auth.uid) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'status', 'status_entrega', 'horario_saida', 'horario_entrega', 'driverId', 'entregador_id', 'driverName', 'historico_entrega', 'data_finalizado',
-            'deliveryStatus', 'deliveryType', 'assignedDriverId', 'assignedDriverName', 'assignedDriverPhone', 'assignedAt', 'assignedBy'
-          ])
-        )
-      );
+      // Create and Update operations must occur via the specific restaurant subcollection path only.
+      allow create, update: if false;
+    }
+
+    // processedActions (Collection Group)
+    match /{path=**}/processedActions/{actionId} {
+      allow read, write: if false;
     }
 
     // Banners
@@ -348,7 +393,8 @@ service cloud.firestore {
     // Public Stats
     match /public_stats/{statId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
     }
 
     // Global Collections

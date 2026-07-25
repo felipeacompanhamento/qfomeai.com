@@ -6,6 +6,13 @@ import { restaurantService } from '../../services/restaurantService';
 import { productService, Product } from '../../services/productService';
 import { optionService, OptionGroup } from '../../services/optionService';
 import { Plus, Edit2, Trash2, X, Check, AlertCircle, Loader2, Image as ImageIcon, Search, Filter, Settings2 } from 'lucide-react';
+import { 
+  normalizeProductSalesChannels, 
+  normalizeProductChannelPricing, 
+  DEFAULT_PRODUCT_SALES_CHANNELS, 
+  ProductSalesChannels, 
+  ProductChannelPricing 
+} from '../../domain/product/productChannels';
 import PlaceholderImage from '../../components/PlaceholderImage';
 import ImageUpload from '../../components/ImageUpload';
 
@@ -39,7 +46,9 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
     status: 'ativo' as 'ativo' | 'inativo',
     exibir_adicionais: true,
     sizes: [] as { nome: string; preco: number; aceita_metade: boolean }[],
-    optionGroups: [] as { groupId: string; nome: string; ordem: number; obrigatorio: boolean; min: number; max: number }[]
+    optionGroups: [] as { groupId: string; nome: string; ordem: number; obrigatorio: boolean; min: number; max: number }[],
+    salesChannels: { ...DEFAULT_PRODUCT_SALES_CHANNELS } as ProductSalesChannels,
+    channelPricing: {} as ProductChannelPricing
   });
 
   useEffect(() => {
@@ -123,7 +132,9 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
         status: product.status,
         exibir_adicionais: product.exibir_adicionais ?? true,
         sizes: product.sizes || [],
-        optionGroups: product.optionGroups || []
+        optionGroups: product.optionGroups || [],
+        salesChannels: normalizeProductSalesChannels(product),
+        channelPricing: normalizeProductChannelPricing(product)
       });
     } else {
       setEditingProduct(null);
@@ -139,7 +150,13 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
         status: 'ativo',
         exibir_adicionais: true,
         sizes: [],
-        optionGroups: []
+        optionGroups: [],
+        salesChannels: { ...DEFAULT_PRODUCT_SALES_CHANNELS },
+        channelPricing: {
+          delivery: undefined,
+          counter: undefined,
+          waiter: undefined
+        }
       });
     }
     setError(null);
@@ -161,7 +178,13 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
       status: 'ativo',
       exibir_adicionais: true,
       sizes: [],
-      optionGroups: []
+      optionGroups: [],
+      salesChannels: { ...DEFAULT_PRODUCT_SALES_CHANNELS },
+      channelPricing: {
+        delivery: undefined,
+        counter: undefined,
+        waiter: undefined
+      }
     });
   };
 
@@ -171,6 +194,17 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
     if (formData.sizes.length === 0 && formData.preco <= 0) return "Preço deve ser maior que zero se nenhum tamanho for selecionado.";
     if (formData.sizes.length > 0 && formData.sizes.some(s => s.preco <= 0)) return "Preço do tamanho deve ser maior que zero.";
     if (formData.min_extras > formData.max_extras) return "Mínimo de adicionais não pode ser maior que o máximo.";
+
+    // Channel pricing validation
+    const channels: ('delivery' | 'counter' | 'waiter')[] = ['delivery', 'counter', 'waiter'];
+    for (const ch of channels) {
+      const price = formData.channelPricing?.[ch];
+      if (price !== undefined && price !== null && !Number.isNaN(price)) {
+        if (price < 0) {
+          return `O preço para o canal ${ch === 'delivery' ? 'Delivery' : ch === 'counter' ? 'Balcão' : 'Garçom'} não pode ser negativo.`;
+        }
+      }
+    }
     return null;
   };
 
@@ -190,10 +224,27 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
     try {
       // Find category name
       const category = categories.find(c => c.id === formData.categoria_id);
+      
+      // Clean up pricing to avoid undefined/null/NaN values on the firestore
+      const channelPricing: ProductChannelPricing = {};
+      const channels: ('delivery' | 'counter' | 'waiter')[] = ['delivery', 'counter', 'waiter'];
+      for (const ch of channels) {
+        const val = formData.channelPricing?.[ch];
+        if (val !== undefined && val !== null && !Number.isNaN(val) && val >= 0) {
+          channelPricing[ch] = val;
+        }
+      }
+
       const finalData = {
         ...formData,
         categoria_nome: category?.nome || '',
-        preco: formData.sizes.length > 0 ? 0 : formData.preco
+        preco: formData.sizes.length > 0 ? 0 : formData.preco,
+        salesChannels: {
+          delivery: !!formData.salesChannels.delivery,
+          counter: !!formData.salesChannels.counter,
+          waiter: !!formData.salesChannels.waiter
+        },
+        channelPricing
       };
 
       if (editingProduct?.id) {
@@ -371,7 +422,31 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                               </div>
                               <div>
                                 <p className="font-bold text-stone-800">{product.nome}</p>
-                                <p className="text-xs text-stone-500 line-clamp-1">{product.descricao}</p>
+                                <p className="text-xs text-stone-500 line-clamp-1 mb-1">{product.descricao}</p>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {normalizeProductSalesChannels(product).delivery && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-medium border border-emerald-100">
+                                      Delivery
+                                    </span>
+                                  )}
+                                  {normalizeProductSalesChannels(product).counter && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-medium border border-blue-100">
+                                      Balcão
+                                    </span>
+                                  )}
+                                  {normalizeProductSalesChannels(product).waiter && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-[10px] font-medium border border-purple-100">
+                                      Garçom
+                                    </span>
+                                  )}
+                                  {!normalizeProductSalesChannels(product).delivery && 
+                                   !normalizeProductSalesChannels(product).counter && 
+                                   !normalizeProductSalesChannels(product).waiter && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-medium border border-amber-100">
+                                      Nenhum canal
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -531,6 +606,153 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                           <span className="font-bold text-stone-700">Exibir adicionais</span>
                         </label>
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+                  <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
+                    <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
+                    Canais de Venda
+                  </h4>
+                  <p className="text-xs text-stone-500 mb-4">Escolha em quais canais de venda este produto estará disponível.</p>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.salesChannels.delivery}
+                        onChange={e => setFormData({
+                          ...formData,
+                          salesChannels: {
+                            ...formData.salesChannels,
+                            delivery: e.target.checked
+                          }
+                        })}
+                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div>
+                        <span className="font-bold text-stone-700 text-sm">Delivery no app</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.salesChannels.counter}
+                        onChange={e => setFormData({
+                          ...formData,
+                          salesChannels: {
+                            ...formData.salesChannels,
+                            counter: e.target.checked
+                          }
+                        })}
+                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div>
+                        <span className="font-bold text-stone-700 text-sm">Venda no balcão</span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.salesChannels.waiter}
+                        onChange={e => setFormData({
+                          ...formData,
+                          salesChannels: {
+                            ...formData.salesChannels,
+                            waiter: e.target.checked
+                          }
+                        })}
+                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <div>
+                        <span className="font-bold text-stone-700 text-sm">Garçom e mesas</span>
+                      </div>
+                    </label>
+                  </div>
+
+                  {!formData.salesChannels.delivery && !formData.salesChannels.counter && !formData.salesChannels.waiter && (
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                      <span>Este produto não ficará disponível em nenhum canal de venda.</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+                  <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
+                    <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
+                    Preços Específicos por Canal
+                  </h4>
+                  <p className="text-xs text-stone-500 mb-4">Deixe em branco para utilizar o preço padrão do produto (R$ {Number.isNaN(formData.preco) ? '0,00' : formData.preco.toFixed(2)}).</p>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Delivery (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Usar padrão"
+                        disabled={!formData.salesChannels.delivery}
+                        value={formData.channelPricing.delivery === undefined || formData.channelPricing.delivery === null || Number.isNaN(formData.channelPricing.delivery) ? '' : formData.channelPricing.delivery}
+                        onChange={e => {
+                          const val = parseFloat(e.target.value);
+                          setFormData({
+                            ...formData,
+                            channelPricing: {
+                              ...formData.channelPricing,
+                              delivery: Number.isNaN(val) ? undefined : val
+                            }
+                          });
+                        }}
+                        className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.delivery ? 'opacity-50' : ''}`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Balcão (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Usar padrão"
+                        disabled={!formData.salesChannels.counter}
+                        value={formData.channelPricing.counter === undefined || formData.channelPricing.counter === null || Number.isNaN(formData.channelPricing.counter) ? '' : formData.channelPricing.counter}
+                        onChange={e => {
+                          const val = parseFloat(e.target.value);
+                          setFormData({
+                            ...formData,
+                            channelPricing: {
+                              ...formData.channelPricing,
+                              counter: Number.isNaN(val) ? undefined : val
+                            }
+                          });
+                        }}
+                        className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.counter ? 'opacity-50' : ''}`}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Garçom (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Usar padrão"
+                        disabled={!formData.salesChannels.waiter}
+                        value={formData.channelPricing.waiter === undefined || formData.channelPricing.waiter === null || Number.isNaN(formData.channelPricing.waiter) ? '' : formData.channelPricing.waiter}
+                        onChange={e => {
+                          const val = parseFloat(e.target.value);
+                          setFormData({
+                            ...formData,
+                            channelPricing: {
+                              ...formData.channelPricing,
+                              waiter: Number.isNaN(val) ? undefined : val
+                            }
+                          });
+                        }}
+                        className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.waiter ? 'opacity-50' : ''}`}
+                      />
                     </div>
                   </div>
                 </div>

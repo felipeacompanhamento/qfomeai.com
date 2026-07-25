@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { 
   collection, query, where, doc, updateDoc, orderBy, getDoc, getDocs, limit, startAfter, onSnapshot 
 } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { authApi } from '../../services/authApi';
+import { normalizeRestaurantFeatures } from '../../domain/restaurant/restaurantFeatures';
 import { 
   LayoutDashboard, ShoppingBag, Utensils, Clock, Settings, Bell, BellRing, 
   Check, X, LogOut, ChevronDown, ChevronRight, Tags, PlusCircle, Plus, 
@@ -39,6 +40,9 @@ import DriversList from './drivers/DriversList';
 import RegisterDriver from './drivers/RegisterDriver';
 import AssignedDeliveries from './drivers/AssignedDeliveries';
 import DeliverySettings from './drivers/DeliverySettings';
+import CounterPage from './Counter';
+import WaitersPage from './Waiters';
+import { UnpaidOrderAlertDialog } from '../../components/orders/UnpaidOrderAlertDialog';
 
 import { registerPushNotifications } from '../../firebaseMessaging';
 import RestaurantLayout from '../../layouts/RestaurantLayout';
@@ -100,6 +104,9 @@ export default function RestaurantDashboard() {
   const location = useLocation();
   const navigate = useNavigate();
   const isOrdersPage = location.pathname.includes('/orders');
+  const isBalcaoPage = location.pathname.includes('/balcao');
+  const isWaitersPage = location.pathname.includes('/waiters');
+  const hideHeader = isOrdersPage || isBalcaoPage || isWaitersPage;
 
   const handleResendVerification = async () => {
     if (!user || !user.email) return;
@@ -404,6 +411,8 @@ export default function RestaurantDashboard() {
     }
   }, [orders]);
 
+  const [unpaidOrderDialog, setUnpaidOrderDialog] = useState<{ open: boolean; orderNumber?: string }>({ open: false });
+
   const handleUpdateStatus = React.useCallback(async (orderId: string, newStatus: string, motivo?: string) => {
     if (!profile?.restaurantId || updatingOrdersRef.current.has(orderId)) return;
     
@@ -413,9 +422,17 @@ export default function RestaurantDashboard() {
     // Se o status já for o mesmo, não faz nada
     if (currentOrder?.status === newStatus) return;
     
-    // Regra de negócio: Pedido só pode ser finalizado/entregue se estiver pago
-    if ((newStatus === 'entregue' || newStatus === 'finalizado') && currentOrder && !currentOrder.pago) {
-      alert('Este pedido ainda não foi marcado como PAGO. Por favor, confirme o pagamento antes de finalizar.');
+    // Regra de negócio: Pedido só pode ser finalizado/entregue se estiver quitado financeiramente
+    const isSettled = currentOrder && (
+      currentOrder.pago === true ||
+      currentOrder.financialSettlementStatus === 'SETTLED'
+    );
+
+    if ((newStatus === 'entregue' || newStatus === 'finalizado') && currentOrder && !isSettled) {
+      setUnpaidOrderDialog({
+        open: true,
+        orderNumber: currentOrder.numero_pedido || currentOrder.id
+      });
       return;
     }
 
@@ -553,6 +570,11 @@ export default function RestaurantDashboard() {
 
   return (
     <RestaurantLayout pendingOrdersCount={pendingOrdersCount}>
+      <UnpaidOrderAlertDialog
+        open={unpaidOrderDialog.open}
+        orderNumber={unpaidOrderDialog.orderNumber}
+        onClose={() => setUnpaidOrderDialog({ open: false })}
+      />
       {isLive && (
         <div className="fixed top-4 right-4 z-[9999]">
           <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
@@ -589,7 +611,7 @@ export default function RestaurantDashboard() {
         </div>
       )}
 
-      {!isOrdersPage && (
+      {!hideHeader && (
         <header className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-2xl font-bold text-stone-800">Olá, {profile?.nome}</h2>
@@ -626,6 +648,20 @@ export default function RestaurantDashboard() {
       <Routes>
         <Route path="/" element={<DashboardStats orders={orders} />} />
         <Route path="dashboard" element={<DashboardStats orders={orders} />} />
+        <Route path="balcao" element={
+          normalizeRestaurantFeatures(restaurantProfile).counterEnabled ? (
+            <CounterPage restaurantProfile={restaurantProfile} />
+          ) : (
+            <Navigate to="/restaurant/dashboard" replace />
+          )
+        } />
+        <Route path="waiters/*" element={
+          normalizeRestaurantFeatures(restaurantProfile).waiterEnabled ? (
+            <WaitersPage />
+          ) : (
+            <Navigate to="/restaurant/dashboard" replace />
+          )
+        } />
         <Route path="desempenho" element={<PerformanceDashboard orders={orders} />} />
         <Route path="orders" element={
           <RestaurantOrdersPage 
@@ -1056,8 +1092,10 @@ const KanbanCard = React.memo(({ order, onUpdate, onClick, isUpdating }: { order
     switch (currentStatus) {
       case 'pendente': return 'aceito';
       case 'aceito': return 'preparo';
-      case 'preparo': return 'pronto';
-      case 'pronto': return 'entrega';
+      case 'preparo':
+      case 'cozinha': return 'pronto';
+      case 'pronto': 
+        return ['retirada', 'balcao', 'consumo_local'].includes(order?.tipo_entrega) ? 'entregue' : 'entrega';
       default: return null;
     }
   };

@@ -16,6 +16,8 @@ export const invalidateRestaurantCache = (restaurantId: string) => {
   cache.remove(`restaurant_products_${restaurantId}`);
   cache.remove(`restaurant_extras_${restaurantId}`);
   cache.remove(`restaurant_sizes_${restaurantId}`);
+  cache.remove(`products_${restaurantId}`);
+  cache.remove(`categories_${restaurantId}`);
 };
 
 export const restaurantService = {
@@ -37,6 +39,27 @@ export const restaurantService = {
     
     cache.set(cacheKey, restaurant, 300); // 5 minutes
     return restaurant;
+  },
+
+  async getRestaurantById(id: string) {
+    const cacheKey = `restaurant_id_${id}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
+    console.log("Fetching restaurant by id:", id);
+    try {
+      const docRef = doc(db, 'restaurants', id);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const restaurant = { id: docSnap.id, ...docSnap.data() };
+        cache.set(cacheKey, restaurant, 300); // 5 minutes
+        return restaurant;
+      }
+      return null;
+    } catch (error) {
+      console.error("Error fetching restaurant by id:", error);
+      return null;
+    }
   },
 
   async getRestaurantByOwnerId(ownerId: string) {
