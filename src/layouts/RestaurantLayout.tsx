@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, ShoppingBag, Utensils, Clock, Settings, 
   X, LogOut, ChevronDown, ChevronRight, Tags, PlusCircle, Plus, 
-  Percent, Users, CreditCard, MapPin, User, Lock, Menu, Printer, TrendingUp, ChevronLeft, Home, DollarSign, ExternalLink, MessageSquare, Bike, Store
+  Percent, Users, CreditCard, MapPin, User, Lock, Menu, Printer, TrendingUp, ChevronLeft, Home, DollarSign, ExternalLink, MessageSquare, Bike, Store,
+  Wallet
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -18,7 +19,7 @@ interface RestaurantLayoutProps {
 }
 
 export default function RestaurantLayout({ children, pendingOrdersCount }: RestaurantLayoutProps) {
-  const { profile, user, refreshUser } = useAuth();
+  const { profile, user, refreshUser, isRestaurant, isAdmin } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [expandedMenus, setExpandedMenus] = useState<string[]>(['Cardápio', 'Configurações']);
@@ -62,7 +63,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
   
   React.useEffect(() => {
     const restaurantId = profile?.restaurantId;
-    if (!restaurantId || !user) return;
+    if (!restaurantId || !user || (!isRestaurant && !isAdmin)) return;
 
     const checkTimeouts = async () => {
       try {
@@ -92,7 +93,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
     return () => {
       clearInterval(intervalId);
     };
-  }, [profile?.restaurantId, user]);
+  }, [profile?.restaurantId, user, isRestaurant, isAdmin]);
 
   React.useEffect(() => {
     // Collapse menu on route change
@@ -151,6 +152,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
         { title: "Configurações de Entrega", path: "/restaurant/drivers/settings", icon: Settings }
       ]
     },
+    { title: "Financeiro", path: "/restaurant/financeiro", icon: Wallet },
     { title: "Faturas", path: "/restaurant/fatura", icon: DollarSign },
     { title: "Horários", path: "/restaurant/schedules", icon: Clock },
     {

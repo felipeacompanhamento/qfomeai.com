@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { restaurantService } from '../../services/restaurantService';
 import { deliveryAreaService, DeliveryArea } from '../../services/deliveryAreaService';
-import { Plus, Edit2, Trash2, X, AlertCircle, Loader2, MapPin } from 'lucide-react';
+import { Plus, Edit2, Trash2, X, AlertCircle, Loader2, MapPin, Save } from 'lucide-react';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 
 export default function DeliveryAreas({ restaurantId: propRestaurantId }: { restaurantId?: string }) {
   const { user, profile } = useAuth();
@@ -30,6 +31,7 @@ export default function DeliveryAreas({ restaurantId: propRestaurantId }: { rest
     status: 'ativo' as 'ativo' | 'inativo'
   });
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
 
   const [restaurantId, setRestaurantId] = useState<string | null>(propRestaurantId || null);
@@ -243,6 +245,7 @@ export default function DeliveryAreas({ restaurantId: propRestaurantId }: { rest
     if (!restaurantId || !areaToDelete?.id) return;
     
     setSaveLoading(true);
+    setDeleteError(null);
     try {
       await deliveryAreaService.deleteDeliveryArea(restaurantId, areaToDelete.id);
       setIsDeleteModalOpen(false);
@@ -250,7 +253,7 @@ export default function DeliveryAreas({ restaurantId: propRestaurantId }: { rest
       await fetchDeliveryAreas(restaurantId);
     } catch (err) {
       console.error("Error deleting delivery area:", err);
-      alert("Erro ao excluir bairro.");
+      setDeleteError("Erro ao excluir bairro.");
     } finally {
       setSaveLoading(false);
     }
@@ -258,6 +261,7 @@ export default function DeliveryAreas({ restaurantId: propRestaurantId }: { rest
 
   const confirmDelete = (area: DeliveryArea) => {
     setAreaToDelete(area);
+    setDeleteError(null);
     setIsDeleteModalOpen(true);
   };
 
@@ -317,116 +321,152 @@ export default function DeliveryAreas({ restaurantId: propRestaurantId }: { rest
         </table>
       </div>
 
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl">
-            <h3 className="text-xl font-bold text-stone-800 mb-6">{editingArea ? 'Editar Bairro' : 'Novo Bairro'}</h3>
-            
-            {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-2 text-red-600 text-sm">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Estado *</label>
-                  <select 
-                    required 
-                    value={selectedEstadoId} 
-                    onChange={e => { setSelectedEstadoId(e.target.value); setSelectedCidadeId(''); setFormData({...formData, bairro_id: ''}); }} 
-                    className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl disabled:opacity-60"
-                    disabled={!!restaurantData?.endereco?.estado_id}
-                  >
-                    <option value="">Selecione um estado</option>
-                    {estados.map(e => (
-                      <option key={e.id} value={e.id}>{e.nome} ({e.sigla})</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Cidade *</label>
-                  <select 
-                    required 
-                    value={selectedCidadeId} 
-                    onChange={e => { setSelectedCidadeId(e.target.value); setFormData({...formData, bairro_id: ''}); }} 
-                    disabled={!selectedEstadoId || !!restaurantData?.endereco?.cidade_id} 
-                    className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl disabled:opacity-60"
-                  >
-                    <option value="">Selecione uma cidade</option>
-                    {cidades.map(c => (
-                      <option key={c.id} value={c.id}>{c.nome}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Bairro *</label>
-                  <select required value={formData.bairro_id} onChange={e => setFormData({...formData, bairro_id: e.target.value})} disabled={!selectedCidadeId} className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl disabled:opacity-50">
-                    <option value="">Selecione um bairro</option>
-                    {bairros.map(n => (
-                      <option key={n.id} value={n.id}>{n.nome}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Taxa (R$)</label>
-                  <input type="number" step="0.01" required value={Number.isNaN(formData.taxa_entrega) ? '' : formData.taxa_entrega} onChange={e => setFormData({...formData, taxa_entrega: parseFloat(e.target.value)})} className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl" />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Tempo Est.</label>
-                  <input type="text" required value={formData.tempo_entrega} onChange={e => setFormData({...formData, tempo_entrega: e.target.value})} className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl" />
-                </div>
-              </div>
-              <div className="pt-4 flex gap-3">
-                <button type="button" onClick={handleCloseModal} className="flex-1 px-6 py-3 bg-stone-100 text-stone-600 font-bold rounded-2xl">Cancelar</button>
-                <button type="submit" disabled={saveLoading} className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-2xl">{saveLoading ? 'Salvando...' : 'Salvar'}</button>
-              </div>
-            </form>
+      {/* Modal Create / Edit */}
+      <FormModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        title={editingArea ? 'Editar Bairro de Entrega' : 'Novo Bairro de Entrega'}
+        subtitle="Configure a região, taxa de entrega e tempo estimado de entrega"
+        maxWidth="md"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
+              onClick={handleCloseModal}
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="delivery-area-form"
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              <span>Salvar Bairro</span>
+            </button>
           </div>
-        </div>
-      )}
+        }
+      >
+        <form id="delivery-area-form" onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-2 text-red-700 text-xs font-medium">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <FormField label="Estado" required>
+              <SelectInput
+                required
+                value={selectedEstadoId}
+                onChange={e => { setSelectedEstadoId(e.target.value); setSelectedCidadeId(''); setFormData({...formData, bairro_id: ''}); }}
+                disabled={!!restaurantData?.endereco?.estado_id}
+              >
+                <option value="">Selecione um estado</option>
+                {estados.map(e => (
+                  <option key={e.id} value={e.id}>{e.nome} ({e.sigla})</option>
+                ))}
+              </SelectInput>
+            </FormField>
+
+            <FormField label="Cidade" required>
+              <SelectInput
+                required
+                value={selectedCidadeId}
+                onChange={e => { setSelectedCidadeId(e.target.value); setFormData({...formData, bairro_id: ''}); }}
+                disabled={!selectedEstadoId || !!restaurantData?.endereco?.cidade_id}
+              >
+                <option value="">Selecione uma cidade</option>
+                {cidades.map(c => (
+                  <option key={c.id} value={c.id}>{c.nome}</option>
+                ))}
+              </SelectInput>
+            </FormField>
+
+            <FormField label="Bairro" required>
+              <SelectInput
+                required
+                value={formData.bairro_id}
+                onChange={e => setFormData({...formData, bairro_id: e.target.value})}
+                disabled={!selectedCidadeId}
+              >
+                <option value="">Selecione um bairro</option>
+                {bairros.map(n => (
+                  <option key={n.id} value={n.id}>{n.nome}</option>
+                ))}
+              </SelectInput>
+            </FormField>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField label="Taxa (R$)" required>
+              <TextInput
+                type="number"
+                step="0.01"
+                required
+                value={Number.isNaN(formData.taxa_entrega) ? '' : formData.taxa_entrega}
+                onChange={e => setFormData({...formData, taxa_entrega: parseFloat(e.target.value)})}
+              />
+            </FormField>
+
+            <FormField label="Tempo Est." required>
+              <TextInput
+                type="text"
+                placeholder="Ex: 30-40 min"
+                required
+                value={formData.tempo_entrega}
+                onChange={e => setFormData({...formData, tempo_entrega: e.target.value})}
+              />
+            </FormField>
+          </div>
+        </form>
+      </FormModal>
 
       {/* Modal de Exclusão */}
-      {isDeleteModalOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in duration-200">
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
-                <Trash2 className="w-8 h-8 text-red-500" />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-stone-800">Excluir Bairro</h3>
-                <p className="text-stone-500 text-sm mt-1">
-                  Tem certeza que deseja excluir o bairro <strong>{areaToDelete?.bairro_nome}</strong>? 
-                  Esta ação não pode ser desfeita.
-                </p>
-              </div>
-              <div className="flex w-full gap-3 pt-2">
-                <button
-                  onClick={() => {
-                    setIsDeleteModalOpen(false);
-                    setAreaToDelete(null);
-                  }}
-                  className="flex-1 px-4 py-3 bg-stone-100 text-stone-600 font-bold rounded-2xl hover:bg-stone-200 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={saveLoading}
-                  className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
-                </button>
-              </div>
-            </div>
+      <FormModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setAreaToDelete(null);
+        }}
+        title="Excluir Bairro de Entrega"
+        subtitle="Esta ação removerá permanentemente as taxas configuradas para este bairro"
+        icon={Trash2}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-500"
+        maxWidth="sm"
+        error={deleteError}
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setAreaToDelete(null);
+              }}
+              className="flex-1 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition-all"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={saveLoading}
+              className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Excluir'}
+            </button>
           </div>
+        }
+      >
+        <div className="text-center py-2">
+          <p className="text-stone-500 text-sm">
+            Tem certeza que deseja excluir o bairro <strong>{areaToDelete?.bairro_nome}</strong>? 
+            Esta ação não pode ser desfeita.
+          </p>
         </div>
-      )}
+      </FormModal>
     </div>
   );
 }

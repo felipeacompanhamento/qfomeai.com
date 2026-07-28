@@ -13,16 +13,12 @@ function escapeHtml(unsafe: any): string {
     .replace(/'/g, '&#039;');
 }
 
+import { getPaymentMethodLabel, isCashPaymentMethod } from '../../services/paymentMethodsService';
+
 // Map payment methods to clean Portuguese display
-function formatPaymentMethod(method: string): string {
+function formatPaymentMethod(method: string, configuredMethods?: any): string {
   if (!method) return 'A combinar';
-  const m = method.toLowerCase();
-  if (m === 'dinheiro') return 'Dinheiro';
-  if (m === 'pix' || m === 'chave_pix' || m === 'pix_copia_cola' || m === 'pix_app') return 'Pix';
-  if (m === 'cartao_credito' || m === 'cartao_credito_online') return 'Cartão de Crédito';
-  if (m === 'cartao_debito') return 'Cartão de Débito';
-  if (m === 'maquininha') return 'Cartão na Maquininha';
-  return method.toUpperCase();
+  return getPaymentMethodLabel(method, configuredMethods);
 }
 
 export type OrderThermalPrintProps = {
@@ -212,7 +208,7 @@ export function generateThermalReceiptHtml(order: any, restaurant?: any, profile
   const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
 
   let paymentBoxHtml = '';
-  const methodLabel = formatPaymentMethod(order.forma_pagamento || order.paymentMethod);
+  const methodLabel = formatPaymentMethod(order.forma_pagamento || order.paymentMethod, restaurant?.formas_pagamento || restaurant?.payment_methods);
 
   if (amountDue <= 0) {
     // Scenario B: Already fully paid

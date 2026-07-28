@@ -6,6 +6,7 @@ import { restaurantService } from '../../services/restaurantService';
 import { productService, Product } from '../../services/productService';
 import { optionService, OptionGroup } from '../../services/optionService';
 import { Plus, Edit2, Trash2, X, Check, AlertCircle, Loader2, Image as ImageIcon, Search, Filter, Settings2 } from 'lucide-react';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 import { 
   normalizeProductSalesChannels, 
   normalizeProductChannelPricing, 
@@ -274,6 +275,7 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
     if (!restaurantId || !productToDelete?.id) return;
 
     setSaveLoading(true);
+    setError(null);
     try {
       await productService.deleteProduct(restaurantId, productToDelete.id);
       // Atualiza o estado local imediatamente
@@ -284,13 +286,14 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err) {
       console.error("Error deleting product:", err);
-      alert("Erro ao excluir produto.");
+      setError("Erro ao excluir produto.");
     } finally {
       setSaveLoading(false);
     }
   };
 
   const confirmDelete = (product: Product) => {
+    setError(null);
     setProductToDelete(product);
     setIsDeleteModalOpen(true);
   };
@@ -495,529 +498,518 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
       </div>
 
       {/* Modal Form */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col">
-            <div className="p-6 border-b border-stone-100 flex items-center justify-between bg-stone-50/50 shrink-0">
-              <div>
-                <h3 className="text-xl font-bold text-stone-800">
-                  {editingProduct ? 'Editar Produto' : 'Novo Produto'}
-                </h3>
-                <p className="text-xs text-stone-500 font-medium">Preencha as informações abaixo.</p>
+      <FormModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        title={editingProduct ? 'Editar Produto' : 'Novo Produto'}
+        subtitle="Preencha as informações do produto abaixo"
+        icon={Settings2}
+        maxWidth="3xl"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
+              onClick={handleCloseModal}
+              className="flex-1 px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="product-form"
+              disabled={saveLoading}
+              className="flex-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {editingProduct ? 'Salvar Alterações' : 'Criar Produto'}
+            </button>
+          </div>
+        }
+      >
+        <form id="product-form" onSubmit={handleSubmit} className="space-y-6">
+          {error && (
+            <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 text-rose-600 text-sm font-bold">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <p>{error}</p>
+            </div>
+          )}
+
+          <div className="space-y-6">
+            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-xs">
+              <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2 text-sm">
+                <span className="w-1.5 h-5 bg-emerald-500 rounded-full"></span>
+                Informações Básicas
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <FormField label="Nome do Produto" required>
+                    <TextInput
+                      type="text"
+                      required
+                      value={formData.nome}
+                      onChange={e => setFormData({ ...formData, nome: e.target.value })}
+                      placeholder="Ex: Pizza Calabresa G"
+                    />
+                  </FormField>
+
+                  <FormField label="Categoria" required>
+                    <SelectInput
+                      required
+                      value={formData.categoria_id}
+                      onChange={e => setFormData({ ...formData, categoria_id: e.target.value })}
+                    >
+                      <option value="">Selecione uma categoria</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.nome}</option>
+                      ))}
+                    </SelectInput>
+                  </FormField>
+                </div>
+
+                <div className="space-y-4">
+                  <FormField label="Preço (R$)" required>
+                    <TextInput
+                      type="number"
+                      step="0.01"
+                      required
+                      value={Number.isNaN(formData.preco) ? '' : formData.preco}
+                      onChange={e => setFormData({ ...formData, preco: parseFloat(e.target.value) })}
+                    />
+                  </FormField>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-stone-500 uppercase tracking-wider mb-1.5">Status</label>
+                    <div className="flex gap-4">
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, status: 'ativo' })}
+                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all border ${
+                          formData.status === 'ativo' 
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-600' 
+                            : 'bg-stone-50 border-stone-200 text-stone-400'
+                        }`}
+                      >
+                        Ativo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, status: 'inativo' })}
+                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all border ${
+                          formData.status === 'inativo' 
+                            ? 'bg-rose-50 border-rose-200 text-rose-600' 
+                            : 'bg-stone-50 border-stone-200 text-stone-400'
+                        }`}
+                      >
+                        Inativo
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={formData.exibir_adicionais}
+                        onChange={e => setFormData({ ...formData, exibir_adicionais: e.target.checked })}
+                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="font-bold text-stone-700 text-sm">Exibir adicionais</span>
+                    </label>
+                  </div>
+                </div>
               </div>
-              <button onClick={handleCloseModal} className="p-2 hover:bg-stone-100 rounded-xl transition-all">
-                <X className="w-5 h-5 text-stone-400" />
-              </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto flex-1">
-              {error && (
-                <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm font-bold">
-                  <AlertCircle className="w-5 h-5 shrink-0" />
-                  <p>{error}</p>
+            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+              <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
+                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
+                Canais de Venda
+              </h4>
+              <p className="text-xs text-stone-500 mb-4">Escolha em quais canais de venda este produto estará disponível.</p>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.salesChannels.delivery}
+                    onChange={e => setFormData({
+                      ...formData,
+                      salesChannels: {
+                        ...formData.salesChannels,
+                        delivery: e.target.checked
+                      }
+                    })}
+                    className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="font-bold text-stone-700 text-sm">Delivery no app</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.salesChannels.counter}
+                    onChange={e => setFormData({
+                      ...formData,
+                      salesChannels: {
+                        ...formData.salesChannels,
+                        counter: e.target.checked
+                      }
+                    })}
+                    className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="font-bold text-stone-700 text-sm">Venda no balcão</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.salesChannels.waiter}
+                    onChange={e => setFormData({
+                      ...formData,
+                      salesChannels: {
+                        ...formData.salesChannels,
+                        waiter: e.target.checked
+                      }
+                    })}
+                    className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="font-bold text-stone-700 text-sm">Garçom e mesas</span>
+                  </div>
+                </label>
+              </div>
+
+              {!formData.salesChannels.delivery && !formData.salesChannels.counter && !formData.salesChannels.waiter && (
+                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                  <span>Este produto não ficará disponível em nenhum canal de venda.</span>
                 </div>
               )}
+            </div>
 
-              <div className="space-y-6">
-                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                  <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-                    <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                    Informações Básicas
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-bold text-stone-700 mb-1">Nome do Produto <span className="text-emerald-600">*</span></label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.nome}
-                          onChange={e => setFormData({ ...formData, nome: e.target.value })}
-                          placeholder="Ex: Pizza Calabresa G"
-                          className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                        />
-                      </div>
+            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+              <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
+                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
+                Preços Específicos por Canal
+              </h4>
+              <p className="text-xs text-stone-500 mb-4">Deixe em branco para utilizar o preço padrão do produto (R$ {Number.isNaN(formData.preco) ? '0,00' : formData.preco.toFixed(2)}).</p>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Delivery (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Usar padrão"
+                    disabled={!formData.salesChannels.delivery}
+                    value={formData.channelPricing.delivery === undefined || formData.channelPricing.delivery === null || Number.isNaN(formData.channelPricing.delivery) ? '' : formData.channelPricing.delivery}
+                    onChange={e => {
+                      const val = parseFloat(e.target.value);
+                      setFormData({
+                        ...formData,
+                        channelPricing: {
+                          ...formData.channelPricing,
+                          delivery: Number.isNaN(val) ? undefined : val
+                        }
+                      });
+                    }}
+                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.delivery ? 'opacity-50' : ''}`}
+                  />
+                </div>
 
-                      <div>
-                        <label className="block text-sm font-bold text-stone-700 mb-1">Categoria <span className="text-emerald-600">*</span></label>
-                        <select
-                          required
-                          value={formData.categoria_id}
-                          onChange={e => setFormData({ ...formData, categoria_id: e.target.value })}
-                          className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                        >
-                          <option value="">Selecione uma categoria</option>
-                          {categories.map(cat => (
-                            <option key={cat.id} value={cat.id}>{cat.nome}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Balcão (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Usar padrão"
+                    disabled={!formData.salesChannels.counter}
+                    value={formData.channelPricing.counter === undefined || formData.channelPricing.counter === null || Number.isNaN(formData.channelPricing.counter) ? '' : formData.channelPricing.counter}
+                    onChange={e => {
+                      const val = parseFloat(e.target.value);
+                      setFormData({
+                        ...formData,
+                        channelPricing: {
+                          ...formData.channelPricing,
+                          counter: Number.isNaN(val) ? undefined : val
+                        }
+                      });
+                    }}
+                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.counter ? 'opacity-50' : ''}`}
+                  />
+                </div>
 
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-bold text-stone-700 mb-1">Preço (R$) <span className="text-emerald-600">*</span></label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          required
-                          value={Number.isNaN(formData.preco) ? '' : formData.preco}
-                          onChange={e => setFormData({ ...formData, preco: parseFloat(e.target.value) })}
-                          className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                        />
-                      </div>
+                <div>
+                  <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Garçom (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Usar padrão"
+                    disabled={!formData.salesChannels.waiter}
+                    value={formData.channelPricing.waiter === undefined || formData.channelPricing.waiter === null || Number.isNaN(formData.channelPricing.waiter) ? '' : formData.channelPricing.waiter}
+                    onChange={e => {
+                      const val = parseFloat(e.target.value);
+                      setFormData({
+                        ...formData,
+                        channelPricing: {
+                          ...formData.channelPricing,
+                          waiter: Number.isNaN(val) ? undefined : val
+                        }
+                      });
+                    }}
+                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.waiter ? 'opacity-50' : ''}`}
+                  />
+                </div>
+              </div>
+            </div>
 
-                      <div>
-                        <label className="block text-sm font-bold text-stone-700 mb-1">Status</label>
-                        <div className="flex gap-4">
-                          <button
-                            type="button"
-                            onClick={() => setFormData({ ...formData, status: 'ativo' })}
-                            className={`flex-1 py-3 rounded-2xl font-bold text-sm transition-all border ${
-                              formData.status === 'ativo' 
-                                ? 'bg-emerald-50 border-emerald-200 text-emerald-600' 
-                                : 'bg-stone-50 border-stone-200 text-stone-400'
-                            }`}
-                          >
-                            Ativo
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFormData({ ...formData, status: 'inativo' })}
-                            className={`flex-1 py-3 rounded-2xl font-bold text-sm transition-all border ${
-                              formData.status === 'inativo' 
-                                ? 'bg-red-50 border-red-200 text-red-600' 
-                                : 'bg-stone-50 border-stone-200 text-stone-400'
-                            }`}
-                          >
-                            Inativo
-                          </button>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="flex items-center gap-2 cursor-pointer">
+            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+              <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
+                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
+                Tamanhos
+              </h4>
+              <div className="space-y-2">
+                {sizes.map((size) => {
+                  const selectedSize = formData.sizes.find(s => s.nome === size.nome);
+                  return (
+                    <div key={size.id} className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100">
+                      <input
+                        type="checkbox"
+                        checked={!!selectedSize}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFormData({ ...formData, sizes: [...formData.sizes, { nome: size.nome, preco: 0, aceita_metade: false }] });
+                          } else {
+                            setFormData({ ...formData, sizes: formData.sizes.filter(s => s.nome !== size.nome) });
+                          }
+                        }}
+                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="flex-1 font-bold text-stone-700">{size.nome}</span>
+                      {selectedSize && (
+                        <>
                           <input
-                            type="checkbox"
-                            checked={formData.exibir_adicionais}
-                            onChange={e => setFormData({ ...formData, exibir_adicionais: e.target.checked })}
-                            className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                            type="number"
+                            placeholder="Preço"
+                            value={Number.isNaN(selectedSize.preco) ? '' : selectedSize.preco}
+                            onChange={(e) => setFormData({
+                              ...formData,
+                              sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, preco: parseFloat(e.target.value) } : s)
+                            })}
+                            className="w-24 px-2 py-1 border border-stone-200 rounded-lg text-sm bg-white"
                           />
-                          <span className="font-bold text-stone-700">Exibir adicionais</span>
-                        </label>
-                      </div>
+                          <label className="flex items-center gap-1 text-xs font-bold text-stone-600 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={selectedSize.aceita_metade}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, aceita_metade: e.target.checked } : s)
+                              })}
+                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
+                            />
+                            Metade
+                          </label>
+                        </>
+                      )}
                     </div>
-                  </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <ImageUpload
+                  label="Imagem do Produto"
+                  path={`restaurants/${restaurantId}/products`}
+                  onUploadComplete={(url) => setFormData({ ...formData, imagem_url: url })}
+                  currentImageUrl={formData.imagem_url}
+                  processProductImage={true}
+                />
+
+                <div>
+                  <label className="block text-sm font-bold text-stone-700 mb-1">Descrição Breve</label>
+                  <textarea
+                    value={formData.descricao}
+                    onChange={e => setFormData({ ...formData, descricao: e.target.value })}
+                    placeholder="Descreva os ingredientes, tamanho, etc."
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all h-32 resize-none text-sm font-medium"
+                  />
                 </div>
+              </div>
+            </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                  <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
-                    <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                    Canais de Venda
-                  </h4>
-                  <p className="text-xs text-stone-500 mb-4">Escolha em quais canais de venda este produto estará disponível.</p>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.salesChannels.delivery}
-                        onChange={e => setFormData({
-                          ...formData,
-                          salesChannels: {
-                            ...formData.salesChannels,
-                            delivery: e.target.checked
-                          }
-                        })}
-                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <div>
-                        <span className="font-bold text-stone-700 text-sm">Delivery no app</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.salesChannels.counter}
-                        onChange={e => setFormData({
-                          ...formData,
-                          salesChannels: {
-                            ...formData.salesChannels,
-                            counter: e.target.checked
-                          }
-                        })}
-                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <div>
-                        <span className="font-bold text-stone-700 text-sm">Venda no balcão</span>
-                      </div>
-                    </label>
-
-                    <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.salesChannels.waiter}
-                        onChange={e => setFormData({
-                          ...formData,
-                          salesChannels: {
-                            ...formData.salesChannels,
-                            waiter: e.target.checked
-                          }
-                        })}
-                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <div>
-                        <span className="font-bold text-stone-700 text-sm">Garçom e mesas</span>
-                      </div>
-                    </label>
-                  </div>
-
-                  {!formData.salesChannels.delivery && !formData.salesChannels.counter && !formData.salesChannels.waiter && (
-                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-                      <span>Este produto não ficará disponível em nenhum canal de venda.</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                  <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
-                    <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                    Preços Específicos por Canal
-                  </h4>
-                  <p className="text-xs text-stone-500 mb-4">Deixe em branco para utilizar o preço padrão do produto (R$ {Number.isNaN(formData.preco) ? '0,00' : formData.preco.toFixed(2)}).</p>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Delivery (R$)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="Usar padrão"
-                        disabled={!formData.salesChannels.delivery}
-                        value={formData.channelPricing.delivery === undefined || formData.channelPricing.delivery === null || Number.isNaN(formData.channelPricing.delivery) ? '' : formData.channelPricing.delivery}
-                        onChange={e => {
-                          const val = parseFloat(e.target.value);
-                          setFormData({
-                            ...formData,
-                            channelPricing: {
-                              ...formData.channelPricing,
-                              delivery: Number.isNaN(val) ? undefined : val
-                            }
-                          });
-                        }}
-                        className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.delivery ? 'opacity-50' : ''}`}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Balcão (R$)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="Usar padrão"
-                        disabled={!formData.salesChannels.counter}
-                        value={formData.channelPricing.counter === undefined || formData.channelPricing.counter === null || Number.isNaN(formData.channelPricing.counter) ? '' : formData.channelPricing.counter}
-                        onChange={e => {
-                          const val = parseFloat(e.target.value);
-                          setFormData({
-                            ...formData,
-                            channelPricing: {
-                              ...formData.channelPricing,
-                              counter: Number.isNaN(val) ? undefined : val
-                            }
-                          });
-                        }}
-                        className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.counter ? 'opacity-50' : ''}`}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Garçom (R$)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="Usar padrão"
-                        disabled={!formData.salesChannels.waiter}
-                        value={formData.channelPricing.waiter === undefined || formData.channelPricing.waiter === null || Number.isNaN(formData.channelPricing.waiter) ? '' : formData.channelPricing.waiter}
-                        onChange={e => {
-                          const val = parseFloat(e.target.value);
-                          setFormData({
-                            ...formData,
-                            channelPricing: {
-                              ...formData.channelPricing,
-                              waiter: Number.isNaN(val) ? undefined : val
-                            }
-                          });
-                        }}
-                        className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.waiter ? 'opacity-50' : ''}`}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                  <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-                    <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                    Tamanhos
-                  </h4>
-                  <div className="space-y-2">
-                    {sizes.map((size) => {
-                      const selectedSize = formData.sizes.find(s => s.nome === size.nome);
-                      return (
-                        <div key={size.id} className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100">
+            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
+              <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
+                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
+                Grupos de Opções
+              </h4>
+              <div className="space-y-3">
+                {availableGroups.length === 0 ? (
+                  <p className="text-sm text-stone-400 italic">Nenhum grupo de opções cadastrado.</p>
+                ) : (
+                  availableGroups.map(group => {
+                    const selectedGroup = formData.optionGroups.find(g => g.groupId === group.id);
+                    return (
+                      <div key={group.id} className="p-4 bg-stone-50 rounded-2xl border border-stone-100 space-y-3">
+                        <div className="flex items-center gap-3">
                           <input
                             type="checkbox"
-                            checked={!!selectedSize}
+                            checked={!!selectedGroup}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setFormData({ ...formData, sizes: [...formData.sizes, { nome: size.nome, preco: 0, aceita_metade: false }] });
+                                setFormData({
+                                  ...formData,
+                                  optionGroups: [...formData.optionGroups, {
+                                    groupId: group.id!,
+                                    nome: group.nome,
+                                    ordem: group.ordem || 0,
+                                    obrigatorio: false,
+                                    min: 0,
+                                    max: 1
+                                  }]
+                                });
                               } else {
-                                setFormData({ ...formData, sizes: formData.sizes.filter(s => s.nome !== size.nome) });
+                                setFormData({
+                                  ...formData,
+                                  optionGroups: formData.optionGroups.filter(g => g.groupId !== group.id)
+                                });
                               }
                             }}
                             className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
                           />
-                          <span className="flex-1 font-bold text-stone-700">{size.nome}</span>
-                          {selectedSize && (
-                            <>
-                              <input
-                                type="number"
-                                placeholder="Preço"
-                                value={Number.isNaN(selectedSize.preco) ? '' : selectedSize.preco}
-                                onChange={(e) => setFormData({
-                                  ...formData,
-                                  sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, preco: parseFloat(e.target.value) } : s)
-                                })}
-                                className="w-24 px-2 py-1 border border-stone-200 rounded-lg"
-                              />
-                              <label className="flex items-center gap-1 text-xs font-bold text-stone-600">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedSize.aceita_metade}
-                                  onChange={(e) => setFormData({
-                                    ...formData,
-                                    sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, aceita_metade: e.target.checked } : s)
-                                  })}
-                                />
-                                Metade
-                              </label>
-                            </>
-                          )}
+                          <div className="flex-1">
+                            <p className="font-bold text-stone-700">{group.nome}</p>
+                            {group.descricao && <p className="text-[10px] text-stone-500">{group.descricao}</p>}
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
 
-                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <ImageUpload
-                      label="Imagem do Produto"
-                      path={`restaurants/${restaurantId}/products`}
-                      onUploadComplete={(url) => setFormData({ ...formData, imagem_url: url })}
-                      currentImageUrl={formData.imagem_url}
-                      processProductImage={true}
-                    />
-
-                    <div>
-                      <label className="block text-sm font-bold text-stone-700 mb-1">Descrição Breve</label>
-                      <textarea
-                        value={formData.descricao}
-                        onChange={e => setFormData({ ...formData, descricao: e.target.value })}
-                        placeholder="Descreva os ingredientes, tamanho, etc."
-                        className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all h-32 resize-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-                  <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-                    <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                    Grupos de Opções
-                  </h4>
-                  <div className="space-y-3">
-                    {availableGroups.length === 0 ? (
-                      <p className="text-sm text-stone-400 italic">Nenhum grupo de opções cadastrado.</p>
-                    ) : (
-                      availableGroups.map(group => {
-                        const selectedGroup = formData.optionGroups.find(g => g.groupId === group.id);
-                        return (
-                          <div key={group.id} className="p-4 bg-stone-50 rounded-2xl border border-stone-100 space-y-3">
-                            <div className="flex items-center gap-3">
+                        {selectedGroup && (
+                          <div className="pl-8 grid grid-cols-1 sm:grid-cols-3 gap-3 animate-in fade-in slide-in-from-left-2">
+                            <label className="flex items-center gap-2 text-xs font-bold text-stone-600 cursor-pointer">
                               <input
                                 type="checkbox"
-                                checked={!!selectedGroup}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setFormData({
-                                      ...formData,
-                                      optionGroups: [...formData.optionGroups, {
-                                        groupId: group.id!,
-                                        nome: group.nome,
-                                        ordem: group.ordem || 0,
-                                        obrigatorio: false,
-                                        min: 0,
-                                        max: 1
-                                      }]
-                                    });
-                                  } else {
-                                    setFormData({
-                                      ...formData,
-                                      optionGroups: formData.optionGroups.filter(g => g.groupId !== group.id)
-                                    });
-                                  }
-                                }}
-                                className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                                checked={selectedGroup.obrigatorio}
+                                onChange={(e) => setFormData({
+                                  ...formData,
+                                  optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, obrigatorio: e.target.checked } : g)
+                                })}
+                                className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
                               />
-                              <div className="flex-1">
-                                <p className="font-bold text-stone-700">{group.nome}</p>
-                                {group.descricao && <p className="text-[10px] text-stone-500">{group.descricao}</p>}
-                              </div>
+                              Obrigatório
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-stone-400 uppercase">Min</span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={selectedGroup.min}
+                                onChange={(e) => setFormData({
+                                  ...formData,
+                                  optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, min: parseInt(e.target.value) || 0 } : g)
+                                })}
+                                className="w-full px-2 py-1 bg-white border border-stone-200 rounded-lg text-xs"
+                              />
                             </div>
-
-                            {selectedGroup && (
-                              <div className="pl-8 grid grid-cols-1 sm:grid-cols-3 gap-3 animate-in fade-in slide-in-from-left-2">
-                                <label className="flex items-center gap-2 text-xs font-bold text-stone-600 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedGroup.obrigatorio}
-                                    onChange={(e) => setFormData({
-                                      ...formData,
-                                      optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, obrigatorio: e.target.checked } : g)
-                                    })}
-                                    className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
-                                  />
-                                  Obrigatório
-                                </label>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-bold text-stone-400 uppercase">Min</span>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={selectedGroup.min}
-                                    onChange={(e) => setFormData({
-                                      ...formData,
-                                      optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, min: parseInt(e.target.value) || 0 } : g)
-                                    })}
-                                    className="w-full px-2 py-1 bg-white border border-stone-200 rounded-lg text-xs"
-                                  />
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-bold text-stone-400 uppercase">Max</span>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    value={selectedGroup.max}
-                                    onChange={(e) => setFormData({
-                                      ...formData,
-                                      optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, max: parseInt(e.target.value) || 1 } : g)
-                                    })}
-                                    className="w-full px-2 py-1 bg-white border border-stone-200 rounded-lg text-xs"
-                                  />
-                                </div>
-                              </div>
-                            )}
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-stone-400 uppercase">Max</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={selectedGroup.max}
+                                onChange={(e) => setFormData({
+                                  ...formData,
+                                  optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, max: parseInt(e.target.value) || 1 } : g)
+                                })}
+                                className="w-full px-2 py-1 bg-white border border-stone-200 rounded-lg text-xs"
+                              />
+                            </div>
                           </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-stone-50 p-6 rounded-3xl border border-stone-100 space-y-4">
-                  <h4 className="font-bold text-stone-800 flex items-center gap-2">
-                    <PlusCircle className="w-5 h-5 text-emerald-600" />
-                    Limites de Adicionais
-                  </h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Mínimo</label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={Number.isNaN(formData.min_extras) ? '' : formData.min_extras}
-                        onChange={e => setFormData({ ...formData, min_extras: parseInt(e.target.value) })}
-                        className="w-full px-4 py-3 bg-white border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Máximo</label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={Number.isNaN(formData.max_extras) ? '' : formData.max_extras}
-                        onChange={e => setFormData({ ...formData, max_extras: parseInt(e.target.value) })}
-                        className="w-full px-4 py-3 bg-white border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-stone-400 font-medium italic">
-                    * Define quantos adicionais o cliente pode/deve escolher para este produto.
-                  </p>
-                </div>
-              </div>
-
-              <div className="pt-4 flex gap-3">
-                <button
-                  type="button"
-                  onClick={handleCloseModal}
-                  className="flex-1 px-6 py-4 bg-stone-100 text-stone-600 font-bold rounded-2xl hover:bg-stone-200 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saveLoading}
-                  className="flex-2 px-6 py-4 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 shadow-lg shadow-emerald-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {saveLoading && <Loader2 className="w-5 h-5 animate-spin" />}
-                  {editingProduct ? 'Salvar Alterações' : 'Criar Produto'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {/* Modal de Exclusão */}
-      {isDeleteModalOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in duration-200">
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
-                <Trash2 className="w-8 h-8 text-red-500" />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-stone-800">Excluir Produto</h3>
-                <p className="text-stone-500 text-sm mt-1">
-                  Tem certeza que deseja excluir o produto <strong>{productToDelete?.nome}</strong>? 
-                  Esta ação não pode ser desfeita.
-                </p>
-              </div>
-              <div className="flex w-full gap-3 pt-2">
-                <button
-                  onClick={() => {
-                    setIsDeleteModalOpen(false);
-                    setProductToDelete(null);
-                  }}
-                  className="flex-1 px-4 py-3 bg-stone-100 text-stone-600 font-bold rounded-2xl hover:bg-stone-200 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={saveLoading}
-                  className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
-                </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
+
+            <div className="bg-stone-50 p-6 rounded-2xl border border-stone-100 space-y-4">
+              <h4 className="font-bold text-stone-800 flex items-center gap-2 text-sm">
+                <PlusCircle className="w-5 h-5 text-emerald-600" />
+                Limites de Adicionais
+              </h4>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField label="Mínimo">
+                  <TextInput
+                    type="number"
+                    min="0"
+                    value={Number.isNaN(formData.min_extras) ? '' : formData.min_extras}
+                    onChange={e => setFormData({ ...formData, min_extras: parseInt(e.target.value) })}
+                  />
+                </FormField>
+                <FormField label="Máximo">
+                  <TextInput
+                    type="number"
+                    min="0"
+                    value={Number.isNaN(formData.max_extras) ? '' : formData.max_extras}
+                    onChange={e => setFormData({ ...formData, max_extras: parseInt(e.target.value) })}
+                  />
+                </FormField>
+              </div>
+              <p className="text-[10px] text-stone-400 font-medium italic">
+                * Define quantos adicionais o cliente pode/deve escolher para este produto.
+              </p>
+            </div>
           </div>
+        </form>
+      </FormModal>
+      {/* Modal de Exclusão */}
+      <FormModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setProductToDelete(null);
+        }}
+        title="Excluir Produto"
+        subtitle="Confirme a exclusão do produto"
+        icon={Trash2}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-500"
+        maxWidth="sm"
+        error={error}
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setProductToDelete(null);
+              }}
+              className="flex-1 px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-2xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={saveLoading}
+              className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
+            </button>
+          </div>
+        }
+      >
+        <div className="text-center py-2">
+          <p className="text-stone-500 text-sm">
+            Tem certeza que deseja excluir o produto <strong>{productToDelete?.nome}</strong>? 
+            Esta ação não pode ser desfeita.
+          </p>
         </div>
-      )}
+      </FormModal>
     </div>
   );
 }

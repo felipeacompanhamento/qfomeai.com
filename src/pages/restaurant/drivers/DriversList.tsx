@@ -32,6 +32,7 @@ export default function DriversList() {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Search and Filtering states
   const [searchTerm, setSearchTerm] = useState('');
@@ -46,6 +47,7 @@ export default function DriversList() {
   const [deletingDriverId, setDeletingDriverId] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // To maintain active styling in inputs
   const [formData, setFormData] = useState({
@@ -142,6 +144,7 @@ export default function DriversList() {
   };
 
   const handleToggleStatus = async (driver: Driver) => {
+    setActionError(null);
     try {
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) throw new Error('Não autenticado');
@@ -167,18 +170,20 @@ export default function DriversList() {
       // Update locally
       setDrivers(prev => prev.map(d => d.id === driver.id ? { ...d, status: nextStatus } : d));
     } catch (err: any) {
-      alert(err.message || 'Erro ao alterar status do entregador');
+      setActionError(err.message || 'Erro ao alterar status do entregador');
     }
   };
 
   const handleDeleteClick = (driver: Driver) => {
     setDeletingDriverId(driver.id);
     setDeletingName(driver.name);
+    setDeleteError(null);
   };
 
   const handleConfirmDelete = async () => {
     if (!deletingDriverId) return;
     setIsDeleting(true);
+    setDeleteError(null);
     try {
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) throw new Error('Não autenticado');
@@ -198,7 +203,7 @@ export default function DriversList() {
       setDeletingDriverId(null);
       fetchDrivers();
     } catch (err: any) {
-      alert(err.message || 'Erro ao excluir entregador');
+      setDeleteError(err.message || 'Erro ao excluir entregador');
     } finally {
       setIsDeleting(false);
     }
@@ -279,6 +284,18 @@ export default function DriversList() {
           <span>Cadastrar Entregador</span>
         </button>
       </div>
+
+      {actionError && (
+        <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm font-semibold rounded-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-red-500 hover:text-red-700 text-xs font-bold">
+            Fechar
+          </button>
+        </div>
+      )}
 
       {/* Filter and search panel */}
       <div className="bg-white p-4 rounded-3xl border border-stone-200 flex flex-col md:flex-row gap-4">
@@ -613,6 +630,13 @@ export default function DriversList() {
                 Você tem certeza que deseja excluir permanentemente o entregador <strong className="text-stone-700">{deletingName}</strong>?<br/>
                 Isso removerá seus dados do Firestore e desativará sua conta de acesso. Esta ação é irreversível.
               </p>
+
+              {deleteError && (
+                <div className="mb-6 p-3.5 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-2 text-red-700 text-xs font-semibold text-left">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{deleteError}</span>
+                </div>
+              )}
               <div className="flex justify-center gap-3 pt-2">
                 <button
                   type="button"

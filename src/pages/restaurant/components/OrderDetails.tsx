@@ -16,6 +16,10 @@ import {
   canRestaurantSettleOrder,
   getDriverCashAccountability
 } from '../../../domain/order/orderLifecycle';
+import { PaymentsManager, PaymentItem } from './PaymentsManager';
+import { registerClientOrderPaymentMovement, registerClientOrderRefundMovement } from '../../../utils/financeIntegration';
+import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
+import { FormField, TextInput, SelectInput, FormModal } from '../../../components/ui/FormComponents';
 
 interface OrderDetailsProps {
   selectedOrder: any;
@@ -29,17 +33,11 @@ interface OrderDetailsProps {
   handleEditAddress: () => void;
   editAddress: any;
   setEditAddress: (addr: any) => void;
-  isEditingPayment: boolean;
-  handleSavePayment: () => void;
-  handleEditPayment: () => void;
-  editPaymentMethod: string;
-  setEditPaymentMethod: (method: string) => void;
-  editTroco: string;
-  setEditTroco: (troco: string) => void;
   onUpdate: (orderId: string, status: string, motivo?: string) => void;
   handleTogglePaid: () => void;
   onRefund?: (orderId: string, amount?: number) => void;
   isUpdating?: boolean;
+  restaurantProfile?: any;
 }
 
 const OrderDetails = ({
@@ -54,17 +52,11 @@ const OrderDetails = ({
   handleEditAddress,
   editAddress,
   setEditAddress,
-  isEditingPayment,
-  handleSavePayment,
-  handleEditPayment,
-  editPaymentMethod,
-  setEditPaymentMethod,
-  editTroco,
-  setEditTroco,
   onUpdate,
   handleTogglePaid,
   onRefund,
-  isUpdating = false
+  isUpdating = false,
+  restaurantProfile
 }: OrderDetailsProps) => {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [refundAmount, setRefundAmount] = useState('');
@@ -77,7 +69,71 @@ const OrderDetails = ({
   const [isSettling, setIsSettling] = useState(false);
   const [settleError, setSettleError] = useState<string | null>(null);
 
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+
+  const handleUpdatePayments = async (newPayments: PaymentItem[], pago: boolean) => {
+    if (!profile?.restaurantId || !selectedOrder) return;
+    try {
+      const isMpPix = isPixPaymentMethod(selectedOrder.forma_pagamento) && !!selectedOrder.mercadopago_payment_id;
+      if (isMpPix) {
+        throw new Error("Pedidos pagos via Mercado Pago não podem ter o pagamento alterado manualmente.");
+      }
+
+      // Check which payments became PAID just now to trigger movement creation
+      const oldPayments = Array.isArray(selectedOrder.payments) ? selectedOrder.payments : [];
+      const newPaidPayments = newPayments.filter(p => p.status === 'PAID' && !oldPayments.find((op: any) => op.id === p.id && op.status === 'PAID'));
+
+      const updateData: any = {
+        payments: newPayments,
+        pago: pago
+      };
+
+      // Se todas as parcelas antigas sumiram ou foram pagas, talvez a forma principal seja a que tem maior valor
+      if (newPayments.length > 0) {
+        const principal = newPayments.reduce((prev, current) => (prev.amount > current.amount) ? prev : current);
+        updateData.forma_pagamento = principal.paymentMethodId;
+      }
+
+      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
+
+      const updatedOrder = { ...selectedOrder, ...updateData };
+      setSelectedOrder(updatedOrder);
+
+      // We only register the new PAID movements for idempotency
+      if (newPaidPayments.length > 0) {
+        // We pass the whole order, the financeIntegration function will iterate and skip already registered due to idempotency
+        await registerClientOrderPaymentMovement(profile.restaurantId, selectedOrder.id, updatedOrder, profile.nome || 'Operador');
+      }
+
+    } catch (err: any) {
+      console.error(err);
+      throw new Error(err?.message || 'Erro ao atualizar pagamentos.');
+    }
+  };
+
+  const handleRefundPaymentItem = async (paymentToRefund: PaymentItem) => {
+    if (!profile?.restaurantId || !selectedOrder) return;
+    try {
+      const newPayments = (selectedOrder.payments || []).map((p: PaymentItem) => 
+        p.id === paymentToRefund.id ? { ...p, status: 'REFUNDED' } : p
+      );
+      
+      const isFullyPaid = newPayments.filter((p: PaymentItem) => p.status !== 'REFUNDED').reduce((acc: number, p: PaymentItem) => acc + p.amount, 0) === Math.round(Number(selectedOrder.valor_total) * 100) && newPayments.filter((p: PaymentItem) => p.status !== 'REFUNDED').every((p: PaymentItem) => p.status === 'PAID');
+
+      const updateData = { payments: newPayments, pago: isFullyPaid };
+      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
+      
+      const updatedOrder = { ...selectedOrder, ...updateData };
+      setSelectedOrder(updatedOrder);
+
+      // Refund this specific payment
+      await registerClientOrderRefundMovement(profile.restaurantId, selectedOrder.id, updatedOrder, profile.nome || 'Operador', paymentToRefund.id);
+
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao estornar pagamento.');
+    }
+  };
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [restaurantDrivers, setRestaurantDrivers] = useState<any[]>([]);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
@@ -451,77 +507,30 @@ const OrderDetails = ({
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
-                <CreditCard className="w-4 h-4" /> Pagamento
-              </h3>
-              {!['entregue', 'finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) && !selectedOrder.mercadopago_payment_id && (
-                <button 
-                  onClick={isEditingPayment ? handleSavePayment : handleEditPayment}
-                  className="text-emerald-600 hover:text-emerald-700 p-1"
-                >
-                  {isEditingPayment ? <Save className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
-                </button>
-              )}
-            </div>
-            <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-              {isEditingPayment ? (
-                <div className="space-y-2">
-                  <select 
-                    value={editPaymentMethod} 
-                    onChange={e => setEditPaymentMethod(e.target.value)}
-                    className="w-full p-2 text-sm border border-stone-200 rounded-lg"
-                  >
-                    <option value="dinheiro">Dinheiro</option>
-                    <option value="credito">Crédito</option>
-                    <option value="debito">Débito</option>
-                    <option value="chave_pix">Chave Pix</option>
-                    <option value="pix_copia_cola">Pix Copia e Cola</option>
-                  </select>
-                  {editPaymentMethod === 'dinheiro' && (
-                    <input 
-                      type="text" 
-                      placeholder="Troco para (ex: 50)" 
-                      value={editTroco} 
-                      onChange={e => setEditTroco(e.target.value)}
-                      className="w-full p-2 text-sm border border-stone-200 rounded-lg"
-                    />
-                  )}
+            <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2 mb-2">
+              <CreditCard className="w-4 h-4" /> Pagamento
+            </h3>
+            
+            {selectedOrder?.mercadopago_payment_id && isPixPaymentMethod(selectedOrder?.forma_pagamento) ? (
+              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                <p className="font-bold text-stone-800 uppercase mb-2">Pix Mercado Pago</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <div className={`w-3 h-3 rounded-full ${selectedOrder.pago ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span className="text-sm font-bold text-stone-700">{selectedOrder.pago ? 'Pedido Pago' : 'Pendente'}</span>
                 </div>
-              ) : (
-                <>
-                  <p className="font-bold text-stone-800 uppercase">
-                    {selectedOrder?.mercadopago_payment_id && selectedOrder?.forma_pagamento === 'pix' 
-                      ? 'Pix Mercado Pago' 
-                      : selectedOrder?.forma_pagamento === 'chave_pix'
-                      ? 'Chave Pix'
-                      : selectedOrder?.forma_pagamento === 'pix_copia_cola'
-                      ? 'Pix Copia e Cola'
-                      : selectedOrder?.forma_pagamento || 'Não informada'}
-                  </p>
-                  {selectedOrder?.forma_pagamento === 'dinheiro' && selectedOrder?.troco && (
-                    <p className="text-sm text-emerald-600 font-bold mt-1">Troco para: {selectedOrder?.troco}</p>
-                  )}
-                  {selectedOrder?.estornado && (
-                    <p className="text-sm text-red-600 font-bold mt-1">
-                      Estornado: R$ {Number(selectedOrder.valor_estornado || selectedOrder.valor_total).toFixed(2)}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2 mt-2">
-                    <input
-                      type="checkbox"
-                      checked={selectedOrder.pago || false}
-                      onChange={handleTogglePaid}
-                      disabled={
-                        ['entregue', 'finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) || 
-                        (selectedOrder.forma_pagamento === 'pix' && !!selectedOrder.mercadopago_payment_id)
-                      }
-                      className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    <span className="text-sm font-bold text-stone-700">Pedido Pago</span>
-                  </div>
-                  
-                  {/* Botão de Estorno Mercado Pago */}
+              </div>
+            ) : (
+              <PaymentsManager
+                order={selectedOrder}
+                configuredMethods={restaurantProfile?.formas_pagamento || restaurantProfile?.payment_methods}
+                restaurantProfile={restaurantProfile}
+                restaurantId={profile?.restaurantId || restaurantProfile?.id || selectedOrder?.restaurantId}
+                onUpdatePayments={handleUpdatePayments}
+                onRefundPayment={handleRefundPaymentItem}
+              />
+            )}
+            
+            {/* Botão de Estorno Mercado Pago */}
                   {selectedOrder?.mercadopago_payment_id && selectedOrder?.pago && !selectedOrder?.estornado && onRefund && (
                     <button
                       onClick={() => setShowRefundModal(true)}
@@ -530,9 +539,6 @@ const OrderDetails = ({
                       <RefreshCcw className="w-4 h-4" /> Estornar Pagamento
                     </button>
                   )}
-                </>
-              )}
-            </div>
           </div>
         </div>
 
@@ -900,62 +906,51 @@ const OrderDetails = ({
         ) : null}
       </div>
       {/* Modal de Estorno */}
-      {showRefundModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-xl">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-stone-800">Estornar Pagamento</h3>
-              <button 
-                onClick={() => setShowRefundModal(false)}
-                className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-full transition-colors"
-                disabled={isRefunding}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <p className="text-sm text-stone-600">
-                O valor total do pedido é de <strong className="text-stone-800">R$ {Number(selectedOrder.valor_total).toFixed(2)}</strong>.
-              </p>
-              
-              <div>
-                <label className="block text-sm font-bold text-stone-700 mb-1">
-                  Valor do Estorno (R$)
-                </label>
-                <input
-                  type="text"
-                  placeholder={`Ex: ${Number(selectedOrder.valor_total).toFixed(2)}`}
-                  value={refundAmount}
-                  onChange={(e) => setRefundAmount(e.target.value)}
-                  className="w-full p-3 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
-                  disabled={isRefunding}
-                />
-                <p className="text-xs text-stone-500 mt-1">
-                  Deixe em branco para estornar o valor total. Use ponto ou vírgula para centavos.
-                </p>
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <button
-                  onClick={() => setShowRefundModal(false)}
-                  className="flex-1 py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-xl transition-colors"
-                  disabled={isRefunding}
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleRefundSubmit}
-                  disabled={isRefunding}
-                  className="flex-1 py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {isRefunding ? 'Processando...' : 'Confirmar Estorno'}
-                </button>
-              </div>
-            </div>
+      <FormModal
+        isOpen={showRefundModal}
+        onClose={() => setShowRefundModal(false)}
+        title="Estornar Pagamento"
+        subtitle="O estorno devolverá o saldo ao cliente."
+        icon={DollarSign}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-600"
+        footer={
+          <div className="flex gap-3 w-full">
+            <button
+              onClick={() => setShowRefundModal(false)}
+              className="flex-1 py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-xl transition-colors"
+              disabled={isRefunding}
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleRefundSubmit}
+              disabled={isRefunding}
+              className="flex-1 py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {isRefunding ? 'Processando...' : 'Confirmar Estorno'}
+            </button>
           </div>
+        }
+      >
+        <div className="space-y-4 text-left">
+          <p className="text-sm text-stone-600">
+            O valor total do pedido é de <strong className="text-stone-800">R$ {Number(selectedOrder.valor_total).toFixed(2)}</strong>.
+          </p>
+          
+          <FormField label="Valor do Estorno (R$)">
+            <TextInput
+              placeholder={`Ex: ${Number(selectedOrder.valor_total).toFixed(2)}`}
+              value={refundAmount}
+              onChange={(e) => setRefundAmount(e.target.value)}
+              disabled={isRefunding}
+            />
+            <p className="text-xs text-stone-500 mt-1">
+              Deixe em branco para estornar o valor total. Use ponto ou vírgula para centavos.
+            </p>
+          </FormField>
         </div>
-      )}
+      </FormModal>
 
       {/* Modal de Baixa / Conferência Financeira com Entregador */}
       <RestaurantSettlementModal
@@ -977,136 +972,128 @@ const OrderDetails = ({
       />
 
       {/* Modal de Atribuição de Entregador */}
-      {isAssignModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in text-left">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b border-stone-100 flex-shrink-0">
-              <div>
-                <h3 className="text-xl font-bold text-stone-800 flex items-center gap-2">
-                  <Bike className="text-indigo-600" /> Atribuir Entregador
-                </h3>
-                <p className="text-xs text-stone-400 mt-0.5">Pedido #{selectedOrder.id.slice(-6).toUpperCase()} • R$ {Number(selectedOrder.valor_total).toFixed(2)}</p>
-              </div>
-              <button 
-                onClick={() => setIsAssignModalOpen(false)}
-                className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-full transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      <FormModal
+        isOpen={isAssignModalOpen}
+        onClose={() => setIsAssignModalOpen(false)}
+        title="Atribuir Entregador"
+        subtitle={`Pedido #${selectedOrder?.id?.slice(-6).toUpperCase()} • R$ ${Number(selectedOrder?.valor_total).toFixed(2)}`}
+        icon={Bike}
+        iconBgColor="bg-indigo-50"
+        iconTextColor="text-indigo-600"
+        footer={
+          <div className="flex justify-end gap-3 w-full">
+            <button
+              onClick={() => setIsAssignModalOpen(false)}
+              className="py-2.5 px-5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-xl transition-colors text-sm"
+            >
+              Fechar
+            </button>
+          </div>
+        }
+      >
+        <div className="text-left">
+          {assignError && (
+            <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-xl font-medium flex items-center gap-2">
+              <span className="font-bold">!</span> {assignError}
             </div>
+          )}
 
-            {assignError && (
-              <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-xl font-medium flex items-center gap-2">
-                <span className="font-bold">!</span> {assignError}
+          <div className="overflow-y-auto pr-1 space-y-4 py-2 custom-scrollbar max-h-[50vh]">
+            {loadingDrivers ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <RefreshCcw className="w-8 h-8 text-indigo-600 animate-spin" />
+                <p className="text-sm text-stone-500 font-medium">Buscando entregadores...</p>
               </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto pr-1 space-y-4 py-2 custom-scrollbar min-h-0">
-              {loadingDrivers ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-3">
-                  <RefreshCcw className="w-8 h-8 text-indigo-600 animate-spin" />
-                  <p className="text-sm text-stone-500 font-medium">Buscando entregadores...</p>
+            ) : restaurantDrivers.length === 0 ? (
+              <div className="text-center py-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 space-y-3">
+                <div className="w-12 h-12 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto">
+                  <Bike className="w-6 h-6" />
                 </div>
-              ) : restaurantDrivers.length === 0 ? (
-                <div className="text-center py-12 p-4 bg-stone-50 rounded-2xl border border-stone-100 space-y-3">
-                  <div className="w-12 h-12 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto">
-                    <Bike className="w-6 h-6" />
-                  </div>
-                  <p className="text-stone-700 font-bold">Nenhum entregador ativo disponível</p>
-                  <p className="text-xs text-stone-500 max-w-sm mx-auto">
-                    Não existem entregadores com conta ativa cadastrados para sua loja. Cadastre e ative-os no menu <strong className="text-stone-700">Entregador</strong> para começar a emitir corridas.
-                  </p>
+                <p className="text-stone-700 font-bold">Nenhum entregador ativo disponível</p>
+                <p className="text-xs text-stone-500 max-w-sm mx-auto">
+                  Não existem entregadores com conta ativa cadastrados para sua loja. Cadastre e ative-os no menu <strong className="text-stone-700">Entregador</strong> para começar a emitir corridas.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="p-3 bg-indigo-50 text-indigo-800 rounded-xl text-xs font-semibold">
+                  Selecione um dos entregadores ativos de sua frota externa para realizar a entrega:
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="p-3 bg-indigo-50 text-indigo-800 rounded-xl text-xs font-semibold">
-                    Selecione um dos entregadores ativos de sua frota externa para realizar a entrega:
-                  </div>
-                  {restaurantDrivers.map((driver) => {
-                    const isOffline = driver.availabilityStatus === 'OFFLINE' || !driver.availabilityStatus;
-                    const isOnDelivery = driver.availabilityStatus === 'ON_DELIVERY';
-                    const isOnline = driver.availabilityStatus === 'ONLINE';
+                {restaurantDrivers.map((driver) => {
+                  const isOffline = driver.availabilityStatus === 'OFFLINE' || !driver.availabilityStatus;
+                  const isOnDelivery = driver.availabilityStatus === 'ON_DELIVERY';
+                  const isOnline = driver.availabilityStatus === 'ONLINE';
 
-                    return (
-                      <div 
-                        key={driver.id} 
-                        className={`p-4 rounded-2xl border border-stone-100 hover:border-indigo-100 transition-all bg-stone-50 flex flex-col gap-3 ${
-                          assigningDriverId === driver.id ? 'ring-2 ring-indigo-500 bg-white' : ''
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                              isOnline ? 'bg-emerald-50 text-emerald-600' :
-                              isOnDelivery ? 'bg-indigo-50 text-indigo-600' :
-                              'bg-stone-200 text-stone-500'
-                            }`}>
-                              <Bike className="w-5 h-5" />
-                            </div>
-                            <div>
-                              <h4 className="font-bold text-stone-800 flex items-center gap-2">
-                                {driver.name}
-                                {driver.nickname && <span className="text-xs text-stone-400 font-normal">({driver.nickname})</span>}
-                              </h4>
-                              <p className="text-xs text-stone-500 mt-0.5">Telefone: {driver.phone}</p>
-                              {driver.vehiclePlate && (
-                                <p className="text-xs text-stone-400 font-mono mt-0.5 uppercase">{driver.vehicleType || 'veículo'}: {driver.vehiclePlate}</p>
-                              )}
-                            </div>
+                  return (
+                    <div 
+                      key={driver.id} 
+                      className={`p-4 rounded-2xl border border-stone-100 hover:border-indigo-100 transition-all bg-stone-50 flex flex-col gap-3 ${
+                        assigningDriverId === driver.id ? 'ring-2 ring-indigo-500 bg-white' : ''
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                            isOnline ? 'bg-emerald-50 text-emerald-600' :
+                            isOnDelivery ? 'bg-indigo-50 text-indigo-600' :
+                            'bg-stone-200 text-stone-500'
+                          }`}>
+                            <Bike className="w-5 h-5" />
                           </div>
-                          
-                          <div className="text-right">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                              isOnline ? 'bg-emerald-100 text-emerald-800' :
-                              isOnDelivery ? 'bg-indigo-100 text-indigo-800' :
-                              'bg-stone-200 text-stone-700'
-                            }`}>
-                              {isOnline ? 'Online' : isOnDelivery ? 'Em Entrega' : 'Offline'}
-                            </span>
-                            {driver.totalDeliveries > 0 && (
-                              <p className="text-[10px] text-stone-400 mt-1">{driver.totalDeliveries} entregas completadas</p>
+                          <div>
+                            <h4 className="font-bold text-stone-800 flex items-center gap-2">
+                              {driver.name}
+                              {driver.nickname && <span className="text-xs text-stone-400 font-normal">({driver.nickname})</span>}
+                            </h4>
+                            <p className="text-xs text-stone-500 mt-0.5">Telefone: {driver.phone}</p>
+                            {driver.vehiclePlate && (
+                              <p className="text-xs text-stone-400 font-mono mt-0.5 uppercase">{driver.vehicleType || 'veículo'}: {driver.vehiclePlate}</p>
                             )}
                           </div>
                         </div>
-
-                        {/* Aviso de Offline */}
-                        {isOffline && (
-                          <div className="p-2 bg-amber-50 text-amber-800 rounded-lg text-xs font-medium border border-amber-100">
-                            <strong>⚠️ Entregador offline!</strong> Ele receberá a atribuição no momento em que alterar seu status para online no aplicativo de entregas.
-                          </div>
-                        )}
-
-                        <button
-                          onClick={() => handleAssignDriver(driver)}
-                          disabled={assigningDriverId !== null}
-                          className="w-full mt-1 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-bold rounded-xl text-sm transition-all shadow-md flex items-center justify-center gap-2"
-                        >
-                          {assigningDriverId === driver.id ? (
-                            <>
-                              <RefreshCcw className="w-4 h-4 animate-spin" /> Atribuindo...
-                            </>
-                          ) : (
-                            'Atribuir para este entregador'
+                        
+                        <div className="text-right">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            isOnline ? 'bg-emerald-100 text-emerald-800' :
+                            isOnDelivery ? 'bg-indigo-100 text-indigo-800' :
+                            'bg-stone-200 text-stone-700'
+                          }`}>
+                            {isOnline ? 'Online' : isOnDelivery ? 'Em Entrega' : 'Offline'}
+                          </span>
+                          {driver.totalDeliveries > 0 && (
+                            <p className="text-[10px] text-stone-400 mt-1">{driver.totalDeliveries} entregas completadas</p>
                           )}
-                        </button>
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
 
-            <div className="pt-4 border-t border-stone-100 flex-shrink-0 flex justify-end gap-3">
-              <button
-                onClick={() => setIsAssignModalOpen(false)}
-                className="py-2.5 px-5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-xl transition-colors text-sm"
-              >
-                Fechar
-              </button>
-            </div>
+                      {/* Aviso de Offline */}
+                      {isOffline && (
+                        <div className="p-2 bg-amber-50 text-amber-800 rounded-lg text-xs font-medium border border-amber-100">
+                          <strong>⚠️ Entregador offline!</strong> Ele receberá a atribuição no momento em que alterar seu status para online no aplicativo de entregas.
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => handleAssignDriver(driver)}
+                        disabled={assigningDriverId !== null}
+                        className="w-full mt-1 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-bold rounded-xl text-sm transition-all shadow-md flex items-center justify-center gap-2"
+                      >
+                        {assigningDriverId === driver.id ? (
+                          <>
+                            <RefreshCcw className="w-4 h-4 animate-spin" /> Atribuindo...
+                          </>
+                        ) : (
+                          'Atribuir para este entregador'
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </FormModal>
     </div>
   );
 };

@@ -19,6 +19,8 @@ import {
 } from 'recharts';
 import { cache } from '../../utils/cache';
 import { cacheOrders } from '../../utils/cacheOrders';
+import { registerClientOrderPaymentMovement, registerClientOrderRefundMovement } from '../../utils/financeIntegration';
+import { isPixPaymentMethod } from '../../services/paymentMethodsService';
 import { scheduleService, Schedule } from '../../services/scheduleService';
 import PerformanceDashboard from './PerformanceDashboard';
 import RestaurantCategories from './Categories';
@@ -51,6 +53,13 @@ import { printThermalOrder } from '../../components/orders/OrderThermalPrint';
 import OrderListItem, { getOrderCardStyle } from './components/OrderListItem';
 import OrderDetails from './components/OrderDetails';
 import RestaurantOrdersPage from './orders/RestaurantOrdersPage';
+
+import FinanceiroPage from './financeiro/FinanceiroPage';
+import CaixaPage from './financeiro/CaixaPage';
+import { ContasReceberPage } from './financeiro/ContasReceberPage';
+import { ContasPagarPage } from './financeiro/ContasPagarPage';
+import { LancamentosPage } from './financeiro/LancamentosPage';
+import { EmptyModule } from './financeiro/EmptyModule';
 
 export default function RestaurantDashboard() {
   const { user, profile, refreshUser } = useAuth();
@@ -160,7 +169,7 @@ export default function RestaurantDashboard() {
         .filter(order => {
           // If it's a PIX order with MP integration, it must be paid to be visible
           // UNLESS it's already cancelled or rejected (so it doesn't disappear if it fails)
-          const isMpPix = order.forma_pagamento === 'pix' && order.mercadopago_payment_id;
+          const isMpPix = isPixPaymentMethod(order.forma_pagamento) && order.mercadopago_payment_id;
           if (isMpPix && !order.pago && order.status === 'pendente') {
             return false;
           }
@@ -198,7 +207,7 @@ export default function RestaurantDashboard() {
       const newDocs = snapshot.docs
         .map(d => ({ id: d.id, ...d.data() } as any))
         .filter(order => {
-          const isMpPix = order.forma_pagamento === 'pix' && order.mercadopago_payment_id;
+          const isMpPix = isPixPaymentMethod(order.forma_pagamento) && order.mercadopago_payment_id;
           if (isMpPix && !order.pago && order.status === 'pendente') {
             return false;
           }
@@ -286,7 +295,7 @@ export default function RestaurantDashboard() {
       const firstPageDocs = snapshot.docs
         .map(d => ({ id: d.id, ...d.data() } as any))
         .filter(order => {
-          const isMpPix = order.forma_pagamento === 'pix' && order.mercadopago_payment_id;
+          const isMpPix = isPixPaymentMethod(order.forma_pagamento) && order.mercadopago_payment_id;
           if (isMpPix && !order.pago && order.status === 'pendente') {
             return false;
           }
@@ -480,6 +489,24 @@ export default function RestaurantDashboard() {
       const oldOrder = orders.find(o => o.id === orderId);
       
       await updateDoc(orderRef, updateData);
+
+      if (oldOrder) {
+        if (newStatus === 'finalizado') {
+          await registerClientOrderPaymentMovement(
+            profile.restaurantId,
+            orderId,
+            oldOrder,
+            profile.nome || 'Operador'
+          );
+        } else if ((newStatus === 'cancelado' || newStatus === 'rejeitado') && oldOrder.pago) {
+          await registerClientOrderRefundMovement(
+            profile.restaurantId,
+            orderId,
+            oldOrder,
+            profile.nome || 'Operador'
+          );
+        }
+      }
       
       // Atualiza o estado local e o cache imediatamente (evita nova leitura e não espera a notificação)
       setOrders(prevOrders => {
@@ -693,6 +720,13 @@ export default function RestaurantDashboard() {
         <Route path="drivers/new" element={<RegisterDriver />} />
         <Route path="drivers/deliveries" element={<AssignedDeliveries />} />
         <Route path="drivers/settings" element={<DeliverySettings />} />
+        
+        {/* Financeiro Subroutes */}
+        <Route path="financeiro" element={<FinanceiroPage />} />
+        <Route path="financeiro/caixa" element={<CaixaPage />} />
+        <Route path="financeiro/contas-receber" element={<ContasReceberPage />} />
+        <Route path="financeiro/contas-pagar" element={<ContasPagarPage />} />
+        <Route path="financeiro/lancamentos" element={<LancamentosPage />} />
         
         {/* Configurações Subroutes */}
         <Route path="settings/payments" element={<RestaurantPayments />} />
@@ -1447,7 +1481,7 @@ function OrdersList({
     if (!profile?.restaurantId || !selectedOrder) return;
     
     // Prevent manual toggle for Mercado Pago PIX orders
-    if (selectedOrder.forma_pagamento === 'pix' && selectedOrder.mercadopago_payment_id) {
+    if (isPixPaymentMethod(selectedOrder.forma_pagamento) && selectedOrder.mercadopago_payment_id) {
       alert("O status de pagamento de pedidos via Mercado Pago é atualizado automaticamente.");
       return;
     }
@@ -1468,6 +1502,15 @@ function OrdersList({
         ...prev,
         ...updateData
       }));
+
+      if (novoStatusPago) {
+        await registerClientOrderPaymentMovement(
+          profile.restaurantId,
+          selectedOrder.id,
+          { ...selectedOrder, ...updateData },
+          profile.nome || 'Operador'
+        );
+      }
     } catch (error) {
       console.error("Error updating payment status", error);
     }
@@ -1675,17 +1718,11 @@ function OrdersList({
             handleEditAddress={handleEditAddress}
             editAddress={editAddress}
             setEditAddress={setEditAddress}
-            isEditingPayment={isEditingPayment}
-            handleSavePayment={handleSavePayment}
-            handleEditPayment={handleEditPayment}
-            editPaymentMethod={editPaymentMethod}
-            setEditPaymentMethod={setEditPaymentMethod}
-            editTroco={editTroco}
-            setEditTroco={setEditTroco}
             onUpdate={onUpdate}
             handleTogglePaid={handleTogglePaid}
             onRefund={handleRefund}
             isUpdating={updatingOrderId === selectedOrder?.id}
+            restaurantProfile={restaurantProfile}
           />
         </div>
       )}
@@ -1712,17 +1749,11 @@ function OrdersList({
               handleEditAddress={handleEditAddress}
               editAddress={editAddress}
               setEditAddress={setEditAddress}
-              isEditingPayment={isEditingPayment}
-              handleSavePayment={handleSavePayment}
-              handleEditPayment={handleEditPayment}
-              editPaymentMethod={editPaymentMethod}
-              setEditPaymentMethod={setEditPaymentMethod}
-              editTroco={editTroco}
-              setEditTroco={setEditTroco}
               onUpdate={onUpdate}
               handleTogglePaid={handleTogglePaid}
               onRefund={handleRefund}
               isUpdating={updatingOrderId === selectedOrder.id}
+              restaurantProfile={restaurantProfile}
             />
           </div>
         </div>

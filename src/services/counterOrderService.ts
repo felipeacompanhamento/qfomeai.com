@@ -15,6 +15,9 @@ export interface CounterCartItem {
   cartId: string;
   productId: string;
   nome: string;
+  unitPriceCents: number;
+  basePriceCents: number;
+  pricingChannel: 'BALCAO';
   precoBase: number;
   precoFinal: number;
   quantidade: number;
@@ -51,7 +54,7 @@ export interface CreateCounterOrderInput {
   clientName: string;
   serviceMode: 'COUNTER' | 'PICKUP' | 'DINE_IN';
   items: CounterCartItem[];
-  paymentMethod: 'dinheiro' | 'pix' | 'credito' | 'debito' | string;
+  forma_pagamento: string; payments?: any[];
   pago: boolean;
   amountReceived?: number;
   clientActionId: string;
@@ -114,7 +117,8 @@ export const counterOrderService = {
       clientName,
       serviceMode,
       items,
-      paymentMethod,
+      forma_pagamento,
+      payments,
       pago,
       amountReceived = 0,
       clientActionId
@@ -188,7 +192,9 @@ export const counterOrderService = {
         serviceMode,
         clientName,
         items: normalizedItems,
-        paymentMethod,
+        forma_pagamento,
+        paymentMethod: forma_pagamento,
+        payments,
         pago,
         amountReceived
       })

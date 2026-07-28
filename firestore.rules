@@ -41,6 +41,15 @@ service cloud.firestore {
       return isRestaurantAdmin(restaurantId);
     }
 
+    function isRestaurantWaiter(restaurantId) {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId == restaurantId &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario == 'waiter' ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAITER')
+      );
+    }
+
     function isAnyRestaurant() {
       return isAuthenticated() && (
         exists(/databases/$(database)/documents/restaurants/$(request.auth.uid)) ||
@@ -146,7 +155,15 @@ service cloud.firestore {
             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAITER'
           )
         );
-        allow write: if false;
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /mesas/{mesaId} {
+        allow read, write: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+      }
+
+      match /comandas/{comandaId} {
+        allow read, write: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
       }
 
       match /extras/{extraId} {
@@ -238,8 +255,54 @@ service cloud.firestore {
         allow update, delete: if isRestaurantOwner(restaurantId) || isAdmin();
       }
 
+      // Auxiliares e Idempotência (Módulo Financeiro)
       match /processedActions/{actionId} {
         allow read, write: if false;
+      }
+
+      match /active_caixa/{activeId} {
+        allow read, write: if false;
+      }
+
+      match /activeCashRegister/{activeId} {
+        allow read, write: if false;
+      }
+
+      match /idempotency/{idempotencyId} {
+        allow read, write: if false;
+      }
+
+      // Módulo Financeiro: Caixas e Movimentações
+      match /caixas/{caixaId} {
+        allow read: if isRestaurantOwner(restaurantId);
+        allow write: if false; // Todas as alterações de caixa ocorrem via Backend API
+
+        match /movimentacoes/{movimentacaoId} {
+          allow read: if isRestaurantOwner(restaurantId);
+          allow write: if false; // Lançamentos/movimentações ocorrem via Backend API
+        }
+      }
+
+      // Módulo Financeiro: Contas a Receber e Recebimentos
+      match /contasReceber/{contaId} {
+        allow read: if isRestaurantOwner(restaurantId);
+        allow write: if false; // Criação/atualização de contas a receber ocorrem via Backend API
+
+        match /recebimentos/{recebimentoId} {
+          allow read: if isRestaurantOwner(restaurantId);
+          allow write: if false; // Recebimentos ocorrem via Backend API
+        }
+      }
+
+      // Módulo Financeiro: Contas a Pagar e Pagamentos
+      match /contasPagar/{contaId} {
+        allow read: if isRestaurantOwner(restaurantId);
+        allow write: if false; // Criação/atualização de contas a pagar ocorrem via Backend API
+
+        match /pagamentos/{pagamentoId} {
+          allow read: if isRestaurantOwner(restaurantId);
+          allow write: if false; // Pagamentos ocorrem via Backend API
+        }
       }
     }
 

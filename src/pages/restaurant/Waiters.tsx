@@ -25,8 +25,10 @@ import {
   EyeOff,
   UserCheck,
   UserX,
-  Ban
+  Ban,
+  Save
 } from 'lucide-react';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 
 export default function WaitersPage() {
   const { user, profile } = useAuth();
@@ -463,260 +465,228 @@ export default function WaitersPage() {
             );
           })}
         </div>
-      )}
-
-      {/* Modal Create / Edit */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white w-full max-w-2xl max-h-[90vh] rounded-3xl flex flex-col shadow-2xl overflow-hidden my-auto animate-in zoom-in-95 duration-200">
-            {/* Header */}
-            <div className="p-5 border-b border-stone-200 flex items-center justify-between bg-stone-50">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
-                  <Users className="w-5 h-5" />
-                </div>
-                <h3 className="font-extrabold text-stone-800 text-base">
-                  {editingWaiter ? 'Editar Garçom' : 'Cadastrar Novo Garçom'}
-                </h3>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                className="p-1.5 text-stone-400 hover:text-stone-700 rounded-full hover:bg-stone-200 transition-all"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      )}      {/* Modal Create / Edit */}
+      <FormModal
+        isOpen={showModal}
+        onClose={handleCloseModal}
+        title={editingWaiter ? 'Editar Garçom' : 'Cadastrar Novo Garçom'}
+        subtitle="Gerencie as informações básicas e as permissões operacionais do garçom"
+        maxWidth="2xl"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
+              onClick={handleCloseModal}
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="waiter-form"
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {editingWaiter ? 'Salvar Alterações' : 'Confirmar Cadastro'}
+            </button>
+          </div>
+        }
+      >
+        <form id="waiter-form" onSubmit={handleSave} className="space-y-6">
+          {formError && (
+            <div className="p-3.5 bg-red-50 text-red-700 rounded-2xl border border-red-200 text-xs flex items-center gap-2 font-medium">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{formError}</span>
             </div>
+          )}
 
-            {/* Body Form */}
-            <form onSubmit={handleSave} className="p-6 overflow-y-auto space-y-6 flex-1">
-              {formError && (
-                <div className="p-3.5 bg-red-50 text-red-700 rounded-2xl border border-red-200 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{formError}</span>
+          {/* Basic Fields Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Nome Completo" required>
+              <TextInput
+                type="text"
+                required
+                placeholder="Ex: João da Silva"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </FormField>
+
+            <FormField label="E-mail de Acesso" required>
+              <TextInput
+                type="email"
+                required
+                placeholder="garcom@restaurante.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </FormField>
+
+            <FormField label={`Senha ${editingWaiter ? '(Deixe em branco para não alterar)' : ''}`} required={!editingWaiter}>
+              {editingWaiter && !editingWaiter.accessConfigured ? (
+                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 font-medium leading-tight">
+                  Acesso não configurado (garçom legado sem Auth UID). Para redefinir a senha, recrie o cadastro.
                 </div>
-              )}
-
-              {/* Basic Fields Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-stone-700 block mb-1">
-                    Nome Completo <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: João da Silva"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              ) : (
+                <div className="relative">
+                  <TextInput
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder={editingWaiter ? 'Sua nova senha' : 'Mínimo 6 caracteres'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pr-10"
                   />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-stone-700 block mb-1">
-                    E-mail de Acesso <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="garcom@restaurante.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-stone-700 block mb-1">
-                    Senha {editingWaiter ? '(Deixe em branco para não alterar)' : <span className="text-red-500">*</span>}
-                  </label>
-                  {editingWaiter && !editingWaiter.accessConfigured ? (
-                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 font-medium">
-                      Acesso não configurado (garçom legado sem Auth UID). Para redefinir a senha, recrie o cadastro.
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder={editingWaiter ? 'Sua nova senha' : 'Mínimo 6 caracteres'}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full pl-3.5 pr-10 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-stone-700 block mb-1">Telefone / WhatsApp</label>
-                  <input
-                    type="text"
-                    placeholder="(11) 99999-9999"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="text-xs font-bold text-stone-700 block mb-1">Status da Conta</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setStatus('ACTIVE')}
-                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                        status === 'ACTIVE' ? 'bg-emerald-50 border-emerald-600 text-emerald-800' : 'bg-stone-50 border-stone-200 text-stone-600'
-                      }`}
-                    >
-                      Ativo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStatus('INACTIVE')}
-                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                        status === 'INACTIVE' ? 'bg-stone-200 border-stone-400 text-stone-800' : 'bg-stone-50 border-stone-200 text-stone-600'
-                      }`}
-                    >
-                      Inativo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStatus('BLOCKED')}
-                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                        status === 'BLOCKED' ? 'bg-red-50 border-red-600 text-red-800' : 'bg-stone-50 border-stone-200 text-stone-600'
-                      }`}
-                    >
-                      Bloqueado
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Permissions Checkboxes Section */}
-              <div className="space-y-3 pt-4 border-t border-stone-200">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-stone-800 text-sm">Permissões Operacionais</h4>
-                    <p className="text-xs text-stone-500">Defina o que este garçom está autorizado a realizar no app</p>
-                  </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      const allTrue = permissionLabels.every(p => permissions[p.key]);
-                      const newPerms = { ...permissions };
-                      permissionLabels.forEach(p => {
-                        newPerms[p.key] = !allTrue;
-                      });
-                      setPermissions(newPerms);
-                    }}
-                    className="text-xs font-bold text-emerald-600 hover:underline"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
                   >
-                    {permissionLabels.every(p => permissions[p.key]) ? 'Desmarcar Todas' : 'Marcar Todas'}
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+              )}
+            </FormField>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {permissionLabels.map(item => {
-                    const isChecked = !!permissions[item.key];
-                    return (
-                      <label
-                        key={item.key}
-                        onClick={() => handlePermissionToggle(item.key)}
-                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer select-none transition-all ${
-                          isChecked ? 'bg-emerald-50/50 border-emerald-300' : 'bg-stone-50 border-stone-200 hover:bg-stone-100'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {}}
-                          className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
-                        />
-                        <div className="space-y-0.5">
-                          <span className="font-bold text-stone-800 text-xs block">{item.label}</span>
-                          <span className="text-[10px] text-stone-500 leading-tight block">{item.desc}</span>
-                        </div>
-                      </label>
-                    );
-                  })}
+            <FormField label="Telefone / WhatsApp">
+              <TextInput
+                type="text"
+                placeholder="(11) 99999-9999"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+            </FormField>
+
+            <div className="sm:col-span-2">
+              <FormField label="Status da Conta">
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setStatus('ACTIVE')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                      status === 'ACTIVE' ? 'bg-emerald-50 border-emerald-600 text-emerald-800' : 'bg-stone-50 border-stone-200 text-stone-600'
+                    }`}
+                  >
+                    Ativo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatus('INACTIVE')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                      status === 'INACTIVE' ? 'bg-stone-100 border-stone-400 text-stone-800' : 'bg-stone-50 border-stone-200 text-stone-600'
+                    }`}
+                  >
+                    Inativo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatus('BLOCKED')}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                      status === 'BLOCKED' ? 'bg-red-50 border-red-600 text-red-800' : 'bg-stone-50 border-stone-200 text-stone-600'
+                    }`}
+                  >
+                    Bloqueado
+                  </button>
                 </div>
-              </div>
-
-              {/* Modal Footer */}
-              <div className="pt-4 border-t border-stone-200 flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={handleCloseModal}
-                  className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saveLoading}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
-                >
-                  {saveLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                  <span>{editingWaiter ? 'Salvar Alterações' : 'Confirmar Cadastro'}</span>
-                </button>
-              </div>
-            </form>
+              </FormField>
+            </div>
           </div>
-        </div>
-      )}
+
+          {/* Permissions Checkboxes Section */}
+          <div className="space-y-3 pt-4 border-t border-stone-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-bold text-stone-800 text-sm">Permissões Operacionais</h4>
+                <p className="text-xs text-stone-500">Defina o que este garçom está autorizado a realizar no app</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const allTrue = permissionLabels.every(p => permissions[p.key]);
+                  const newPerms = { ...permissions };
+                  permissionLabels.forEach(p => {
+                    newPerms[p.key] = !allTrue;
+                  });
+                  setPermissions(newPerms);
+                }}
+                className="text-xs font-bold text-emerald-600 hover:underline"
+              >
+                {permissionLabels.every(p => permissions[p.key]) ? 'Desmarcar Todas' : 'Marcar Todas'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {permissionLabels.map(item => {
+                const isChecked = !!permissions[item.key];
+                return (
+                  <label
+                    key={item.key}
+                    onClick={() => handlePermissionToggle(item.key)}
+                    className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer select-none transition-all ${
+                      isChecked ? 'bg-emerald-50/50 border-emerald-300' : 'bg-stone-50 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => {}}
+                      className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 pointer-events-none"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-stone-800 text-xs block">{item.label}</span>
+                      <span className="text-[10px] text-stone-500 leading-tight block">{item.desc}</span>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </form>
+      </FormModal>
 
       {/* Status Modal Confirmation */}
-      {statusModalWaiter && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white max-w-sm w-full rounded-3xl p-6 text-center shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
-            <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto ${
-              targetStatus === 'BLOCKED' ? 'bg-red-100 text-red-600' : targetStatus === 'ACTIVE' ? 'bg-emerald-100 text-emerald-600' : 'bg-stone-100 text-stone-600'
-            }`}>
-              {targetStatus === 'BLOCKED' ? <Ban className="w-7 h-7" /> : targetStatus === 'ACTIVE' ? <UserCheck className="w-7 h-7" /> : <UserX className="w-7 h-7" />}
-            </div>
-
-            <div>
-              <h3 className="text-base font-extrabold text-stone-800">
-                Alterar status de {statusModalWaiter.name}?
-              </h3>
-              <p className="text-xs text-stone-500 mt-1">
-                O status será alterado para <strong className="uppercase">{targetStatus === 'ACTIVE' ? 'Ativo' : targetStatus === 'BLOCKED' ? 'Bloqueado' : 'Inativo'}</strong>.
-              </p>
-            </div>
-
-            {statusModalError && (
-              <div className="p-3 bg-red-50 text-red-700 rounded-xl border border-red-200 text-xs flex items-center justify-center gap-1.5 text-left">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{statusModalError}</span>
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => setStatusModalWaiter(null)}
-                className="flex-1 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleConfirmStatusChange}
-                disabled={statusLoading}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-              >
-                {statusLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>Confirmar</span>
-              </button>
-            </div>
+      <FormModal
+        isOpen={!!statusModalWaiter}
+        onClose={() => setStatusModalWaiter(null)}
+        title="Alterar Status do Garçom"
+        subtitle="Confirme a alteração de status operacional"
+        icon={targetStatus === 'BLOCKED' ? Ban : targetStatus === 'ACTIVE' ? UserCheck : UserX}
+        iconBgColor={targetStatus === 'BLOCKED' ? 'bg-red-50' : targetStatus === 'ACTIVE' ? 'bg-emerald-50' : 'bg-stone-50'}
+        iconTextColor={targetStatus === 'BLOCKED' ? 'text-red-500' : targetStatus === 'ACTIVE' ? 'text-emerald-500' : 'text-stone-500'}
+        maxWidth="sm"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => setStatusModalWaiter(null)}
+              className="flex-1 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition-all"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleConfirmStatusChange}
+              disabled={statusLoading}
+              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {statusLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>Confirmar</span>
+            </button>
           </div>
+        }
+      >
+        <div className="text-center py-2 space-y-3">
+          <p className="text-stone-500 text-sm">
+            Tem certeza que deseja alterar o status de <strong>{statusModalWaiter?.name}</strong> para{' '}
+            <strong className="uppercase">{targetStatus === 'ACTIVE' ? 'Ativo' : targetStatus === 'BLOCKED' ? 'Bloqueado' : 'Inativo'}</strong>?
+          </p>
+
+          {statusModalError && (
+            <div className="p-3 bg-red-50 text-red-700 rounded-xl border border-red-200 text-xs flex items-center justify-center gap-1.5 text-left font-medium">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{statusModalError}</span>
+            </div>
+          )}
         </div>
-      )}
+      </FormModal>
     </div>
   );
 }

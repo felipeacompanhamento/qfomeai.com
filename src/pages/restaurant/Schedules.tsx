@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { restaurantService } from '../../services/restaurantService';
 import { scheduleService, Schedule } from '../../services/scheduleService';
-import { Clock, Loader2, Plus, Edit2, Trash2 } from 'lucide-react';
+import { Clock, Loader2, Plus, Edit2, Trash2, Save, AlertCircle } from 'lucide-react';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 
 const DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Feriados'];
 
@@ -23,6 +24,7 @@ export default function Schedules({ restaurantId: propRestaurantId }: { restaura
   });
   const [saveLoading, setSaveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [restaurantId, setRestaurantId] = useState<string | null>(propRestaurantId || null);
 
@@ -109,6 +111,7 @@ export default function Schedules({ restaurantId: propRestaurantId }: { restaura
     if (!restaurantId || !scheduleToDelete?.id) return;
     
     setSaveLoading(true);
+    setDeleteError(null);
     try {
       await scheduleService.deleteSchedule(restaurantId, scheduleToDelete.id);
       setIsDeleteModalOpen(false);
@@ -116,7 +119,7 @@ export default function Schedules({ restaurantId: propRestaurantId }: { restaura
       await fetchSchedules(restaurantId);
     } catch (err) {
       console.error("Error deleting schedule:", err);
-      alert("Erro ao excluir horário.");
+      setDeleteError("Erro ao excluir horário.");
     } finally {
       setSaveLoading(false);
     }
@@ -124,6 +127,7 @@ export default function Schedules({ restaurantId: propRestaurantId }: { restaura
 
   const confirmDelete = (schedule: Schedule) => {
     setScheduleToDelete(schedule);
+    setDeleteError(null);
     setIsDeleteModalOpen(true);
   };
 
@@ -183,93 +187,134 @@ export default function Schedules({ restaurantId: propRestaurantId }: { restaura
         </table>
       </div>
 
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl">
-            <h3 className="text-xl font-bold text-stone-800 mb-6">{editingSchedule ? 'Editar Horário' : 'Novo Horário'}</h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-bold text-stone-700 mb-1">Dia da Semana *</label>
-                <select required value={formData.dia_semana} onChange={e => setFormData({...formData, dia_semana: e.target.value})} className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl">
-                  {DIAS.map(d => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-bold text-stone-700 mb-1">Status</label>
-                <select required value={formData.status} onChange={e => setFormData({...formData, status: e.target.value as 'aberto' | 'fechado'})} className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl">
-                  <option value="aberto">Aberto</option>
-                  <option value="fechado">Fechado</option>
-                </select>
-              </div>
-
-              {formData.status === 'aberto' && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-bold text-stone-700 mb-1">Hora de Abertura</label>
-                    <input type="time" required value={formData.hora_abertura} onChange={e => setFormData({...formData, hora_abertura: e.target.value})} className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-stone-700 mb-1">Hora de Fechamento</label>
-                    <input type="time" required value={formData.hora_fechamento} onChange={e => setFormData({...formData, hora_fechamento: e.target.value})} className="w-full px-4 py-3 bg-stone-50 border-stone-200 rounded-2xl" />
-                  </div>
-                </div>
-              )}
-
-              {error && (
-                <div className="p-3 bg-red-50 text-red-600 text-sm rounded-xl">
-                  {error}
-                </div>
-              )}
-
-              <div className="pt-4 flex gap-3">
-                <button type="button" onClick={handleCloseModal} className="flex-1 px-6 py-3 bg-stone-100 text-stone-600 font-bold rounded-2xl">Cancelar</button>
-                <button type="submit" disabled={saveLoading} className="flex-1 px-6 py-3 bg-emerald-600 text-white font-bold rounded-2xl">{saveLoading ? 'Salvando...' : 'Salvar'}</button>
-              </div>
-            </form>
+      {/* Modal */}
+      <FormModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        title={editingSchedule ? 'Editar Horário' : 'Novo Horário'}
+        subtitle="Configure o horário de funcionamento para um dia específico"
+        maxWidth="md"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
+              onClick={handleCloseModal}
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="schedule-form"
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Salvar
+            </button>
           </div>
-        </div>
-      )}
+        }
+      >
+        <form id="schedule-form" onSubmit={handleSubmit} className="space-y-4">
+          <FormField label="Dia da Semana" required>
+            <SelectInput
+              required
+              value={formData.dia_semana}
+              onChange={e => setFormData({ ...formData, dia_semana: e.target.value })}
+            >
+              {DIAS.map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </SelectInput>
+          </FormField>
+
+          <FormField label="Status" required>
+            <SelectInput
+              required
+              value={formData.status}
+              onChange={e => setFormData({ ...formData, status: e.target.value as 'aberto' | 'fechado' })}
+            >
+              <option value="aberto">Aberto</option>
+              <option value="fechado">Fechado</option>
+            </SelectInput>
+          </FormField>
+
+          {formData.status === 'aberto' && (
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label="Hora de Abertura" required>
+                <TextInput
+                  type="time"
+                  required
+                  value={formData.hora_abertura}
+                  onChange={e => setFormData({ ...formData, hora_abertura: e.target.value })}
+                />
+              </FormField>
+              <FormField label="Hora de Fechamento" required>
+                <TextInput
+                  type="time"
+                  required
+                  value={formData.hora_fechamento}
+                  onChange={e => setFormData({ ...formData, hora_fechamento: e.target.value })}
+                />
+              </FormField>
+            </div>
+          )}
+
+          {error && (
+            <div className="p-3 bg-red-50 text-red-600 text-sm font-semibold rounded-xl">
+              {error}
+            </div>
+          )}
+        </form>
+      </FormModal>
 
       {/* Modal de Exclusão */}
-      {isDeleteModalOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 animate-in fade-in zoom-in duration-200">
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
-                <Trash2 className="w-8 h-8 text-red-500" />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-stone-800">Excluir Horário</h3>
-                <p className="text-stone-500 text-sm mt-1">
-                  Tem certeza que deseja excluir o horário de <strong>{scheduleToDelete?.dia_semana}</strong>? 
-                  Esta ação não pode ser desfeita.
-                </p>
-              </div>
-              <div className="flex w-full gap-3 pt-2">
-                <button
-                  onClick={() => {
-                    setIsDeleteModalOpen(false);
-                    setScheduleToDelete(null);
-                  }}
-                  className="flex-1 px-4 py-3 bg-stone-100 text-stone-600 font-bold rounded-2xl hover:bg-stone-200 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={saveLoading}
-                  className="flex-1 px-4 py-3 bg-red-600 text-white font-bold rounded-2xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
-                </button>
-              </div>
-            </div>
+      <FormModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setScheduleToDelete(null);
+        }}
+        title="Excluir Horário"
+        subtitle="Confirme a exclusão do horário de funcionamento"
+        icon={Trash2}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-500"
+        maxWidth="sm"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setScheduleToDelete(null);
+              }}
+              className="flex-1 px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-2xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={saveLoading}
+              className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
+            </button>
           </div>
+        }
+      >
+        <div className="text-center py-2 space-y-3">
+          <p className="text-stone-500 text-sm">
+            Tem certeza que deseja excluir o horário de <strong>{scheduleToDelete?.dia_semana}</strong>?
+            Esta ação não pode ser desfeita.
+          </p>
+
+          {deleteError && (
+            <div className="p-3 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-2 text-red-700 text-xs font-semibold text-left">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{deleteError}</span>
+            </div>
+          )}
         </div>
-      )}
+      </FormModal>
     </div>
   );
 }

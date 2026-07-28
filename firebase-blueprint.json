@@ -449,6 +449,78 @@
         "data_criacao": { "type": "string", "format": "date-time" }
       },
       "required": ["restaurantId", "nome", "ativo", "permissoes"]
+    },
+    "Caixa": {
+      "title": "Caixa",
+      "description": "Cash register record for a restaurant.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "CLOSED"] },
+        "openedAt": { "type": "string", "format": "date-time" },
+        "openedBy": { "type": "string" },
+        "openingBalance": { "type": "number" },
+        "closedAt": { "type": "string", "format": "date-time" },
+        "closedBy": { "type": "string" },
+        "closingBalance": { "type": "number" },
+        "observation": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "restaurantId", "status", "openedAt", "openedBy", "openingBalance"]
+    },
+    "MovimentacaoCaixa": {
+      "title": "MovimentacaoCaixa",
+      "description": "Cash register movement log.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "cashRegisterId": { "type": "string" },
+        "type": { "type": "string", "enum": ["INCOME", "EXPENSE", "SUPPLY", "WITHDRAWAL"] },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "paymentMethodId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "observation": { "type": "string" }
+      },
+      "required": ["id", "restaurantId", "cashRegisterId", "type", "category", "description", "amount", "paymentMethodId", "createdAt", "createdBy"]
+    },
+    "Mesa": {
+      "title": "Mesa",
+      "description": "Restaurant dining table information.",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" },
+        "numero": { "type": "integer" },
+        "status": { "type": "string", "enum": ["livre", "ocupada", "reservada", "atendimento"] },
+        "capacidade": { "type": "integer" },
+        "garcomId": { "type": "string" },
+        "comandaId": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "numero", "status", "capacidade"]
+    },
+    "Comanda": {
+      "title": "Comanda",
+      "description": "Dining command / active bill details for tables.",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" },
+        "mesaId": { "type": "string" },
+        "mesaNumero": { "type": "integer" },
+        "garcomId": { "type": "string" },
+        "garcomNome": { "type": "string" },
+        "status": { "type": "string", "enum": ["aberta", "fechada", "paga", "cancelada"] },
+        "subtotal": { "type": "number" },
+        "taxaServico": { "type": "number" },
+        "total": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["restaurantId", "mesaId", "mesaNumero", "status"]
     }
   },
   "firestore": {
@@ -464,6 +536,10 @@
     "/restaurants/{restaurantId}/categories/{categoryId}": { "schema": "Category", "description": "Restaurant menu categories" },
     "/restaurants/{restaurantId}/drivers/{driverId}": { "schema": "Driver", "description": "Restaurant drivers list" },
     "/restaurants/{restaurantId}/waiters/{waiterId}": { "schema": "Waiter", "description": "Restaurant waitstaff list" },
+    "/restaurants/{restaurantId}/mesas/{mesaId}": { "schema": "Mesa", "description": "Restaurant tables list" },
+    "/restaurants/{restaurantId}/comandas/{comandaId}": { "schema": "Comanda", "description": "Restaurant table commands list" },
+    "/restaurants/{restaurantId}/caixas/{caixaId}": { "schema": "Caixa", "description": "Restaurant cash registers list" },
+    "/restaurants/{restaurantId}/caixas/{caixaId}/movimentacoes/{movimentacaoId}": { "schema": "MovimentacaoCaixa", "description": "Restaurant cash register movements list" },
     "/restaurants/{restaurantId}/extras/{extraId}": { "schema": "Extra", "description": "Restaurant product extras" },
     "/restaurants/{restaurantId}/products/{productId}": { "schema": "Product", "description": "Restaurant products" },
     "/restaurants/{restaurantId}/promotions/{promotionId}": { "schema": "Promotion", "description": "Restaurant promotions" },

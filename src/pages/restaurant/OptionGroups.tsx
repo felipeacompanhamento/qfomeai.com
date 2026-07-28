@@ -4,6 +4,7 @@ import { optionService, OptionGroup, OptionItem } from '../../services/optionSer
 import { collection, query, orderBy, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Plus, Edit2, Trash2, Save, X, ChevronDown, ChevronUp, GripVertical, Loader2 } from 'lucide-react';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 
 export default function OptionGroups({ adminRestaurantId }: { adminRestaurantId?: string }) {
   const { profile: authProfile } = useAuth();
@@ -189,62 +190,61 @@ export default function OptionGroups({ adminRestaurantId }: { adminRestaurantId?
         </button>
       </div>
 
-      {isAddingGroup && (
-        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm animate-in fade-in slide-in-from-top-4">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-stone-800">{editingGroupId ? 'Editar Grupo' : 'Novo Grupo'}</h3>
-            <button onClick={() => setIsAddingGroup(false)} className="text-stone-400 hover:text-stone-600">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div className="md:col-span-1">
-              <label className="block text-sm font-bold text-stone-700 mb-1">Nome do Grupo</label>
-              <input 
-                type="text" 
-                value={groupForm.nome}
-                onChange={e => setGroupForm({...groupForm, nome: e.target.value})}
-                placeholder="Ex: Escolha sua carne"
-                className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-              />
-            </div>
-            <div className="md:col-span-1">
-              <label className="block text-sm font-bold text-stone-700 mb-1">Descrição (opcional)</label>
-              <input 
-                type="text" 
-                value={groupForm.descricao}
-                onChange={e => setGroupForm({...groupForm, descricao: e.target.value})}
-                placeholder="Ex: Escolha até 2 opções"
-                className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-              />
-            </div>
-            <div className="md:col-span-1">
-              <label className="block text-sm font-bold text-stone-700 mb-1">Ordem de Exibição</label>
-              <input 
-                type="number" 
-                value={groupForm.ordem}
-                onChange={e => setGroupForm({...groupForm, ordem: parseInt(e.target.value) || 0})}
-                placeholder="0"
-                className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button 
+      <FormModal
+        isOpen={isAddingGroup}
+        onClose={() => setIsAddingGroup(false)}
+        title={editingGroupId ? 'Editar Grupo de Opções' : 'Novo Grupo de Opções'}
+        subtitle="Agrupe adicionais e complementos para seus produtos"
+        maxWidth="md"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
               onClick={() => setIsAddingGroup(false)}
-              className="px-4 py-2 text-stone-500 font-bold hover:bg-stone-100 rounded-xl transition-all"
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
             >
               Cancelar
             </button>
-            <button 
+            <button
+              type="button"
               onClick={handleSaveGroup}
-              className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all"
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
             >
-              Salvar Grupo
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Salvar Grupo
             </button>
           </div>
+        }
+      >
+        <div className="space-y-4">
+          <FormField label="Nome do Grupo" required>
+            <TextInput
+              type="text"
+              value={groupForm.nome}
+              onChange={e => setGroupForm({ ...groupForm, nome: e.target.value })}
+              placeholder="Ex: Escolha sua carne"
+            />
+          </FormField>
+
+          <FormField label="Descrição (opcional)">
+            <TextInput
+              type="text"
+              value={groupForm.descricao}
+              onChange={e => setGroupForm({ ...groupForm, descricao: e.target.value })}
+              placeholder="Ex: Escolha até 2 opções"
+            />
+          </FormField>
+
+          <FormField label="Ordem de Exibição">
+            <TextInput
+              type="number"
+              value={groupForm.ordem}
+              onChange={e => setGroupForm({ ...groupForm, ordem: parseInt(e.target.value) || 0 })}
+              placeholder="0"
+            />
+          </FormField>
         </div>
-      )}
+      </FormModal>
 
       <div className="space-y-4">
         {groups.length === 0 ? (
@@ -401,63 +401,73 @@ export default function OptionGroups({ adminRestaurantId }: { adminRestaurantId?
       </div>
 
       {/* Modais de Confirmação */}
-      {confirmDeleteGroupId && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
-            <div className="w-12 h-12 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mb-4">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-bold text-stone-800 mb-2">Excluir Grupo?</h3>
-            <p className="text-stone-500 text-sm mb-6">
-              Esta ação excluirá o grupo e todas as suas opções permanentemente.
-            </p>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setConfirmDeleteGroupId(null)}
-                className="flex-1 px-4 py-2 bg-stone-100 text-stone-600 font-bold rounded-xl hover:bg-stone-200 transition-all"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={() => handleDeleteGroup(confirmDeleteGroupId)}
-                disabled={saveLoading}
-                className="flex-1 px-4 py-2 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 flex items-center justify-center"
-              >
-                {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
-              </button>
-            </div>
+      <FormModal
+        isOpen={!!confirmDeleteGroupId}
+        onClose={() => setConfirmDeleteGroupId(null)}
+        title="Excluir Grupo de Opções"
+        subtitle="Confirme a exclusão do grupo"
+        icon={Trash2}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-500"
+        maxWidth="sm"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => setConfirmDeleteGroupId(null)}
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => confirmDeleteGroupId && handleDeleteGroup(confirmDeleteGroupId)}
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Excluir'}
+            </button>
           </div>
+        }
+      >
+        <div className="text-center py-2">
+          <p className="text-stone-500 text-sm">
+            Esta ação excluirá o grupo e todas as suas opções permanentemente. Esta ação não pode ser desfeita.
+          </p>
         </div>
-      )}
+      </FormModal>
 
-      {confirmDeleteOption && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
-            <div className="w-12 h-12 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mb-4">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-bold text-stone-800 mb-2">Excluir Opção?</h3>
-            <p className="text-stone-500 text-sm mb-6">
-              Esta ação excluirá esta opção permanentemente.
-            </p>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setConfirmDeleteOption(null)}
-                className="flex-1 px-4 py-2 bg-stone-100 text-stone-600 font-bold rounded-xl hover:bg-stone-200 transition-all"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={() => handleDeleteOption(confirmDeleteOption.groupId, confirmDeleteOption.optionId)}
-                disabled={saveLoading}
-                className="flex-1 px-4 py-2 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 flex items-center justify-center"
-              >
-                {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
-              </button>
-            </div>
+      <FormModal
+        isOpen={!!confirmDeleteOption}
+        onClose={() => setConfirmDeleteOption(null)}
+        title="Excluir Opção"
+        subtitle="Confirme a exclusão do item de opção"
+        icon={Trash2}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-500"
+        maxWidth="sm"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => setConfirmDeleteOption(null)}
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => confirmDeleteOption && handleDeleteOption(confirmDeleteOption.groupId, confirmDeleteOption.optionId)}
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Excluir'}
+            </button>
           </div>
+        }
+      >
+        <div className="text-center py-2">
+          <p className="text-stone-500 text-sm">
+            Tem certeza que deseja excluir esta opção permanentemente? Esta ação não pode ser desfeita.
+          </p>
         </div>
-      )}
+      </FormModal>
     </div>
   );
 }

@@ -15,6 +15,8 @@ import { printThermalOrder } from '../../../components/orders/OrderThermalPrint'
 import { db } from '../../../firebase';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { cacheOrders } from '../../../utils/cacheOrders';
+import { registerClientOrderPaymentMovement } from '../../../utils/financeIntegration';
+import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
 
 interface RestaurantOrdersPageProps {
   orders: any[];
@@ -141,7 +143,7 @@ export function RestaurantOrdersPage({
     if (!profile?.restaurantId || !selectedOrder || !setOrders) return;
     
     // Prevent manual toggle for Mercado Pago PIX orders
-    if (selectedOrder.forma_pagamento === 'pix' && selectedOrder.mercadopago_payment_id) {
+    if (isPixPaymentMethod(selectedOrder.forma_pagamento) && selectedOrder.mercadopago_payment_id) {
       alert("O status de pagamento de pedidos via Mercado Pago é atualizado automaticamente.");
       return;
     }
@@ -161,6 +163,15 @@ export function RestaurantOrdersPage({
         ...prev,
         ...updateData
       }));
+
+      if (novoStatusPago) {
+        await registerClientOrderPaymentMovement(
+          profile.restaurantId,
+          selectedOrder.id,
+          { ...selectedOrder, ...updateData },
+          profile.nome || 'Operador'
+        );
+      }
     } catch (error) {
       console.error("Error updating payment status", error);
     }
@@ -406,16 +417,10 @@ export function RestaurantOrdersPage({
               handleEditAddress={handleEditAddress}
               editAddress={editAddress}
               setEditAddress={setEditAddress}
-              isEditingPayment={isEditingPayment}
-              handleSavePayment={handleSavePayment}
-              handleEditPayment={handleEditPayment}
-              editPaymentMethod={editPaymentMethod}
-              setEditPaymentMethod={setEditPaymentMethod}
-              editTroco={editTroco}
-              setEditTroco={setEditTroco}
               onUpdate={onUpdate}
               handleTogglePaid={handleTogglePaid}
               isUpdating={updatingOrderId === selectedOrder.id}
+              restaurantProfile={restaurantProfile}
             />
           </div>
         </div>

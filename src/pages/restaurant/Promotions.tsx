@@ -3,7 +3,8 @@ import { collection, query, addDoc, deleteDoc, doc, serverTimestamp, getDocs, up
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { restaurantService } from '../../services/restaurantService';
-import { Percent, Plus, Trash2, Calendar, Tag, ShoppingBag, AlertCircle, Loader2, Check, Edit2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Percent, Plus, Trash2, Calendar, Tag, ShoppingBag, AlertCircle, Loader2, Check, Edit2, ToggleLeft, ToggleRight, Save } from 'lucide-react';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 
 interface Promotion {
   id: string;
@@ -24,8 +25,12 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
   const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [editingPromotion, setEditingPromotion] = useState<Promotion | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [promotionToDelete, setPromotionToDelete] = useState<Promotion | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [restaurantId, setRestaurantId] = useState<string | null>(adminRestaurantId || null);
 
   // Form state
@@ -113,11 +118,12 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
   const handleSavePromotion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!restaurantId || !alvoId || !valorDesconto || !dataValidade || !dataInicio) {
-      alert('Por favor, preencha todos os campos.');
+      setFormError('Por favor, preencha todos os campos.');
       return;
     }
 
     setSaveLoading(true);
+    setFormError(null);
     try {
       if (editingPromotion) {
         await updateDoc(doc(db, 'restaurants', restaurantId, 'promotions', editingPromotion.id), {
@@ -151,13 +157,14 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
       setDataValidade('');
     } catch (error: any) {
       console.error("Error saving promotion:", error);
-      alert('Erro ao salvar promoção: ' + (error.message || 'Erro desconhecido'));
+      setFormError('Erro ao salvar promoção: ' + (error.message || 'Erro desconhecido'));
     } finally {
       setSaveLoading(false);
     }
   };
 
   const handleEdit = (promo: Promotion) => {
+    setFormError(null);
     setEditingPromotion(promo);
     setTipoAlvo(promo.tipo_alvo);
     setAlvoId(promo.alvo_id);
@@ -170,6 +177,7 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
 
   const handleToggleStatus = async (promo: Promotion) => {
     if (!restaurantId) return;
+    setActionError(null);
     try {
       await updateDoc(doc(db, 'restaurants', restaurantId, 'promotions', promo.id), {
         ativo: !promo.ativo
@@ -177,20 +185,27 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
       await fetchPromotions(restaurantId);
     } catch (error: any) {
       console.error("Error toggling status:", error);
-      alert('Erro ao alterar status: ' + (error.message || 'Erro desconhecido'));
+      setActionError('Erro ao alterar status: ' + (error.message || 'Erro desconhecido'));
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!restaurantId) return;
-    // Removed confirm() as it is not supported in iframe
+  const openDeleteModal = (promo: Promotion) => {
+    setPromotionToDelete(promo);
+    setIsDeleteModalOpen(true);
+  };
 
+  const handleConfirmDelete = async () => {
+    if (!restaurantId || !promotionToDelete) return;
+    setSaveLoading(true);
     try {
-      await deleteDoc(doc(db, 'restaurants', restaurantId, 'promotions', id));
+      await deleteDoc(doc(db, 'restaurants', restaurantId, 'promotions', promotionToDelete.id));
       await fetchPromotions(restaurantId);
+      setIsDeleteModalOpen(false);
+      setPromotionToDelete(null);
     } catch (error: any) {
       console.error("Error deleting promotion:", error);
-      // Removed alert() as it is not supported in iframe
+    } finally {
+      setSaveLoading(false);
     }
   };
 
@@ -237,7 +252,7 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
           <p className="text-stone-500 text-sm">Gerencie ofertas especiais para seus clientes.</p>
         </div>
         <button 
-          onClick={() => { setIsAdding(!isAdding); setEditingPromotion(null); }}
+          onClick={() => { setIsAdding(!isAdding); setEditingPromotion(null); setFormError(null); }}
           className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
         >
           {isAdding ? <Trash2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
@@ -245,38 +260,73 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
         </button>
       </div>
 
-      {isAdding && (
-        <form onSubmit={handleSavePromotion} className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-6 animate-in slide-in-from-top-4 duration-300">
+      {actionError && (
+        <div className="p-4 bg-red-50 border border-red-200 text-red-700 text-sm font-semibold rounded-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-red-500 hover:text-red-700 text-xs font-bold">
+            Fechar
+          </button>
+        </div>
+      )}
+
+      {/* Modal de Promoção */}
+      <FormModal
+        isOpen={isAdding}
+        onClose={() => { setIsAdding(false); setEditingPromotion(null); setFormError(null); }}
+        title={editingPromotion ? 'Editar Promoção' : 'Nova Promoção'}
+        subtitle="Defina ofertas especiais para seus produtos ou categorias"
+        maxWidth="lg"
+        error={formError}
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
+              onClick={() => { setIsAdding(false); setEditingPromotion(null); }}
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="promotion-form"
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {editingPromotion ? 'Atualizar Promoção' : 'Criar Promoção'}
+            </button>
+          </div>
+        }
+      >
+        <form id="promotion-form" onSubmit={handleSavePromotion} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-stone-400 uppercase">Tipo de Alvo</label>
+            <FormField label="Tipo de Alvo" required>
               <div className="flex gap-4">
                 <button 
                   type="button"
                   onClick={() => { setTipoAlvo('produto'); setAlvoId(''); }}
-                  className={`flex-1 py-3 rounded-xl font-bold text-sm border-2 transition-all ${tipoAlvo === 'produto' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200'}`}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm border-2 transition-all ${tipoAlvo === 'produto' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200 bg-stone-50'}`}
                 >
                   Por Produto
                 </button>
                 <button 
                   type="button"
                   onClick={() => { setTipoAlvo('categoria'); setAlvoId(''); }}
-                  className={`flex-1 py-3 rounded-xl font-bold text-sm border-2 transition-all ${tipoAlvo === 'categoria' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200'}`}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm border-2 transition-all ${tipoAlvo === 'categoria' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200 bg-stone-50'}`}
                 >
                   Por Categoria
                 </button>
               </div>
-            </div>
+            </FormField>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-stone-400 uppercase">
-                {tipoAlvo === 'produto' ? 'Selecionar Produto' : 'Selecionar Categoria'}
-              </label>
-              <select 
+            <FormField label={tipoAlvo === 'produto' ? 'Selecionar Produto' : 'Selecionar Categoria'} required>
+              <SelectInput 
                 value={alvoId}
                 onChange={e => setAlvoId(e.target.value)}
                 required
-                className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
               >
                 <option value="">Selecione...</option>
                 {tipoAlvo === 'produto' ? (
@@ -284,77 +334,59 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
                 ) : (
                   categories.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)
                 )}
-              </select>
-            </div>
+              </SelectInput>
+            </FormField>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-stone-400 uppercase">Tipo de Desconto</label>
+            <FormField label="Tipo de Desconto" required>
               <div className="flex gap-4">
                 <button 
                   type="button"
                   onClick={() => setTipoDesconto('porcentagem')}
-                  className={`flex-1 py-3 rounded-xl font-bold text-sm border-2 transition-all ${tipoDesconto === 'porcentagem' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200'}`}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm border-2 transition-all ${tipoDesconto === 'porcentagem' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200 bg-stone-50'}`}
                 >
                   Porcentagem (%)
                 </button>
                 <button 
                   type="button"
                   onClick={() => setTipoDesconto('valor')}
-                  className={`flex-1 py-3 rounded-xl font-bold text-sm border-2 transition-all ${tipoDesconto === 'valor' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200'}`}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-sm border-2 transition-all ${tipoDesconto === 'valor' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-stone-100 text-stone-500 hover:border-stone-200 bg-stone-50'}`}
                 >
                   Valor Fixo (R$)
                 </button>
               </div>
-            </div>
+            </FormField>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-stone-400 uppercase">Valor do Desconto</label>
-              <input 
+            <FormField label="Valor do Desconto" required>
+              <TextInput 
                 type="number"
                 step="0.01"
                 value={valorDesconto || ''}
                 onChange={e => setValorDesconto(e.target.value)}
                 required
                 placeholder={tipoDesconto === 'porcentagem' ? 'Ex: 10' : 'Ex: 5.00'}
-                className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
               />
-            </div>
+            </FormField>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-stone-400 uppercase">Data de Início</label>
-              <input 
+            <FormField label="Data de Início" required>
+              <TextInput 
                 type="datetime-local"
                 value={dataInicio || ''}
                 onChange={e => setDataInicio(e.target.value)}
                 required
-                className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
               />
-            </div>
+            </FormField>
 
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-stone-400 uppercase">Data de Validade</label>
-              <input 
+            <FormField label="Data de Validade" required>
+              <TextInput 
                 type="datetime-local"
                 value={dataValidade || ''}
                 onChange={e => setDataValidade(e.target.value)}
                 required
-                className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
               />
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-4">
-            <button 
-              type="submit"
-              disabled={saveLoading}
-              className="flex items-center gap-2 px-8 py-3 bg-emerald-600 text-white font-bold rounded-2xl shadow-lg shadow-emerald-200 hover:bg-emerald-700 transition-all disabled:opacity-50"
-            >
-              {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-              {editingPromotion ? 'Atualizar Promoção' : 'Criar Promoção'}
-            </button>
+            </FormField>
           </div>
         </form>
-      )}
+      </FormModal>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {promotions.map(promo => (
@@ -375,7 +407,7 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
                 <Edit2 className="w-4 h-4" />
               </button>
               <button 
-                onClick={() => handleDelete(promo.id)}
+                onClick={() => openDeleteModal(promo)}
                 className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
                 title="Excluir"
               >
@@ -430,6 +462,48 @@ export default function RestaurantPromotions({ adminRestaurantId }: { adminResta
           </div>
         )}
       </div>
+
+      {/* Modal de Confirmação de Exclusão */}
+      <FormModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setPromotionToDelete(null);
+        }}
+        title="Excluir Promoção"
+        subtitle="Confirme a exclusão do desconto/promoção"
+        icon={Trash2}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-500"
+        maxWidth="sm"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setPromotionToDelete(null);
+              }}
+              className="flex-1 px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-2xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              disabled={saveLoading}
+              className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
+            </button>
+          </div>
+        }
+      >
+        <div className="text-center py-2">
+          <p className="text-stone-500 text-sm">
+            Tem certeza que deseja excluir esta promoção de <strong>{promotionToDelete ? getAlvoNome(promotionToDelete) : ''}</strong>?
+            Esta ação não pode ser desfeita.
+          </p>
+        </div>
+      </FormModal>
     </div>
   );
 }

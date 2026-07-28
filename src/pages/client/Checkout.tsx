@@ -7,6 +7,7 @@ import { db } from '../../firebase';
 import { sendPushNotification } from '../../services/notificationService';
 import { ChevronLeft, MapPin, CreditCard, CheckCircle2, Loader2, Smartphone, Banknote, Wallet, Copy } from 'lucide-react';
 import { invalidateRestaurantCache } from '../../services/restaurantService';
+import { getAvailablePaymentMethods, isCashPaymentMethod, isPixPaymentMethod, PaymentChannel } from '../../services/paymentMethodsService';
 
 export default function Checkout() {
   const { items, total, clearCart } = useCart();
@@ -137,13 +138,12 @@ export default function Checkout() {
 
   // Set default payment method based on availability
   useEffect(() => {
-    if (restaurantData?.formas_pagamento) {
-      const available = Object.entries(restaurantData.formas_pagamento)
-        .filter(([_, config]: [string, any]) => config[deliveryType])
-        .map(([id]) => id);
+    if (restaurantData) {
+      const channel: PaymentChannel = deliveryType === 'entrega' ? 'DELIVERY' : 'PICKUP';
+      const available = getAvailablePaymentMethods(restaurantData.formas_pagamento || restaurantData.payment_methods, channel);
       
-      if (available.length > 0 && !available.includes(paymentMethod)) {
-        setPaymentMethod(available[0]);
+      if (available.length > 0 && !available.some(m => m.id === paymentMethod)) {
+        setPaymentMethod(available[0].id);
       }
     }
   }, [deliveryType, restaurantData]);
@@ -305,7 +305,7 @@ export default function Checkout() {
         cupom_codigo: appliedCoupon?.codigo || null,
         valor_total: total + deliveryFee - discount,
         forma_pagamento: paymentMethod,
-        troco: paymentMethod === 'dinheiro' ? changeAmount : null,
+        troco: isCashPaymentMethod(paymentMethod) ? changeAmount : null,
         endereco_id: deliveryType === 'entrega' ? selectedAddress : null,
         endereco: addressSnapshot,
         endereco_entrega: addressSnapshot,
@@ -337,7 +337,7 @@ export default function Checkout() {
       }
       
       // If payment method is PIX and Mercado Pago is enabled, generate PIX before proceeding
-      if (paymentMethod === 'pix' && currentRestaurantData?.pix_display_type === 'mercadopago' && currentRestaurantData?.mercadopago_enabled && currentRestaurantData?.mercadopago_access_token) {
+      if (isPixPaymentMethod(paymentMethod) && currentRestaurantData?.pix_display_type === 'mercadopago' && currentRestaurantData?.mercadopago_enabled && currentRestaurantData?.mercadopago_access_token) {
         try {
           const response = await fetch('/api/payments/mercadopago/create', {
             method: 'POST',
@@ -550,7 +550,7 @@ export default function Checkout() {
           </div>
 
           {/* Cash Change */}
-          {paymentMethod === 'dinheiro' && (
+          {isCashPaymentMethod(paymentMethod) && (
             <div className="mt-4 p-4 bg-stone-50 rounded-2xl border border-stone-100 animate-in fade-in slide-in-from-top-2">
               <label className="block text-sm font-bold text-stone-700 mb-2">Troco para quanto?</label>
               <input 

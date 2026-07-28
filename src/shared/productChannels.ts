@@ -1,7 +1,9 @@
 import {
   normalizeProductSalesChannels,
   getProductPriceForChannel,
-  isProductAvailableForChannel
+  isProductAvailableForChannel,
+  resolveCounterUnitPriceCents,
+  resolveChannelUnitPriceCents
 } from '../domain/product/productChannels';
 
 export function normalizeProductSalesChannelsData(rawProduct: any) {
@@ -15,3 +17,5 @@ export function isProductAvailableForChannelData(rawProduct: any, channel: 'coun
 export function getProductPriceForChannelData(rawProduct: any, channel: 'counter' | 'delivery' | 'waiter' = 'counter'): number {
   return getProductPriceForChannel(rawProduct, channel);
 }
+
+export { resolveCounterUnitPriceCents, resolveChannelUnitPriceCents };

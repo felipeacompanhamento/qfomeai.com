@@ -39,7 +39,8 @@ function PixPaymentInfo({ order }: { order: any }) {
         return;
       }
 
-      if (!order.restaurant_id) {
+      const restaurantId = order.restaurant_id || order.restaurante_id || order.restaurantId;
+      if (!restaurantId) {
         if (isMounted) setLoading(false);
         return;
       }
@@ -48,7 +49,7 @@ function PixPaymentInfo({ order }: { order: any }) {
       
       try {
         // Fetch latest restaurant data to check for Mercado Pago integration
-        const restDoc = await getDoc(doc(db, 'restaurants', order.restaurant_id));
+        const restDoc = await getDoc(doc(db, 'restaurants', restaurantId));
         if (!restDoc.exists()) {
           if (isMounted) setLoading(false);
           return;
@@ -309,10 +310,16 @@ export default function Orders() {
     const setupOrderListener = async (order: any) => {
       if (unsubscribeMap.has(order.id)) return;
 
+      const restaurantId = order.restaurant_id || order.restaurante_id || order.restaurantId;
+      if (!restaurantId) {
+        console.warn(`[Orders] Pedido ${order.id} sem ID de restaurante.`);
+        return;
+      }
+
       // 1. Get restaurant max delivery time
       let maxDeliveryTime = 60; // Default 60 mins
       try {
-        const restDoc = await getDoc(doc(db, 'restaurants', order.restaurant_id));
+        const restDoc = await getDoc(doc(db, 'restaurants', restaurantId));
         if (restDoc.exists()) {
           maxDeliveryTime = restDoc.data().tempo_max_entrega || 60;
         }
@@ -333,7 +340,7 @@ export default function Orders() {
 
       // 3. Setup listener
       console.log(`[Firestore] Iniciando listener para pedido ${order.id}, expira em ${Math.round(remainingTime/1000/60)} min.`);
-      const unsubscribe = onSnapshot(doc(db, 'restaurants', order.restaurant_id, 'orders', order.id), (docSnap) => {
+      const unsubscribe = onSnapshot(doc(db, 'restaurants', restaurantId, 'orders', order.id), (docSnap) => {
         if (!docSnap.exists()) return;
         const updatedOrder = { id: docSnap.id, ...docSnap.data() } as any;
         
@@ -418,10 +425,11 @@ export default function Orders() {
   };
 
   const handleRateOrder = async () => {
-    if (!selectedOrder || rating === 0) return;
+    const restaurantId = selectedOrder?.restaurant_id || selectedOrder?.restaurante_id || selectedOrder?.restaurantId;
+    if (!selectedOrder || rating === 0 || !restaurantId) return;
     try {
       // 1. Update order document
-      await updateDoc(doc(db, 'restaurants', selectedOrder.restaurant_id, 'orders', selectedOrder.id), {
+      await updateDoc(doc(db, 'restaurants', restaurantId, 'orders', selectedOrder.id), {
         avaliacao: {
           nota: rating,
           comentario: comment,
@@ -430,9 +438,9 @@ export default function Orders() {
       });
 
       // 2. Add to ratings collection
-      await addDoc(collection(db, 'restaurants', selectedOrder.restaurant_id, 'avaliacoes'), {
+      await addDoc(collection(db, 'restaurants', restaurantId, 'avaliacoes'), {
         pedido_id: selectedOrder.id,
-        restaurant_id: selectedOrder.restaurant_id,
+        restaurant_id: restaurantId,
         cliente_id: user?.uid,
         nome_cliente: user?.displayName?.split(' ')[0] || 'Cliente',
         nota: rating,
@@ -440,10 +448,10 @@ export default function Orders() {
         data: new Date().toISOString()
       });
 
-      invalidateReviewsCache(selectedOrder.restaurant_id);
+      invalidateReviewsCache(restaurantId);
 
       // 3. Update restaurant score
-      const restaurantRef = doc(db, 'restaurants', selectedOrder.restaurant_id);
+      const restaurantRef = doc(db, 'restaurants', restaurantId);
       const restaurantSnap = await getDoc(restaurantRef);
       if (restaurantSnap.exists()) {
         const data = restaurantSnap.data();

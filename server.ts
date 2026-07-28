@@ -12,7 +12,7 @@ import type { Auth, UserRecord, DecodedIdToken } from 'firebase-admin/auth';
 import nodemailer from 'nodemailer';
 import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 import { MercadoPagoConfig, Payment, PaymentRefund } from 'mercadopago';
-import { isProductAvailableForChannelData, getProductPriceForChannelData } from './src/shared/productChannels';
+import { isProductAvailableForChannelData, getProductPriceForChannelData, resolveCounterUnitPriceCents } from './src/shared/productChannels';
 
 function normalizePaymentMethodId(value: any): 'dinheiro' | 'pix' | 'credito' | 'debito' | null {
   if (typeof value !== 'string') return null;
@@ -22,6 +22,202 @@ function normalizePaymentMethodId(value: any): 'dinheiro' | 'pix' | 'credito' | 
   if (clean === 'credito' || clean === 'credit' || clean === 'cartao_credito' || clean === 'cartão_credito' || clean === 'cartao de credito') return 'credito';
   if (clean === 'debito' || clean === 'debit' || clean === 'cartao_debito' || clean === 'cartão_debito' || clean === 'cartao de debito') return 'debito';
   return null;
+}
+
+async function registerServerOrderPaymentMovement(
+  restaurantId: string,
+  orderId: string,
+  orderData: any,
+  createdBy: string
+) {
+  try {
+    if (!restaurantId || !orderId || !orderData) return;
+
+    // Find if there is an active OPEN caixa
+    const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+    const openCaixasQuery = await caixasRef.where('status', '==', 'OPEN').get();
+    
+    if (openCaixasQuery.empty) {
+      console.warn(`[Finance Integration Server] Auditoria: Nenhum Caixa aberto encontrado para o restaurante ${restaurantId} ao quitar o pedido ${orderId}`);
+      return;
+    }
+
+    const activeCaixa = openCaixasQuery.docs[0];
+    const cashRegisterId = activeCaixa.id;
+
+    let payments = Array.isArray(orderData.payments) ? orderData.payments : [];
+
+    if (payments.length === 0) {
+      // Compatibilidade com pedidos antigos
+      const paymentMethodId = normalizePaymentMethodId(orderData.forma_pagamento || orderData.paymentMethodId || orderData.paymentMethod);
+      const isPaid = orderData.pago === true || orderData.paymentStatus === 'PAID';
+      
+      let totalCents = 0;
+      if (typeof orderData.valor_total === 'number') {
+        totalCents = Math.round(orderData.valor_total * 100);
+      } else if (typeof orderData.total === 'number') {
+        totalCents = Math.round(orderData.total * 100);
+      } else if (typeof orderData.valor_produtos === 'number') {
+        totalCents = Math.round(orderData.valor_produtos * 100);
+      }
+
+      if (paymentMethodId && totalCents > 0) {
+        payments = [{
+          id: 'legacy',
+          paymentMethodId,
+          amount: totalCents,
+          status: isPaid ? 'PAID' : 'PENDING'
+        }];
+      }
+    }
+
+    for (const payment of payments) {
+      if (payment.status !== 'PAID') continue;
+
+      const paymentMethodId = normalizePaymentMethodId(payment.paymentMethodId);
+      if (!paymentMethodId) continue;
+
+      const amountCents = Math.round(Number(payment.amount));
+      if (isNaN(amountCents) || amountCents <= 0) continue;
+
+      const paymentId = payment.id || 'legacy';
+      const movementId = `ORDER_PAYMENT:${orderId}:${paymentId}`;
+      const movementRef = caixasRef.doc(cashRegisterId).collection('movimentacoes').doc(movementId);
+
+      const orderNum = orderData.numero_pedido || orderData.numero || orderData.orderNumber || orderId.slice(-6).toUpperCase();
+      const description = `Pagamento do pedido #${orderNum}`;
+
+      await db.runTransaction(async (transaction) => {
+        const existingMovement: any = await transaction.get(movementRef);
+        if (existingMovement.exists) {
+          console.log(`[Finance Integration Server] Lançamento já existe (idempotência): ${movementId}`);
+          return;
+        }
+
+        const movementDoc = {
+          restaurantId,
+          cashRegisterId,
+          type: 'INCOME',
+          category: 'ORDER_PAYMENT',
+          description,
+          amount: amountCents,
+          paymentMethodId,
+          paymentId,
+          orderId,
+          orderSource: orderData.source || orderData.origem || orderData.channel || 'DELIVERY',
+          createdAt: new Date().toISOString(),
+          createdBy: createdBy || 'SYSTEM',
+          origin: 'ORDER',
+          automatic: true,
+          idempotencyKey: movementId
+        };
+
+        transaction.set(movementRef, movementDoc);
+        console.log(`[Finance Integration Server] Lançamento automático de entrada criado com sucesso para o pedido ${orderId} e pagamento ${paymentId}`);
+      });
+    }
+  } catch (error) {
+    console.error(`[Finance Integration Server] Erro técnico ao criar lançamento do pedido ${orderId}:`, error);
+  }
+}
+
+async function registerServerOrderRefundMovement(
+  restaurantId: string,
+  orderId: string,
+  orderData: any,
+  createdBy: string,
+  targetPaymentId?: string
+) {
+  try {
+    if (!restaurantId || !orderId || !orderData) return;
+
+    // Find if there is an active OPEN caixa
+    const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+    const openCaixasQuery = await caixasRef.where('status', '==', 'OPEN').get();
+    
+    if (openCaixasQuery.empty) {
+      console.warn(`[Finance Integration Server] Auditoria: Nenhum Caixa aberto encontrado ao estornar o pedido ${orderId}`);
+      return;
+    }
+
+    const activeCaixa = openCaixasQuery.docs[0];
+    const cashRegisterId = activeCaixa.id;
+
+    let payments = Array.isArray(orderData.payments) ? orderData.payments : [];
+
+    if (payments.length === 0) {
+      // Compatibilidade com pedidos antigos
+      const paymentMethodId = normalizePaymentMethodId(orderData.forma_pagamento || orderData.paymentMethodId || orderData.paymentMethod);
+      let totalCents = 0;
+      if (typeof orderData.valor_total === 'number') {
+        totalCents = Math.round(orderData.valor_total * 100);
+      } else if (typeof orderData.total === 'number') {
+        totalCents = Math.round(orderData.total * 100);
+      } else if (typeof orderData.valor_produtos === 'number') {
+        totalCents = Math.round(orderData.valor_produtos * 100);
+      }
+
+      if (paymentMethodId && totalCents > 0) {
+        payments = [{
+          id: 'legacy',
+          paymentMethodId,
+          amount: totalCents,
+          status: 'REFUNDED'
+        }];
+      }
+    }
+
+    for (const payment of payments) {
+      const paymentId = payment.id || 'legacy';
+
+      if (targetPaymentId && paymentId !== targetPaymentId) continue;
+      if (payment.status !== 'REFUNDED' && paymentId !== 'legacy' && !targetPaymentId) continue;
+
+      const paymentMethodId = normalizePaymentMethodId(payment.paymentMethodId);
+      if (!paymentMethodId) continue;
+
+      const amountCents = Math.round(Number(payment.amount));
+      if (isNaN(amountCents) || amountCents <= 0) continue;
+
+      const referenceMovementId = `ORDER_PAYMENT:${orderId}:${paymentId}`;
+      const refundMovementId = `ORDER_REFUND:${orderId}:${paymentId}`;
+      const refundRef = caixasRef.doc(cashRegisterId).collection('movimentacoes').doc(refundMovementId);
+
+      const orderNum = orderData.numero_pedido || orderData.numero || orderData.orderNumber || orderId.slice(-6).toUpperCase();
+      const description = `Estorno do pedido #${orderNum}`;
+
+      await db.runTransaction(async (transaction) => {
+        const existingRefund: any = await transaction.get(refundRef);
+        if (existingRefund.exists) {
+          console.log(`[Finance Integration Server] Estorno já lançado anteriormente (idempotência): ${refundMovementId}`);
+          return;
+        }
+
+        const refundDoc = {
+          restaurantId,
+          cashRegisterId,
+          type: 'EXPENSE',
+          category: 'ORDER_REFUND',
+          description,
+          amount: amountCents,
+          paymentMethodId,
+          paymentId,
+          orderId,
+          referenceMovementId,
+          createdAt: new Date().toISOString(),
+          createdBy: createdBy || 'SYSTEM',
+          origin: 'ORDER_REFUND',
+          automatic: true,
+          idempotencyKey: refundMovementId
+        };
+
+        transaction.set(refundRef, refundDoc);
+        console.log(`[Finance Integration Server] Lançamento automático de estorno criado com sucesso para o pedido ${orderId} e pagamento ${paymentId}`);
+      });
+    }
+  } catch (error) {
+    console.error(`[Finance Integration Server] Erro técnico ao criar estorno do pedido ${orderId}:`, error);
+  }
 }
 
 async function loadRestaurantCounterPaymentMethods(restaurantId: string, serviceMode: 'COUNTER' | 'PICKUP' | 'DINE_IN') {
@@ -178,6 +374,29 @@ try {
   console.warn(`Failed to initialize Firestore with database ${firebaseConfig.firestoreDatabaseId}, falling back to default:`, e.message);
   db = getFirestore(adminApp);
   console.log('Initialized Firestore with (default) database (fallback)');
+}
+
+async function requireOpenCashRegister(restaurantId: string, transaction?: any) {
+  if (!restaurantId) {
+    const error: any = new Error('ID do restaurante inválido.');
+    error.code = 'INVALID_RESTAURANT_ID';
+    throw error;
+  }
+  const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+  const query = caixasRef.where('status', '==', 'OPEN');
+  
+  const snap = transaction ? await transaction.get(query) : await query.get();
+  
+  if (snap.empty) {
+    const error: any = new Error('Abra o caixa para realizar esta operação financeira.');
+    error.code = 'CASH_REGISTER_CLOSED';
+    throw error;
+  }
+  
+  return {
+    id: snap.docs[0].id,
+    ...snap.docs[0].data()
+  };
 }
 
 const messaging: Messaging = getMessaging(adminApp);
@@ -545,7 +764,7 @@ async function checkOrdersTimeoutForRestaurant(restaurantId: string): Promise<{ 
 async function startServer() {
   const app = express();
   app.set('trust proxy', 1);
-  const port = process.env.PORT || 8080;
+  const port = 3000;
 
   app.use(express.json());
 
@@ -2002,7 +2221,1140 @@ async function startServer() {
     }
   };
   
-  // POST: Check pending orders timeout for the authenticated restaurant
+  // ==========================================
+  // MÓDULO FINANCEIRO: CAIXA BACKEND ENDPOINTS
+  // ==========================================
+
+  // 1. ABERTURA DE CAIXA (Atômica)
+  app.post('/api/restaurant/financeiro/caixa/open', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const { openingBalance, openingBalanceCents, observation } = req.body || {};
+
+      let cents = 0;
+      if (typeof openingBalanceCents === 'number') {
+        cents = Math.round(openingBalanceCents);
+      } else if (typeof openingBalance === 'number') {
+        cents = Math.round(openingBalance * 100);
+      } else if (typeof openingBalance === 'string') {
+        const clean = openingBalance.replace(/[^\d,-]/g, '').replace(',', '.');
+        const num = parseFloat(clean);
+        cents = Math.round((isNaN(num) ? 0 : num) * 100);
+      }
+
+      if (isNaN(cents) || cents < 0 || !Number.isInteger(cents)) {
+        return res.status(400).json({
+          code: 'INVALID_AMOUNT',
+          error: 'O valor do saldo inicial deve ser um número inteiro positivo em centavos.'
+        });
+      }
+
+      const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+      const activeCaixaRef = db.collection('restaurants').doc(restaurantId).collection('active_caixa').doc('current');
+
+      const result = await db.runTransaction(async (transaction) => {
+        const activeSnap = await transaction.get(activeCaixaRef);
+        if (activeSnap.exists && activeSnap.data()?.status === 'OPEN') {
+          const err: any = new Error('Já existe um caixa aberto para este restaurante.');
+          err.code = 'CASH_REGISTER_ALREADY_OPEN';
+          throw err;
+        }
+
+        const openQuery = await caixasRef.where('status', '==', 'OPEN').get();
+        if (!openQuery.empty) {
+          const err: any = new Error('Já existe um caixa aberto para este restaurante.');
+          err.code = 'CASH_REGISTER_ALREADY_OPEN';
+          throw err;
+        }
+
+        const newCaixaRef = caixasRef.doc();
+        const now = new Date().toISOString();
+        const userName = req.user.nome || req.user.name || req.user.email || 'Operador';
+
+        const newCaixaData = {
+          id: newCaixaRef.id,
+          restaurantId,
+          status: 'OPEN',
+          openedAt: now,
+          openedBy: userName,
+          openedById: req.user.uid,
+          openingBalance: cents,
+          observation: typeof observation === 'string' ? observation.trim() : '',
+          createdAt: now,
+          updatedAt: now
+        };
+
+        transaction.set(newCaixaRef, newCaixaData);
+        transaction.set(activeCaixaRef, {
+          cashRegisterId: newCaixaRef.id,
+          status: 'OPEN',
+          openedAt: now,
+          openedBy: userName,
+          updatedAt: now
+        });
+
+        return newCaixaData;
+      });
+
+      return res.status(201).json({ success: true, caixa: result });
+    } catch (error: any) {
+      if (error.code === 'CASH_REGISTER_ALREADY_OPEN') {
+        return res.status(409).json({ code: 'CASH_REGISTER_ALREADY_OPEN', error: error.message });
+      }
+      console.error('Error opening caixa:', error);
+      return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Erro ao abrir caixa.' });
+    }
+  });
+
+  // 2. FECHAMENTO DE CAIXA (Atômico)
+  app.post('/api/restaurant/financeiro/caixa/close', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const { countedValues, countedValuesInCents, observation } = req.body || {};
+
+      const rawCounted: Record<string, any> = countedValuesInCents || countedValues || {};
+      const parsedCountedCents: Record<string, number> = {};
+
+      for (const [pmId, rawVal] of Object.entries(rawCounted)) {
+        let valCents = 0;
+        if (typeof rawVal === 'number') {
+          valCents = Number.isInteger(rawVal) ? rawVal : Math.round(rawVal * 100);
+        } else if (typeof rawVal === 'string') {
+          const clean = rawVal.replace(/[^\d,-]/g, '').replace(',', '.');
+          const num = parseFloat(clean);
+          valCents = Math.round((isNaN(num) ? 0 : num) * 100);
+        }
+        if (isNaN(valCents) || valCents < 0) {
+          return res.status(400).json({
+            code: 'INVALID_AMOUNT',
+            error: `O valor para a forma de pagamento "${pmId}" é inválido.`
+          });
+        }
+        parsedCountedCents[pmId] = valCents;
+      }
+
+      const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+      const openCaixasSnap = await caixasRef.where('status', '==', 'OPEN').get();
+
+      if (openCaixasSnap.empty) {
+        return res.status(400).json({
+          code: 'CASH_REGISTER_NOT_OPEN',
+          error: 'Nenhum caixa aberto foi encontrado para realizar o fechamento.'
+        });
+      }
+
+      const openCaixaDoc = openCaixasSnap.docs[0];
+      const caixaId = openCaixaDoc.id;
+      const caixaRef = caixasRef.doc(caixaId);
+      const activeCaixaRef = db.collection('restaurants').doc(restaurantId).collection('active_caixa').doc('current');
+      const restaurantDocRef = db.collection('restaurants').doc(restaurantId);
+
+      const result = await db.runTransaction(async (transaction) => {
+        const caixaSnap = await transaction.get(caixaRef);
+        if (!caixaSnap.exists) {
+          const err: any = new Error('Caixa não encontrado.');
+          err.code = 'CASH_REGISTER_NOT_OPEN';
+          throw err;
+        }
+        const caixaData = caixaSnap.data()!;
+        if (caixaData.status !== 'OPEN') {
+          const err: any = new Error('Este caixa já se encontra fechado.');
+          err.code = 'CASH_REGISTER_ALREADY_CLOSED';
+          throw err;
+        }
+        if (caixaData.restaurantId !== restaurantId) {
+          const err: any = new Error('O caixa não pertence ao restaurante autenticado.');
+          err.code = 'RESTAURANT_MISMATCH';
+          throw err;
+        }
+
+        const movementsSnap = await transaction.get(caixaRef.collection('movimentacoes'));
+        const restSnap = await transaction.get(restaurantDocRef);
+        const rawFormasPagamento = restSnap.data()?.formas_pagamento || restSnap.data()?.payment_methods || [];
+        const formasPagamento: any[] = Array.isArray(rawFormasPagamento)
+          ? rawFormasPagamento
+          : rawFormasPagamento && typeof rawFormasPagamento === 'object'
+            ? Object.entries(rawFormasPagamento).map(([key, val]: [string, any]) => ({ id: key, ...(typeof val === 'object' ? val : { active: Boolean(val) }) }))
+            : [];
+
+        let rawOpening = caixaData.openingBalance || 0;
+        let openingCents = Number.isInteger(rawOpening) ? rawOpening : Math.round(rawOpening * 100);
+
+        let totalEntries = 0;
+        let totalExits = 0;
+        let totalSupplies = 0;
+        let totalWithdrawals = 0;
+
+        const pmExpected: Record<string, number> = {};
+        pmExpected['dinheiro'] = openingCents;
+
+        movementsSnap.forEach((mDoc) => {
+          const m = mDoc.data();
+          let amt = m.amount || 0;
+          if (!Number.isInteger(amt)) amt = Math.round(amt * 100);
+          const pmId = m.paymentMethodId || 'dinheiro';
+          if (!pmExpected[pmId]) pmExpected[pmId] = 0;
+
+          if (m.type === 'INCOME') {
+            totalEntries += amt;
+            pmExpected[pmId] += amt;
+          } else if (m.type === 'EXPENSE') {
+            totalExits += amt;
+            pmExpected[pmId] -= amt;
+          } else if (m.type === 'SUPPLY') {
+            totalSupplies += amt;
+            pmExpected[pmId] += amt;
+          } else if (m.type === 'WITHDRAWAL') {
+            totalWithdrawals += amt;
+            pmExpected[pmId] -= amt;
+          }
+        });
+
+        const expectedTotal = openingCents + totalEntries + totalSupplies - totalExits - totalWithdrawals;
+
+        const allMethodIdsSet = new Set<string>();
+        formasPagamento.forEach((p: any) => { if (p.id) allMethodIdsSet.add(p.id); });
+        Object.keys(pmExpected).forEach((id) => allMethodIdsSet.add(id));
+        Object.keys(parsedCountedCents).forEach((id) => allMethodIdsSet.add(id));
+        if (openingCents > 0) allMethodIdsSet.add('dinheiro');
+
+        const expectedByPaymentMethod: Record<string, number> = {};
+        const countedByPaymentMethod: Record<string, number> = {};
+        const differenceByPaymentMethod: Record<string, number> = {};
+        const paymentSummary: Array<{
+          paymentMethodId: string;
+          paymentMethodName: string;
+          expectedAmount: number;
+          countedAmount: number;
+          differenceAmount: number;
+        }> = [];
+
+        let totalCounted = 0;
+
+        const getMethodLabel = (id: string): string => {
+          const found = formasPagamento.find((p: any) => p.id === id);
+          if (found?.label) return found.label;
+          const fallback: Record<string, string> = {
+            dinheiro: 'Dinheiro',
+            pix: 'Pix',
+            credito: 'Cartão de Crédito',
+            debito: 'Cartão de Débito'
+          };
+          return fallback[id] || id;
+        };
+
+        allMethodIdsSet.forEach((pmId) => {
+          const exp = pmExpected[pmId] || 0;
+          const cnt = parsedCountedCents[pmId] ?? 0;
+          const diff = cnt - exp;
+          totalCounted += cnt;
+
+          expectedByPaymentMethod[pmId] = exp;
+          countedByPaymentMethod[pmId] = cnt;
+          differenceByPaymentMethod[pmId] = diff;
+
+          paymentSummary.push({
+            paymentMethodId: pmId,
+            paymentMethodName: getMethodLabel(pmId),
+            expectedAmount: exp,
+            countedAmount: cnt,
+            differenceAmount: diff
+          });
+        });
+
+        const totalDifference = totalCounted - expectedTotal;
+        const now = new Date().toISOString();
+        const userName = req.user.nome || req.user.name || req.user.email || 'Operador';
+
+        let finalObs = caixaData.observation || '';
+        if (typeof observation === 'string' && observation.trim()) {
+          finalObs = finalObs
+            ? `${finalObs}\n---\nFechamento: ${observation.trim()}`
+            : `Fechamento: ${observation.trim()}`;
+        }
+
+        const updatePayload = {
+          status: 'CLOSED',
+          closedAt: now,
+          closedBy: userName,
+          closedById: req.user.uid,
+          closingBalance: totalCounted,
+          expectedTotal,
+          countedTotal: totalCounted,
+          totalDifference,
+          totalEntries,
+          totalExits,
+          totalSupplies,
+          totalWithdrawals,
+          expectedByPaymentMethod,
+          countedByPaymentMethod,
+          differenceByPaymentMethod,
+          paymentSummary,
+          observation: finalObs,
+          updatedAt: now
+        };
+
+        transaction.update(caixaRef, updatePayload);
+        transaction.set(activeCaixaRef, {
+          status: 'CLOSED',
+          cashRegisterId: caixaId,
+          closedAt: now,
+          closedBy: userName,
+          updatedAt: now
+        });
+
+        return {
+          ...caixaData,
+          ...updatePayload,
+          id: caixaId
+        };
+      });
+
+      return res.json({ success: true, caixa: result });
+    } catch (error: any) {
+      if (error.code) {
+        return res.status(400).json({ code: error.code, error: error.message });
+      }
+      console.error('Error closing caixa:', error);
+      return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Erro ao fechar caixa.' });
+    }
+  });
+
+  // 3. MOVIMENTAÇÃO MANUAL DE CAIXA
+  app.post('/api/restaurant/financeiro/caixa/movement', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const { type, amount, amountCents, category, description, paymentMethodId, observation } = req.body || {};
+
+      const allowedTypes = ['INCOME', 'EXPENSE', 'SUPPLY', 'WITHDRAWAL'];
+      if (!type || !allowedTypes.includes(type)) {
+        return res.status(400).json({
+          code: 'INVALID_CASH_MOVEMENT',
+          error: 'Tipo de movimentação inválido. Tipos permitidos: INCOME, EXPENSE, SUPPLY, WITHDRAWAL.'
+        });
+      }
+
+      let cents = 0;
+      if (typeof amountCents === 'number') {
+        cents = Math.round(amountCents);
+      } else if (typeof amount === 'number') {
+        cents = Math.round(amount * 100);
+      } else if (typeof amount === 'string') {
+        const clean = amount.replace(/[^\d,-]/g, '').replace(',', '.');
+        const num = parseFloat(clean);
+        cents = Math.round((isNaN(num) ? 0 : num) * 100);
+      }
+
+      if (isNaN(cents) || cents <= 0 || !Number.isInteger(cents)) {
+        return res.status(400).json({
+          code: 'INVALID_AMOUNT',
+          error: 'O valor da movimentação deve ser um número inteiro maior que zero (em centavos).'
+        });
+      }
+
+      if (!category || typeof category !== 'string' || !category.trim()) {
+        return res.status(400).json({
+          code: 'INVALID_CASH_MOVEMENT',
+          error: 'A categoria da movimentação é obrigatória.'
+        });
+      }
+
+      if (!description || typeof description !== 'string' || !description.trim()) {
+        return res.status(400).json({
+          code: 'INVALID_CASH_MOVEMENT',
+          error: 'A descrição da movimentação é obrigatória.'
+        });
+      }
+
+      if (!paymentMethodId || typeof paymentMethodId !== 'string') {
+        return res.status(400).json({
+          code: 'INVALID_PAYMENT_METHOD',
+          error: 'A forma de pagamento é obrigatória.'
+        });
+      }
+
+      const restDoc = await db.collection('restaurants').doc(restaurantId).get();
+      const rawFormasPagamento = restDoc.data()?.formas_pagamento || restDoc.data()?.payment_methods || [];
+      const formasPagamento: any[] = Array.isArray(rawFormasPagamento)
+        ? rawFormasPagamento
+        : rawFormasPagamento && typeof rawFormasPagamento === 'object'
+          ? Object.entries(rawFormasPagamento).map(([key, val]: [string, any]) => ({ id: key, ...(typeof val === 'object' ? val : { active: Boolean(val) }) }))
+          : [];
+      const validMethods = new Set(['dinheiro', 'pix', 'credito', 'debito']);
+      formasPagamento.forEach((p: any) => { if (p.id) validMethods.add(p.id); });
+
+      if (!validMethods.has(paymentMethodId)) {
+        return res.status(400).json({
+          code: 'INVALID_PAYMENT_METHOD',
+          error: `A forma de pagamento "${paymentMethodId}" não está configurada para este restaurante.`
+        });
+      }
+
+      const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+      const openCaixa = await requireOpenCashRegister(restaurantId);
+      const cashRegisterId = openCaixa.id;
+
+      const movementRef = caixasRef.doc(cashRegisterId).collection('movimentacoes').doc();
+      const now = new Date().toISOString();
+      const userName = req.user.nome || req.user.name || req.user.email || 'Operador';
+
+      const movementDoc = {
+        id: movementRef.id,
+        restaurantId,
+        cashRegisterId,
+        type,
+        category: category.trim(),
+        description: description.trim(),
+        amount: cents,
+        paymentMethodId,
+        createdAt: now,
+        createdBy: userName,
+        createdById: req.user.uid,
+        createdByName: userName,
+        observation: typeof observation === 'string' && observation.trim() ? observation.trim() : null,
+        automatic: false,
+        origin: 'MANUAL'
+      };
+
+      await movementRef.set(movementDoc);
+
+      return res.status(201).json({ success: true, movement: movementDoc });
+    } catch (error: any) {
+      if (error.code === 'CASH_REGISTER_CLOSED') {
+        return res.status(409).json({
+          code: 'CASH_REGISTER_CLOSED',
+          message: error.message,
+          error: error.message
+        });
+      }
+      console.error('Error creating cash movement:', error);
+      return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Erro ao criar movimentação de caixa.' });
+    }
+  });
+
+  // Helper para extrair formas de pagamento configuradas pelo restaurante
+  function extractConfiguredPaymentMethods(restaurantData: any): Set<string> {
+    const validMethods = new Set<string>();
+    if (!restaurantData) return validMethods;
+
+    const fp = restaurantData.formas_pagamento || restaurantData.payment_methods;
+    if (!fp) return validMethods;
+
+    if (Array.isArray(fp)) {
+      fp.forEach((item: any) => {
+        if (typeof item === 'string' && item.trim()) {
+          validMethods.add(item.trim());
+        } else if (item && typeof item === 'object' && item.id) {
+          if (item.active !== false) {
+            validMethods.add(String(item.id).trim());
+          }
+        }
+      });
+    } else if (typeof fp === 'object') {
+      Object.entries(fp).forEach(([key, conf]: [string, any]) => {
+        if (typeof conf === 'boolean') {
+          if (conf) validMethods.add(key);
+        } else if (conf && typeof conf === 'object') {
+          const isActive = conf.active !== false && (
+            conf.entrega || conf.retirada || conf.balcao || conf.consumoLocal || conf.active || Object.keys(conf).length === 0
+          );
+          if (isActive) {
+            validMethods.add(key);
+          }
+        }
+      });
+    }
+
+    return validMethods;
+  }
+
+  // ==========================================
+  // PEDIDOS FINANCEIRO ENDPOINTS
+  // ==========================================
+
+  app.post('/api/restaurant/financeiro/pedidos/processar-pagamentos', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user?.restaurantId;
+      if (!restaurantId) {
+        return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHORIZED' });
+      }
+
+      await requireOpenCashRegister(restaurantId);
+
+      const { orderId, payments, operatorName } = req.body || {};
+      if (!orderId) {
+        return res.status(400).json({ error: 'orderId é obrigatório.', code: 'ORDER_NOT_FOUND' });
+      }
+
+      const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
+      const orderSnap = await orderRef.get();
+
+      if (!orderSnap.exists) {
+        return res.status(404).json({ error: 'Pedido não encontrado.', code: 'ORDER_NOT_FOUND' });
+      }
+
+      const orderData = orderSnap.data() || {};
+      if (orderData.restaurantId && orderData.restaurantId !== restaurantId && orderData.restaurante_id !== restaurantId) {
+        return res.status(403).json({ error: 'Acesso negado ao pedido de outro restaurante.', code: 'RESTAURANT_MISMATCH' });
+      }
+
+      let totalCents = 0;
+      if (typeof orderData.valor_total === 'number') {
+        totalCents = Math.round(orderData.valor_total * 100);
+      } else if (typeof orderData.total === 'number') {
+        totalCents = Math.round(orderData.total * 100);
+      } else if (typeof orderData.valor_produtos === 'number') {
+        totalCents = Math.round(orderData.valor_produtos * 100);
+      }
+
+      let updatedPayments = Array.isArray(payments) ? payments : (Array.isArray(orderData.payments) ? orderData.payments : []);
+
+      if (!Array.isArray(payments) || payments.length === 0) {
+        if (req.body.pago === true) {
+          const pmId = normalizePaymentMethodId(orderData.forma_pagamento || orderData.paymentMethodId || orderData.paymentMethod || 'dinheiro');
+          updatedPayments = [{
+            id: 'legacy',
+            paymentMethodId: pmId || 'dinheiro',
+            amount: totalCents,
+            status: 'PAID'
+          }];
+        }
+      } else {
+        let totalPaidCents = 0;
+        const normalizedPayments = [];
+
+        for (let i = 0; i < payments.length; i++) {
+          const p = payments[i];
+          const amountCents = Math.round(Number(p.amount));
+          if (isNaN(amountCents) || amountCents <= 0) {
+            return res.status(400).json({ error: 'Valor do pagamento deve ser um número positivo em centavos.', code: 'INVALID_AMOUNT' });
+          }
+
+          const pmId = normalizePaymentMethodId(p.paymentMethodId);
+          if (!pmId) {
+            return res.status(400).json({ error: 'Forma de pagamento inválida.', code: 'INVALID_PAYMENT_METHOD' });
+          }
+
+          if (p.status === 'PAID') {
+            totalPaidCents += amountCents;
+          }
+
+          normalizedPayments.push({
+            id: p.id || `p_${i + 1}`,
+            paymentMethodId: pmId,
+            amount: amountCents,
+            status: p.status || 'PAID'
+          });
+        }
+
+        if (totalPaidCents > totalCents) {
+          return res.status(400).json({ error: 'A soma dos pagamentos não pode ser superior ao total do pedido.', code: 'PAYMENT_EXCEEDS_ORDER_TOTAL' });
+        }
+
+        updatedPayments = normalizedPayments;
+      }
+
+      const sumPaid = updatedPayments.filter((p: any) => p.status === 'PAID').reduce((sum: number, p: any) => sum + p.amount, 0);
+      const isFullyPaid = sumPaid >= totalCents && totalCents > 0;
+
+      let principalMethod = orderData.forma_pagamento;
+      if (updatedPayments.length > 0) {
+        const highest = updatedPayments.reduce((prev: any, current: any) => (prev.amount > current.amount) ? prev : current, updatedPayments[0]);
+        principalMethod = highest.paymentMethodId;
+      }
+
+      const updateData: any = {
+        payments: updatedPayments,
+        pago: isFullyPaid,
+        updated_at: new Date().toISOString()
+      };
+      if (principalMethod) {
+        updateData.forma_pagamento = principalMethod;
+      }
+
+      await orderRef.update(updateData);
+
+      const fullUpdatedOrder = { ...orderData, ...updateData };
+
+      const operator = operatorName || req.user.nome || req.user.email || 'Operador';
+      await registerServerOrderPaymentMovement(restaurantId, orderId, fullUpdatedOrder, operator);
+
+      return res.json({
+        success: true,
+        order: fullUpdatedOrder
+      });
+    } catch (error: any) {
+      if (error.code === 'CASH_REGISTER_CLOSED') {
+        return res.status(409).json({
+          code: 'CASH_REGISTER_CLOSED',
+          message: error.message,
+          error: error.message
+        });
+      }
+      console.error('Erro ao processar pagamentos do pedido:', error);
+      return res.status(500).json({ error: error.message || 'Erro ao processar pagamento.', code: 'HTTP_ERROR' });
+    }
+  });
+
+  app.post('/api/restaurant/financeiro/pedidos/processar-estorno', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user?.restaurantId;
+      if (!restaurantId) {
+        return res.status(401).json({ error: 'Usuário não autenticado.', code: 'UNAUTHORIZED' });
+      }
+
+      await requireOpenCashRegister(restaurantId);
+
+      const { orderId, paymentId, operatorName } = req.body || {};
+      if (!orderId) {
+        return res.status(400).json({ error: 'orderId é obrigatório.', code: 'ORDER_NOT_FOUND' });
+      }
+
+      const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
+      const orderSnap = await orderRef.get();
+
+      if (!orderSnap.exists) {
+        return res.status(404).json({ error: 'Pedido não encontrado.', code: 'ORDER_NOT_FOUND' });
+      }
+
+      const orderData = orderSnap.data() || {};
+      if (orderData.restaurantId && orderData.restaurantId !== restaurantId && orderData.restaurante_id !== restaurantId) {
+        return res.status(403).json({ error: 'Acesso negado ao pedido de outro restaurante.', code: 'RESTAURANT_MISMATCH' });
+      }
+
+      let payments = Array.isArray(orderData.payments) ? orderData.payments : [];
+
+      if (payments.length === 0) {
+        const pmId = normalizePaymentMethodId(orderData.forma_pagamento || orderData.paymentMethodId || orderData.paymentMethod);
+        let totalCents = 0;
+        if (typeof orderData.valor_total === 'number') {
+          totalCents = Math.round(orderData.valor_total * 100);
+        } else if (typeof orderData.total === 'number') {
+          totalCents = Math.round(orderData.total * 100);
+        }
+
+        payments = [{
+          id: 'legacy',
+          paymentMethodId: pmId || 'dinheiro',
+          amount: totalCents,
+          status: orderData.pago ? 'PAID' : 'PENDING'
+        }];
+      }
+
+      const targetId = paymentId || 'legacy';
+      const paymentIndex = payments.findIndex((p: any) => (p.id || 'legacy') === targetId);
+
+      if (paymentIndex === -1) {
+        return res.status(404).json({ error: 'Pagamento não encontrado no pedido.', code: 'ORDER_NOT_FOUND' });
+      }
+
+      const targetPayment = payments[paymentIndex];
+
+      if (targetPayment.status === 'REFUNDED') {
+        return res.status(400).json({ error: 'Este pagamento já foi estornado.', code: 'PAYMENT_ALREADY_REFUNDED' });
+      }
+
+      if (targetPayment.status !== 'PAID') {
+        return res.status(400).json({ error: 'Apenas pagamentos com status PAGO podem ser estornados.', code: 'PAYMENT_NOT_PAID' });
+      }
+
+      // Mark payment as REFUNDED
+      payments[paymentIndex] = { ...targetPayment, status: 'REFUNDED' };
+
+      let totalCents = 0;
+      if (typeof orderData.valor_total === 'number') {
+        totalCents = Math.round(orderData.valor_total * 100);
+      } else if (typeof orderData.total === 'number') {
+        totalCents = Math.round(orderData.total * 100);
+      }
+
+      const sumPaid = payments.filter((p: any) => p.status === 'PAID').reduce((sum: number, p: any) => sum + p.amount, 0);
+      const isFullyPaid = sumPaid >= totalCents && totalCents > 0;
+
+      const updateData = {
+        payments,
+        pago: isFullyPaid,
+        updated_at: new Date().toISOString()
+      };
+
+      await orderRef.update(updateData);
+
+      const fullUpdatedOrder = { ...orderData, ...updateData };
+
+      const operator = operatorName || req.user.nome || req.user.email || 'Operador';
+      await registerServerOrderRefundMovement(restaurantId, orderId, fullUpdatedOrder, operator, targetId);
+
+      return res.json({
+        success: true,
+        order: fullUpdatedOrder
+      });
+    } catch (error: any) {
+      if (error.code === 'CASH_REGISTER_CLOSED') {
+        return res.status(409).json({
+          code: 'CASH_REGISTER_CLOSED',
+          message: error.message,
+          error: error.message
+        });
+      }
+      console.error('Erro ao processar estorno do pedido:', error);
+      return res.status(500).json({ error: error.message || 'Erro ao processar estorno.', code: 'HTTP_ERROR' });
+    }
+  });
+
+  // ==========================================
+  // CONTAS A RECEBER ENDPOINTS
+  // ==========================================
+
+  // 1. Criar Conta a Receber
+  app.post('/api/restaurant/financeiro/contas-receber', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const { customerName, customerId, description, totalAmount, totalAmountCents, dueDate } = req.body || {};
+
+      if (!description || typeof description !== 'string' || !description.trim()) {
+        return res.status(400).json({ code: 'INVALID_DESCRIPTION', error: 'A descrição é obrigatória.' });
+      }
+
+      let cents = 0;
+      if (typeof totalAmountCents === 'number') {
+        cents = Math.round(totalAmountCents);
+      } else if (typeof totalAmount === 'number') {
+        cents = Number.isInteger(totalAmount) && totalAmount >= 100 ? totalAmount : Math.round(totalAmount * 100);
+      } else if (typeof totalAmount === 'string') {
+        const clean = totalAmount.replace(/[^\d,-]/g, '').replace(',', '.');
+        const num = parseFloat(clean);
+        cents = Math.round((isNaN(num) ? 0 : num) * 100);
+      }
+
+      if (isNaN(cents) || cents <= 0 || !Number.isInteger(cents)) {
+        return res.status(400).json({
+          code: 'INVALID_AMOUNT',
+          error: 'O valor da conta deve ser um número inteiro positivo em centavos.'
+        });
+      }
+
+      if (!dueDate || typeof dueDate !== 'string' || isNaN(Date.parse(dueDate))) {
+        return res.status(400).json({ code: 'INVALID_DUE_DATE', error: 'Data de vencimento inválida.' });
+      }
+
+      const contaRef = db.collection('restaurants').doc(restaurantId).collection('contasReceber').doc();
+      const now = new Date().toISOString();
+
+      const newContaData = {
+        id: contaRef.id,
+        restaurantId,
+        customerId: typeof customerId === 'string' && customerId.trim() ? customerId.trim() : null,
+        customerName: typeof customerName === 'string' && customerName.trim() ? customerName.trim() : 'Cliente',
+        description: description.trim(),
+        totalAmount: cents,
+        paidAmount: 0,
+        remainingAmount: cents,
+        dueDate: dueDate.trim(),
+        status: 'OPEN',
+        createdAt: now,
+        updatedAt: now,
+        createdBy: req.user.uid
+      };
+
+      await contaRef.set(newContaData);
+
+      return res.status(201).json({ success: true, conta: newContaData });
+    } catch (error: any) {
+      console.error('Error creating conta a receber:', error);
+      return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Erro ao criar conta a receber.' });
+    }
+  });
+
+  // 2. Registrar Recebimento
+  app.post('/api/restaurant/financeiro/contas-receber/:id/receber', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const accountId = req.params.id;
+      const { amount, amountCents, paymentMethodId, observation, idempotencyKey } = req.body || {};
+
+      let cents = 0;
+      if (typeof amountCents === 'number') {
+        cents = Math.round(amountCents);
+      } else if (typeof amount === 'number') {
+        cents = Number.isInteger(amount) && amount >= 100 ? amount : Math.round(amount * 100);
+      } else if (typeof amount === 'string') {
+        const clean = amount.replace(/[^\d,-]/g, '').replace(',', '.');
+        const num = parseFloat(clean);
+        cents = Math.round((isNaN(num) ? 0 : num) * 100);
+      }
+
+      if (isNaN(cents) || cents <= 0 || !Number.isInteger(cents)) {
+        return res.status(400).json({
+          code: 'INVALID_AMOUNT',
+          error: 'O valor do recebimento deve ser um número inteiro maior que zero em centavos.'
+        });
+      }
+
+      if (!paymentMethodId || typeof paymentMethodId !== 'string') {
+        return res.status(400).json({ code: 'INVALID_PAYMENT_METHOD', error: 'A forma de pagamento é obrigatória.' });
+      }
+
+      const contaRef = db.collection('restaurants').doc(restaurantId).collection('contasReceber').doc(accountId);
+      const restRef = db.collection('restaurants').doc(restaurantId);
+      const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+
+      const result = await db.runTransaction(async (transaction) => {
+        const contaSnap = await transaction.get(contaRef);
+        if (!contaSnap.exists) {
+          const err: any = new Error('Conta a receber não encontrada.');
+          err.code = 'ACCOUNT_NOT_FOUND';
+          throw err;
+        }
+        const conta = contaSnap.data()!;
+        if (conta.restaurantId !== restaurantId) {
+          const err: any = new Error('Conta não pertence ao restaurante autenticado.');
+          err.code = 'RESTAURANT_MISMATCH';
+          throw err;
+        }
+        if (conta.status !== 'OPEN' && conta.status !== 'PARTIALLY_PAID') {
+          const err: any = new Error('Esta conta já se encontra quitada ou indisponível para recebimento.');
+          err.code = 'ACCOUNT_ALREADY_PAID';
+          throw err;
+        }
+
+        if (cents > conta.remainingAmount) {
+          const err: any = new Error('O valor informado excede o saldo restante da conta.');
+          err.code = 'PAYMENT_EXCEEDS_REMAINING';
+          throw err;
+        }
+
+        const restSnap = await transaction.get(restRef);
+        const validMethods = extractConfiguredPaymentMethods(restSnap.data());
+        if (!validMethods.has(paymentMethodId)) {
+          const err: any = new Error(`A forma de pagamento "${paymentMethodId}" não está configurada para este restaurante.`);
+          err.code = 'INVALID_PAYMENT_METHOD';
+          throw err;
+        }
+
+        const openCaixa = await requireOpenCashRegister(restaurantId, transaction);
+        const caixaId = openCaixa.id;
+
+        const recRef = contaRef.collection('recebimentos').doc();
+        const stableKey = idempotencyKey || `ACCOUNT_RECEIVABLE:${accountId}:${recRef.id}`;
+
+        let movementRef: any = null;
+        if (caixaId) {
+          movementRef = caixasRef.doc(caixaId).collection('movimentacoes').doc(stableKey);
+          const movSnap: any = await transaction.get(movementRef);
+          if (movSnap.exists) {
+            const err: any = new Error('Esta operação financeira já foi processada.');
+            err.code = 'DUPLICATE_FINANCIAL_OPERATION';
+            throw err;
+          }
+        }
+
+        const newPaidAmount = (conta.paidAmount || 0) + cents;
+        const newRemainingAmount = (conta.remainingAmount || 0) - cents;
+        const newStatus = newRemainingAmount === 0 ? 'PAID' : 'PARTIALLY_PAID';
+        const now = new Date().toISOString();
+
+        const receiptDoc = {
+          id: recRef.id,
+          accountId,
+          amount: cents,
+          paymentMethodId,
+          observation: typeof observation === 'string' && observation.trim() ? observation.trim() : null,
+          createdAt: now,
+          createdBy: req.user.uid,
+          cashMovementStatus: caixaId ? 'REGISTERED' : 'NO_OPEN_CAIXA'
+        };
+
+        transaction.set(recRef, receiptDoc);
+        transaction.update(contaRef, {
+          paidAmount: newPaidAmount,
+          remainingAmount: newRemainingAmount,
+          status: newStatus,
+          updatedAt: now
+        });
+
+        if (caixaId && movementRef) {
+          transaction.set(movementRef, {
+            id: stableKey,
+            restaurantId,
+            cashRegisterId: caixaId,
+            accountId,
+            receiptId: recRef.id,
+            type: 'INCOME',
+            category: 'ACCOUNT_RECEIVABLE',
+            origin: 'ACCOUNT_RECEIVABLE',
+            automatic: true,
+            amount: cents,
+            paymentMethodId,
+            description: `Recebimento de conta (${conta.description || 'Conta a Receber'})`,
+            createdAt: now,
+            createdBy: req.user.uid,
+            idempotencyKey: stableKey
+          });
+        }
+
+        return {
+          receipt: receiptDoc,
+          conta: {
+            ...conta,
+            paidAmount: newPaidAmount,
+            remainingAmount: newRemainingAmount,
+            status: newStatus,
+            updatedAt: now
+          }
+        };
+      });
+
+      return res.json({ success: true, ...result });
+    } catch (error: any) {
+      if (error.code) {
+        const statusMap: Record<string, number> = {
+          UNAUTHORIZED: 401,
+          RESTAURANT_MISMATCH: 403,
+          ACCOUNT_NOT_FOUND: 404,
+          ACCOUNT_ALREADY_PAID: 400,
+          INVALID_AMOUNT: 400,
+          INVALID_PAYMENT_METHOD: 400,
+          PAYMENT_EXCEEDS_REMAINING: 400,
+          DUPLICATE_FINANCIAL_OPERATION: 409,
+          FINANCIAL_RECORD_IMMUTABLE: 400,
+          CASH_REGISTER_CLOSED: 409
+        };
+        return res.status(statusMap[error.code] || 400).json({ code: error.code, message: error.message, error: error.message });
+      }
+      console.error('Error processing recebimento:', error);
+      return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Erro ao registrar recebimento.' });
+    }
+  });
+
+  // ==========================================
+  // CONTAS A PAGAR ENDPOINTS
+  // ==========================================
+
+  // 1. Criar Conta a Pagar
+  app.post('/api/restaurant/financeiro/contas-pagar', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const { supplierName, supplierId, description, category, totalAmount, totalAmountCents, dueDate } = req.body || {};
+
+      if (!description || typeof description !== 'string' || !description.trim()) {
+        return res.status(400).json({ code: 'INVALID_DESCRIPTION', error: 'A descrição é obrigatória.' });
+      }
+
+      if (!category || typeof category !== 'string' || !category.trim()) {
+        return res.status(400).json({ code: 'INVALID_CATEGORY', error: 'A categoria é obrigatória.' });
+      }
+
+      let cents = 0;
+      if (typeof totalAmountCents === 'number') {
+        cents = Math.round(totalAmountCents);
+      } else if (typeof totalAmount === 'number') {
+        cents = Number.isInteger(totalAmount) && totalAmount >= 100 ? totalAmount : Math.round(totalAmount * 100);
+      } else if (typeof totalAmount === 'string') {
+        const clean = totalAmount.replace(/[^\d,-]/g, '').replace(',', '.');
+        const num = parseFloat(clean);
+        cents = Math.round((isNaN(num) ? 0 : num) * 100);
+      }
+
+      if (isNaN(cents) || cents <= 0 || !Number.isInteger(cents)) {
+        return res.status(400).json({
+          code: 'INVALID_AMOUNT',
+          error: 'O valor da conta deve ser um número inteiro positivo em centavos.'
+        });
+      }
+
+      if (!dueDate || typeof dueDate !== 'string' || isNaN(Date.parse(dueDate))) {
+        return res.status(400).json({ code: 'INVALID_DUE_DATE', error: 'Data de vencimento inválida.' });
+      }
+
+      const contaRef = db.collection('restaurants').doc(restaurantId).collection('contasPagar').doc();
+      const now = new Date().toISOString();
+
+      const newContaData = {
+        id: contaRef.id,
+        restaurantId,
+        supplierId: typeof supplierId === 'string' && supplierId.trim() ? supplierId.trim() : null,
+        supplierName: typeof supplierName === 'string' && supplierName.trim() ? supplierName.trim() : 'Fornecedor',
+        description: description.trim(),
+        category: category.trim(),
+        totalAmount: cents,
+        paidAmount: 0,
+        remainingAmount: cents,
+        dueDate: dueDate.trim(),
+        status: 'OPEN',
+        createdAt: now,
+        updatedAt: now,
+        createdBy: req.user.uid
+      };
+
+      await contaRef.set(newContaData);
+
+      return res.status(201).json({ success: true, conta: newContaData });
+    } catch (error: any) {
+      console.error('Error creating conta a pagar:', error);
+      return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Erro ao criar conta a pagar.' });
+    }
+  });
+
+  // 2. Registrar Pagamento
+  app.post('/api/restaurant/financeiro/contas-pagar/:id/pagar', verifyRestaurant, async (req: any, res: any) => {
+    try {
+      const restaurantId = req.user.restaurantId;
+      const accountId = req.params.id;
+      const { amount, amountCents, paymentMethodId, observation, idempotencyKey } = req.body || {};
+
+      let cents = 0;
+      if (typeof amountCents === 'number') {
+        cents = Math.round(amountCents);
+      } else if (typeof amount === 'number') {
+        cents = Number.isInteger(amount) && amount >= 100 ? amount : Math.round(amount * 100);
+      } else if (typeof amount === 'string') {
+        const clean = amount.replace(/[^\d,-]/g, '').replace(',', '.');
+        const num = parseFloat(clean);
+        cents = Math.round((isNaN(num) ? 0 : num) * 100);
+      }
+
+      if (isNaN(cents) || cents <= 0 || !Number.isInteger(cents)) {
+        return res.status(400).json({
+          code: 'INVALID_AMOUNT',
+          error: 'O valor do pagamento deve ser um número inteiro maior que zero em centavos.'
+        });
+      }
+
+      if (!paymentMethodId || typeof paymentMethodId !== 'string') {
+        return res.status(400).json({ code: 'INVALID_PAYMENT_METHOD', error: 'A forma de pagamento é obrigatória.' });
+      }
+
+      const contaRef = db.collection('restaurants').doc(restaurantId).collection('contasPagar').doc(accountId);
+      const restRef = db.collection('restaurants').doc(restaurantId);
+      const caixasRef = db.collection('restaurants').doc(restaurantId).collection('caixas');
+
+      const result = await db.runTransaction(async (transaction) => {
+        const contaSnap = await transaction.get(contaRef);
+        if (!contaSnap.exists) {
+          const err: any = new Error('Conta a pagar não encontrada.');
+          err.code = 'ACCOUNT_NOT_FOUND';
+          throw err;
+        }
+        const conta = contaSnap.data()!;
+        if (conta.restaurantId !== restaurantId) {
+          const err: any = new Error('Conta não pertence ao restaurante autenticado.');
+          err.code = 'RESTAURANT_MISMATCH';
+          throw err;
+        }
+        if (conta.status !== 'OPEN' && conta.status !== 'PARTIALLY_PAID') {
+          const err: any = new Error('Esta conta já se encontra quitada ou indisponível para pagamento.');
+          err.code = 'ACCOUNT_ALREADY_PAID';
+          throw err;
+        }
+
+        if (cents > conta.remainingAmount) {
+          const err: any = new Error('O valor informado excede o saldo restante da conta.');
+          err.code = 'PAYMENT_EXCEEDS_REMAINING';
+          throw err;
+        }
+
+        const restSnap = await transaction.get(restRef);
+        const validMethods = extractConfiguredPaymentMethods(restSnap.data());
+        if (!validMethods.has(paymentMethodId)) {
+          const err: any = new Error(`A forma de pagamento "${paymentMethodId}" não está configurada para este restaurante.`);
+          err.code = 'INVALID_PAYMENT_METHOD';
+          throw err;
+        }
+
+        const openCaixa = await requireOpenCashRegister(restaurantId, transaction);
+        const caixaId = openCaixa.id;
+
+        const pagRef = contaRef.collection('pagamentos').doc();
+        const stableKey = idempotencyKey || `ACCOUNT_PAYABLE:${accountId}:${pagRef.id}`;
+
+        let movementRef: any = null;
+        if (caixaId) {
+          movementRef = caixasRef.doc(caixaId).collection('movimentacoes').doc(stableKey);
+          const movSnap: any = await transaction.get(movementRef);
+          if (movSnap.exists) {
+            const err: any = new Error('Esta operação financeira já foi processada.');
+            err.code = 'DUPLICATE_FINANCIAL_OPERATION';
+            throw err;
+          }
+        }
+
+        const newPaidAmount = (conta.paidAmount || 0) + cents;
+        const newRemainingAmount = (conta.remainingAmount || 0) - cents;
+        const newStatus = newRemainingAmount === 0 ? 'PAID' : 'PARTIALLY_PAID';
+        const now = new Date().toISOString();
+
+        const paymentDoc = {
+          id: pagRef.id,
+          accountId,
+          amount: cents,
+          paymentMethodId,
+          observation: typeof observation === 'string' && observation.trim() ? observation.trim() : null,
+          createdAt: now,
+          createdBy: req.user.uid,
+          cashMovementStatus: caixaId ? 'REGISTERED' : 'NO_OPEN_CAIXA'
+        };
+
+        transaction.set(pagRef, paymentDoc);
+        transaction.update(contaRef, {
+          paidAmount: newPaidAmount,
+          remainingAmount: newRemainingAmount,
+          status: newStatus,
+          updatedAt: now
+        });
+
+        if (caixaId && movementRef) {
+          transaction.set(movementRef, {
+            id: stableKey,
+            restaurantId,
+            cashRegisterId: caixaId,
+            accountId,
+            paymentId: pagRef.id,
+            type: 'EXPENSE',
+            category: 'ACCOUNT_PAYABLE',
+            origin: 'ACCOUNT_PAYABLE',
+            automatic: true,
+            amount: cents,
+            paymentMethodId,
+            description: `Pagamento de conta (${conta.description || 'Conta a Pagar'})`,
+            createdAt: now,
+            createdBy: req.user.uid,
+            idempotencyKey: stableKey
+          });
+        }
+
+        return {
+          payment: paymentDoc,
+          conta: {
+            ...conta,
+            paidAmount: newPaidAmount,
+            remainingAmount: newRemainingAmount,
+            status: newStatus,
+            updatedAt: now
+          }
+        };
+      });
+
+      return res.json({ success: true, ...result });
+    } catch (error: any) {
+      if (error.code) {
+        const statusMap: Record<string, number> = {
+          UNAUTHORIZED: 401,
+          RESTAURANT_MISMATCH: 403,
+          ACCOUNT_NOT_FOUND: 404,
+          ACCOUNT_ALREADY_PAID: 400,
+          INVALID_AMOUNT: 400,
+          INVALID_PAYMENT_METHOD: 400,
+          PAYMENT_EXCEEDS_REMAINING: 400,
+          DUPLICATE_FINANCIAL_OPERATION: 409,
+          FINANCIAL_RECORD_IMMUTABLE: 400,
+          CASH_REGISTER_CLOSED: 409
+        };
+        return res.status(statusMap[error.code] || 400).json({ code: error.code, message: error.message, error: error.message });
+      }
+      console.error('Error processing pagamento:', error);
+      return res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Erro ao registrar pagamento.' });
+    }
+  });
   app.post('/api/orders/check-timeout', verifyRestaurant, async (req: any, res: any) => {
     try {
       const restaurantId = req.user.restaurantId;
@@ -2279,10 +3631,13 @@ async function startServer() {
       serviceMode = 'COUNTER',
       clientName = '',
       items = [],
-      paymentMethod = 'dinheiro',
+      paymentMethod: rawPaymentMethod,
+      forma_pagamento,
       pago = false,
       amountReceived = 0
     } = req.body;
+
+    const paymentMethod = rawPaymentMethod || forma_pagamento || 'dinheiro';
 
     const normalizeText = (value: any, maxLength: number): string => {
       if (typeof value !== 'string') return '';
@@ -2330,18 +3685,11 @@ async function startServer() {
     };
 
     try {
+      await requireOpenCashRegister(restaurantId);
+
       const restaurantDoc = await db.collection('restaurants').doc(restaurantId).get();
       if (!restaurantDoc.exists || restaurantDoc.data()?.features?.counterEnabled !== true) {
         return res.status(403).json({ success: false, error: 'COUNTER_DISABLED', message: 'A funcionalidade de Balcão não está ativada neste restaurante.' });
-      }
-
-      const normalizedMethod = normalizePaymentMethodId(paymentMethod);
-      if (!normalizedMethod) {
-        return res.status(400).json({
-          success: false,
-          error: 'PAYMENT_METHOD_NOT_AVAILABLE',
-          message: 'A forma de pagamento selecionada não está disponível para este atendimento.'
-        });
       }
 
       const paymentCheck = await loadRestaurantCounterPaymentMethods(restaurantId, serviceMode);
@@ -2354,23 +3702,109 @@ async function startServer() {
             message: 'Nenhuma forma de pagamento está habilitada para este tipo de atendimento.'
           });
         }
-        const methodObj = paymentCheck.methods.find(m => m.id === normalizedMethod);
-        if (!methodObj || !methodObj.enabledForCurrentServiceMode) {
+      }
+
+      let reqPayments = Array.isArray(req.body.payments) ? req.body.payments : [];
+      let normalizedPayments: any[] = [];
+      let cashPaymentCents = 0;
+      let totalPaymentsCents = 0;
+
+      const formatPtBrCurrency = (cents: number) => {
+        return (cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      };
+
+      if (reqPayments.length > 0) {
+        for (const p of reqPayments) {
+          const pMethodId = normalizePaymentMethodId(p.paymentMethodId || p.forma_pagamento || p.method);
+          if (!pMethodId) {
+            return res.status(400).json({
+              success: false,
+              error: 'INVALID_PAYMENT_METHOD',
+              message: 'Uma das formas de pagamento fornecidas é inválida.'
+            });
+          }
+
+          if (paymentCheck.hasExplicitConfiguration) {
+            const methodObj = paymentCheck.methods.find(m => m.id === pMethodId);
+            if (!methodObj || !methodObj.enabledForCurrentServiceMode) {
+              return res.status(400).json({
+                success: false,
+                error: 'PAYMENT_METHOD_NOT_AVAILABLE',
+                message: `A forma de pagamento (${pMethodId}) não está disponível para este atendimento.`
+              });
+            }
+          } else {
+            if (!['dinheiro', 'pix', 'credito', 'debito'].includes(pMethodId)) {
+              return res.status(400).json({
+                success: false,
+                error: 'PAYMENT_METHOD_NOT_AVAILABLE',
+                message: 'A forma de pagamento selecionada não está disponível.'
+              });
+            }
+          }
+
+          const pAmountCents = typeof p.amount === 'number' ? Math.round(p.amount) : (typeof p.value === 'number' ? Math.round(p.value * 100) : 0);
+          if (pAmountCents <= 0) {
+            return res.status(400).json({
+              success: false,
+              error: 'INVALID_PAYMENT_AMOUNT',
+              message: 'O valor de cada parcela de pagamento deve ser maior que zero.'
+            });
+          }
+
+          totalPaymentsCents += pAmountCents;
+          if (pMethodId === 'dinheiro') {
+            cashPaymentCents += pAmountCents;
+          }
+
+          normalizedPayments.push({
+            id: p.id || `pm_${normalizedPayments.length + 1}`,
+            paymentMethodId: pMethodId,
+            paymentMethodName: p.paymentMethodName || (pMethodId === 'dinheiro' ? 'Dinheiro' : pMethodId === 'pix' ? 'Pix' : pMethodId === 'credito' ? 'Crédito' : 'Débito'),
+            amount: pAmountCents,
+            status: pago ? 'PAID' : 'PENDING'
+          });
+        }
+      } else {
+        const normalizedMethod = normalizePaymentMethodId(paymentMethod);
+        if (!normalizedMethod) {
           return res.status(400).json({
             success: false,
             error: 'PAYMENT_METHOD_NOT_AVAILABLE',
             message: 'A forma de pagamento selecionada não está disponível para este atendimento.'
           });
         }
-      } else {
-        const validMethods = ['dinheiro', 'pix', 'credito', 'debito'];
-        if (!validMethods.includes(normalizedMethod)) {
-          return res.status(400).json({
-            success: false,
-            error: 'PAYMENT_METHOD_NOT_AVAILABLE',
-            message: 'A forma de pagamento selecionada não está disponível.'
-          });
+
+        if (paymentCheck.hasExplicitConfiguration) {
+          const methodObj = paymentCheck.methods.find(m => m.id === normalizedMethod);
+          if (!methodObj || !methodObj.enabledForCurrentServiceMode) {
+            return res.status(400).json({
+              success: false,
+              error: 'PAYMENT_METHOD_NOT_AVAILABLE',
+              message: 'A forma de pagamento selecionada não está disponível para este atendimento.'
+            });
+          }
+        } else {
+          if (!['dinheiro', 'pix', 'credito', 'debito'].includes(normalizedMethod)) {
+            return res.status(400).json({
+              success: false,
+              error: 'PAYMENT_METHOD_NOT_AVAILABLE',
+              message: 'A forma de pagamento selecionada não está disponível.'
+            });
+          }
         }
+
+        if (normalizedMethod === 'dinheiro') {
+          cashPaymentCents = 0; // will set after totalCents calculation
+        }
+
+        normalizedPayments.push({
+          id: 'legacy',
+          paymentMethodId: normalizedMethod,
+          paymentMethodName: normalizedMethod === 'dinheiro' ? 'Dinheiro' : normalizedMethod === 'pix' ? 'Pix' : normalizedMethod === 'credito' ? 'Crédito' : 'Débito',
+          amount: 0, // will set after totalCents calculation
+          status: pago ? 'PAID' : 'PENDING'
+        });
       }
 
       const [optionItemsSnap, optionGroupsSnap] = await Promise.all([
@@ -2415,12 +3849,6 @@ async function startServer() {
           return res.status(400).json({ success: false, error: 'PRODUCT_NOT_AVAILABLE', message: `O produto "${pData.nome || pData.name}" não está disponível para vendas no Balcão.` });
         }
 
-        const canonicalBasePrice = getProductPriceForChannelData(pData, 'counter');
-        if (typeof canonicalBasePrice !== 'number' || !Number.isFinite(canonicalBasePrice) || canonicalBasePrice < 0) {
-          return res.status(400).json({ success: false, error: 'INVALID_PRODUCT_PRICE', message: 'O preço do produto não está configurado corretamente para o Balcão.' });
-        }
-        let baseUnitPrice = canonicalBasePrice;
-
         if (
           typeof item.quantity !== 'number' ||
           !Number.isFinite(item.quantity) ||
@@ -2439,6 +3867,7 @@ async function startServer() {
           id: s.id || `size_${idx}`
         }));
         const hasSizes = pSizes.length > 0;
+        let matchedSize: any = null;
         let sizeObj: any = null;
 
         const isSizeOptional = pData.optionalSize === true || pData.tamanhoOpcional === true || pData.requiresSize === false || pData.tamanhoObrigatorio === false;
@@ -2452,7 +3881,7 @@ async function startServer() {
           if (!hasSizes) {
             return res.status(400).json({ success: false, error: 'INVALID_SIZE', message: 'O tamanho selecionado não está disponível para este produto.' });
           }
-          const matchedSize = pSizes.find((s: any) => s.id === item.selectedSizeId);
+          matchedSize = pSizes.find((s: any) => s.id === item.selectedSizeId);
           if (!matchedSize) {
             return res.status(400).json({ success: false, error: 'INVALID_SIZE', message: 'O tamanho selecionado não está disponível para este produto.' });
           }
@@ -2460,15 +3889,15 @@ async function startServer() {
           if (!sizeActive) {
             return res.status(400).json({ success: false, error: 'SIZE_INACTIVE', message: 'O tamanho selecionado não está disponível para este produto.' });
           }
+        }
 
-          let sizePrice = matchedSize.preco ?? matchedSize.price ?? matchedSize.valor;
-          if (sizePrice === undefined && matchedSize.channelPricing?.counter !== undefined) {
-            sizePrice = matchedSize.channelPricing.counter;
-          }
-          if (typeof sizePrice !== 'number' || !Number.isFinite(sizePrice) || sizePrice < 0) {
-            return res.status(400).json({ success: false, error: 'INVALID_SIZE_PRICE', message: 'O preço do tamanho não está configurado corretamente.' });
-          }
-          baseUnitPrice = Number(sizePrice);
+        const canonicalBasePriceCents = resolveCounterUnitPriceCents(pData, matchedSize);
+        if (typeof canonicalBasePriceCents !== 'number' || !Number.isFinite(canonicalBasePriceCents) || canonicalBasePriceCents < 0) {
+          return res.status(400).json({ success: false, error: 'INVALID_PRODUCT_PRICE', message: 'O preço do produto não está configurado corretamente para o Balcão.' });
+        }
+
+        const baseUnitPrice = fromCents(canonicalBasePriceCents);
+        if (matchedSize) {
           sizeObj = {
             id: matchedSize.id,
             nome: matchedSize.nome || matchedSize.name || 'Tamanho',
@@ -2591,7 +4020,7 @@ async function startServer() {
           }
         });
 
-        const unitBasePriceCents = toCents(baseUnitPrice);
+        const unitBasePriceCents = canonicalBasePriceCents;
         const unitPriceCents = unitBasePriceCents + additionalsCents;
         const itemTotalCents = unitPriceCents * qty;
         totalCents += itemTotalCents;
@@ -2601,11 +4030,29 @@ async function startServer() {
           nome: pData.nome || pData.name || 'Produto',
           precoUnitario: fromCents(unitPriceCents),
           precoBase: fromCents(unitBasePriceCents),
+          unitPriceCents: unitPriceCents,
+          basePriceCents: unitBasePriceCents,
+          pricingChannel: 'BALCAO',
           quantidade: qty,
           valorTotal: fromCents(itemTotalCents),
           observacao: normalizeText(item.observation, 500),
           tamanhoSelecionado: sizeObj,
           adicionaisSelecionados: selectedAdditionalsInItem
+        });
+      }
+
+      if (reqPayments.length === 0) {
+        normalizedPayments[0].amount = totalCents;
+        if (normalizedPayments[0].paymentMethodId === 'dinheiro') {
+          cashPaymentCents = totalCents;
+        }
+      }
+
+      if (pago && reqPayments.length > 0 && totalPaymentsCents !== totalCents) {
+        return res.status(400).json({
+          success: false,
+          error: 'PAYMENT_SUM_MISMATCH',
+          message: `A soma das formas de pagamento (R$ ${formatPtBrCurrency(totalPaymentsCents)}) é diferente do total do pedido (R$ ${formatPtBrCurrency(totalCents)}).`
         });
       }
 
@@ -2616,18 +4063,32 @@ async function startServer() {
 
       if (finalPago) {
         settlementStatus = 'SETTLED';
-        if (paymentMethod === 'dinheiro') {
-          if (typeof amountReceived !== 'number' || !Number.isFinite(amountReceived) || amountReceived < 0) {
-            return res.status(400).json({ success: false, error: 'INVALID_AMOUNT_RECEIVED', message: 'O valor recebido (amountReceived) deve ser um número válido para pagamentos em dinheiro.' });
+        if (cashPaymentCents > 0) {
+          let inputReceivedCents = 0;
+          if (typeof amountReceived === 'number' && Number.isFinite(amountReceived) && amountReceived >= 0) {
+            inputReceivedCents = toCents(amountReceived);
+          } else {
+            inputReceivedCents = cashPaymentCents;
           }
-          if (amountReceived > 10000) {
-            return res.status(400).json({ success: false, error: 'INVALID_AMOUNT_RECEIVED', message: 'O valor recebido excede o limite permitido (R$ 10.000,00).' });
+
+          if (inputReceivedCents > 1000000) {
+            return res.status(400).json({
+              success: false,
+              error: 'INVALID_AMOUNT_RECEIVED',
+              message: 'O valor recebido excede o limite permitido (R$ 10.000,00).'
+            });
           }
-          finalAmountReceivedCents = toCents(amountReceived);
-          if (finalAmountReceivedCents < totalCents) {
-            return res.status(400).json({ success: false, error: 'INVALID_AMOUNT_RECEIVED', message: `O valor recebido em dinheiro (R$ ${fromCents(finalAmountReceivedCents).toFixed(2)}) é menor que o total do pedido (R$ ${fromCents(totalCents).toFixed(2)}).` });
+
+          if (inputReceivedCents < cashPaymentCents) {
+            return res.status(400).json({
+              success: false,
+              error: 'INVALID_AMOUNT_RECEIVED',
+              message: `O valor entregue em dinheiro (R$ ${formatPtBrCurrency(inputReceivedCents)}) é menor que a parcela em dinheiro (R$ ${formatPtBrCurrency(cashPaymentCents)}).`
+            });
           }
-          finalChangeAmountCents = finalAmountReceivedCents - totalCents;
+
+          finalAmountReceivedCents = inputReceivedCents;
+          finalChangeAmountCents = finalAmountReceivedCents - cashPaymentCents;
         } else {
           finalAmountReceivedCents = 0;
           finalChangeAmountCents = 0;
@@ -2732,7 +4193,10 @@ async function startServer() {
           valor_desconto: 0,
           valor_total: fromCents(totalCents),
 
-          forma_pagamento: normalizedMethod,
+          payments: normalizedPayments,
+          forma_pagamento: normalizedPayments.length > 0 
+            ? normalizedPayments.reduce((prev: any, current: any) => (current.amount > prev.amount) ? current : prev, normalizedPayments[0]).paymentMethodId 
+            : 'dinheiro',
           pago: finalPago,
           amountReceived: fromCents(finalAmountReceivedCents),
           changeAmount: fromCents(finalChangeAmountCents),
@@ -2804,6 +4268,16 @@ async function startServer() {
         });
       }
 
+      if (result.order.pago && !result.alreadyProcessed) {
+        // Run as background promise (non-blocking)
+        registerServerOrderPaymentMovement(
+          restaurantId,
+          result.orderId,
+          result.order,
+          operatorName
+        ).catch(err => console.error('[Counter Finance Integration] Error:', err));
+      }
+
       res.status(result.alreadyProcessed ? 200 : 201).json({
         success: true,
         orderId: result.orderId,
@@ -2811,6 +4285,14 @@ async function startServer() {
         order: result.order
       });
     } catch (error: any) {
+      if (error.code === 'CASH_REGISTER_CLOSED') {
+        return res.status(409).json({
+          success: false,
+          code: 'CASH_REGISTER_CLOSED',
+          error: 'CASH_REGISTER_CLOSED',
+          message: error.message
+        });
+      }
       console.error('Error creating counter order:', error);
       res.status(500).json({ success: false, error: 'SERVER_ERROR', message: error.message || 'Erro ao criar pedido do balcão.' });
     }
@@ -3934,6 +5416,8 @@ async function startServer() {
     const restaurantId = req.user.restaurantId;
 
     try {
+      await requireOpenCashRegister(restaurantId);
+
       const orderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
       const deliveryRef = db.collection('restaurants').doc(restaurantId).collection('deliveries').doc(orderId);
 
@@ -4057,6 +5541,19 @@ async function startServer() {
             settledByUserId: req.user.uid,
             createdAt: now
           });
+
+          // Register in the active cash register (caixas)
+          const paymentOrderData = {
+            ...orderData,
+            forma_pagamento: pm.methodId || 'outro',
+            valor_total: Number(pm.amount) || 0
+          };
+          await registerServerOrderPaymentMovement(
+            restaurantId,
+            orderId,
+            paymentOrderData,
+            req.user.nome || req.user.displayName || req.user.email || 'Sistema'
+          ).catch(err => console.error('[Driver Settlement Finance Integration] Error:', err));
         }
       } catch (logErr) {
         console.warn('Error recording financial log:', logErr);
@@ -4089,6 +5586,13 @@ async function startServer() {
         settledAt: now
       });
     } catch (error: any) {
+      if (error.code === 'CASH_REGISTER_CLOSED') {
+        return res.status(409).json({
+          code: 'CASH_REGISTER_CLOSED',
+          message: error.message,
+          error: error.message
+        });
+      }
       console.error('Error settling driver payment:', error);
       res.status(500).json({ error: error.message });
     }
@@ -4668,6 +6172,14 @@ async function startServer() {
               });
               console.log(`[Webhook MP] Pedido ${orderId} marcado como PAGO.`);
 
+              // Register in active cash register
+              await registerServerOrderPaymentMovement(
+                restaurantId as string,
+                orderId,
+                { ...orderData, pago: true },
+                'Mercado Pago Webhook'
+              ).catch(err => console.error('[Webhook Finance Integration Error]:', err));
+
               // Notificar cliente sobre pagamento aprovado
               if (orderData.cliente_id) {
                 const userDoc = await db.collection('users').doc(orderData.cliente_id).get();
@@ -4691,6 +6203,16 @@ async function startServer() {
                 updated_at: new Date().toISOString()
               });
               console.log(`[Webhook MP] Pedido ${orderId} DESMARCADO como pago (status: ${status}).`);
+
+              // Register refund in active cash register if refunded or charged back
+              if (['refunded', 'charged_back'].includes(status)) {
+                await registerServerOrderRefundMovement(
+                  restaurantId as string,
+                  orderId,
+                  orderData,
+                  'Mercado Pago Webhook'
+                ).catch(err => console.error('[Webhook Refund Finance Integration Error]:', err));
+              }
 
               // Notificar cliente sobre alteração no status do pagamento
               if (orderData.cliente_id) {
@@ -4963,7 +6485,7 @@ async function startServer() {
     });
   }
 
-  app.listen(port, () => {
+  app.listen(port, "0.0.0.0", () => {
     console.log(`Server running on port ${port}`);
     // Run connection test in background after server starts
     testFirestoreConnection().catch(err => console.error('Background Firestore test failed:', err));

@@ -6,8 +6,12 @@ import { optionService, OptionItem } from '../../services/optionService';
 import { counterOrderService, CounterCartItem } from '../../services/counterOrderService';
 import { 
   getProductPriceForChannel, 
-  isProductAvailableForChannel 
+  isProductAvailableForChannel,
+  resolveCounterUnitPriceCents
 } from '../../domain/product/productChannels';
+import { v4 as uuidv4 } from 'uuid';
+import { PaymentsComposer, getAvailablePaymentMethodsForChannel } from './components/PaymentsComposer';
+import { PaymentItem } from './components/PaymentsManager';
 import { printThermalOrder } from '../../components/orders/OrderThermalPrint';
 import { 
   formatCurrency, 
@@ -32,6 +36,7 @@ import {
   ArrowRight,
   AlertCircle
 } from 'lucide-react';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 
 export default function CounterPage({ restaurantProfile }: { restaurantProfile: any }) {
   const { user, profile } = useAuth();
@@ -64,16 +69,14 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
   const [cart, setCart] = useState<CounterCartItem[]>([]);
   
   // Payment states
-  const [paymentMethod, setPaymentMethod] = useState<string>('');
+  const [payments, setPayments] = useState<PaymentItem[]>([]);
   const [isPaid, setIsPaid] = useState<boolean>(true);
+  const [deliveredCashCents, setDeliveredCashCents] = useState<number>(0);
   
-  // Digits typing string state for amount paid in cash (e.g. "5000" -> R$ 50,00)
-  const [amountPaidDigits, setAmountPaidDigits] = useState<string>('');
-
   // Customization modal state
   const [customizingProduct, setCustomizingProduct] = useState<any | null>(null);
   const [selectedSize, setSelectedSize] = useState<any | null>(null);
-  const [selectedOptions, setSelectedOptions] = useState<Record<string, OptionItem[]>>({});
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, any>>({});
   const [customizationObs, setCustomizationObs] = useState<string>('');
 
   // Execution / Modal states
@@ -81,323 +84,262 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
   const [createdOrder, setCreatedOrder] = useState<any | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
-  // Init restaurant ID & Profile
   useEffect(() => {
-    const init = async () => {
+    let isMounted = true;
+    const loadData = async () => {
       try {
-        let rid = profile?.restaurantId;
-        if (!rid && user?.uid) {
-          const res = await restaurantService.getRestaurantByOwnerId(user.uid);
-          rid = res?.id;
-          if (res) setActiveRestaurantProfile(res);
-        } else if (rid && !activeRestaurantProfile) {
-          const res = await restaurantService.getRestaurantById(rid);
-          if (res) setActiveRestaurantProfile(res);
+        let currentRestId = restaurantProfile?.id || profile?.restaurantId;
+        if (!currentRestId && user?.uid) {
+          const fetchedRest = await restaurantService.getRestaurantByOwnerId(user.uid);
+          if (fetchedRest) {
+            currentRestId = fetchedRest.id;
+            if (!restaurantProfile && isMounted) {
+              setActiveRestaurantProfile(fetchedRest);
+            }
+          }
         }
-
-        if (rid) {
-          setRestaurantId(rid);
-        } else {
-          setError("Restaurante não identificado.");
-          setLoading(false);
+        
+        if (currentRestId && isMounted) {
+          setRestaurantId(currentRestId);
+          const [cats, prods, options] = await Promise.all([
+            productService.getCategoriesByRestaurant(currentRestId),
+            productService.getProducts(currentRestId),
+            optionService.getAllOptions(currentRestId)
+          ]);
+          
+          if (isMounted) {
+            setCategories(cats || []);
+            setProducts((prods || []).filter(p => p.ativo !== false && isProductAvailableForChannel(p, 'counter')));
+            setAllOptionItems(options || []);
+          }
         }
       } catch (err) {
-        console.error("Error identifying restaurant for Counter:", err);
-        setError("Erro ao identificar o restaurante.");
-        setLoading(false);
-      }
-    };
-    init();
-  }, [profile?.restaurantId, user?.uid]);
-
-  // Load operational data
-  useEffect(() => {
-    if (!restaurantId) return;
-
-    const loadAllData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [catsDocs, prodDocs, optsDocs] = await Promise.all([
-          restaurantService.getRestaurantCategories(restaurantId),
-          productService.getProducts(restaurantId),
-          optionService.getAllOptions(restaurantId)
-        ]);
-
-        setCategories(catsDocs || []);
-        setProducts(prodDocs || []);
-        setAllOptionItems(optsDocs || []);
-      } catch (err) {
-        console.error("Error fetching Counter operational data:", err);
-        setError("Erro ao carregar dados operacionais. Por favor, tente novamente.");
+        console.error("Error loading counter data:", err);
+        if (isMounted) setError("Erro ao carregar os dados. Tente novamente.");
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
+    
+    loadData();
+    
+    return () => { isMounted = false; };
+  }, [user?.uid, profile?.restaurantId, restaurantProfile]);
 
-    loadAllData();
-  }, [restaurantId]);
 
-  // Configured payment methods from restaurant profile respecting serviceMode
+  // Cart total
+  const cartTotal = cart.reduce((acc, item) => acc + (item.precoFinal || item.precoBase) * item.quantidade, 0);
+  const cartTotalCents = Math.round(cartTotal * 100);
+
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = p.nome.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = selectedCategory === 'todos' || p.categoriaId === selectedCategory;
+    return matchesSearch && matchesCategory;
+  });
+
   const availablePaymentMethods = useMemo(() => {
-    const defaultMethods = [
-      { id: 'dinheiro', label: 'Dinheiro', icon: Coins },
-      { id: 'pix', label: 'PIX', icon: QrCode },
-      { id: 'credito', label: 'Cartão de Crédito', icon: CreditCard },
-      { id: 'debito', label: 'Cartão de Débito', icon: CreditCard }
-    ];
-
-    if (!activeRestaurantProfile) return defaultMethods;
-
-    const configured = activeRestaurantProfile.formas_pagamento || activeRestaurantProfile.payment_methods;
-    if (!configured || typeof configured !== 'object') return defaultMethods;
-
-    const validMethods = ['dinheiro', 'pix', 'credito', 'debito'] as const;
-    const hasAnyKey = validMethods.some(mId => {
-      let v: any = undefined;
-      if (mId === 'dinheiro') v = configured.dinheiro;
-      else if (mId === 'pix') v = configured.pix;
-      else if (mId === 'credito') v = configured.credito ?? configured.cartao_credito;
-      else if (mId === 'debito') v = configured.debito ?? configured.cartao_debito;
-      return v !== undefined;
-    });
-
-    if (!hasAnyKey) return defaultMethods;
-
-    return defaultMethods.filter(m => {
-      let val: any = undefined;
-      if (m.id === 'dinheiro') val = configured.dinheiro;
-      else if (m.id === 'pix') val = configured.pix;
-      else if (m.id === 'credito') val = configured.credito ?? configured.cartao_credito;
-      else if (m.id === 'debito') val = configured.debito ?? configured.cartao_debito;
-
-      if (val === undefined) return false;
-      if (typeof val === 'boolean') return val;
-      if (typeof val === 'object' && val !== null) {
-        if (serviceMode === 'COUNTER') {
-          return val.balcao === true || val.counter === true;
-        } else if (serviceMode === 'PICKUP') {
-          return val.retirada === true || val.pickup === true;
-        } else if (serviceMode === 'DINE_IN') {
-          return val.consumoLocal === true || val.dine_in === true || val.dineIn === true || val.mesa === true;
-        }
-      }
-      return false;
-    });
+    return getAvailablePaymentMethodsForChannel(
+      activeRestaurantProfile?.formas_pagamento || activeRestaurantProfile?.payment_methods,
+      serviceMode
+    );
   }, [activeRestaurantProfile, serviceMode]);
+  
+  const getProductSizes = (product: any) => {
+    if (!product) return [];
+    const raw = Array.isArray(product.sizes) && product.sizes.length > 0 ? product.sizes : (Array.isArray(product.tamanhos) ? product.tamanhos : []);
+    return raw.map((s: any, idx: number) => ({
+      ...s,
+      id: s.id || `size_${idx}`
+    }));
+  };
+
+  const isCustomizationValid = customizingProduct && (
+    !getProductSizes(customizingProduct).length || selectedSize
+  );
+
+  const cashPaymentsCents = useMemo(() => {
+    return payments
+      .filter(p => p.paymentMethodId === 'dinheiro')
+      .reduce((sum, p) => sum + p.amount, 0);
+  }, [payments]);
 
   useEffect(() => {
-    if (availablePaymentMethods.length > 0) {
-      if (!paymentMethod || !availablePaymentMethods.some(m => m.id === paymentMethod)) {
-        setPaymentMethod(availablePaymentMethods[0].id);
-      }
+    if (cashPaymentsCents > 0 && isPaid) {
+      setDeliveredCashCents(prev => (prev < cashPaymentsCents ? cashPaymentsCents : prev));
     } else {
-      setPaymentMethod('');
+      setDeliveredCashCents(0);
     }
-  }, [availablePaymentMethods]);
+  }, [cashPaymentsCents, isPaid]);
 
-  // Filter products by search and category
-  const filteredProducts = useMemo(() => {
-    return products.filter(p => {
-      if (!isProductAvailableForChannel(p, 'counter')) return false;
-      if (selectedCategory !== 'todos' && p.categoria_id !== selectedCategory) return false;
-      if (searchQuery.trim() !== '') {
-        const queryNorm = searchQuery.toLowerCase();
-        const nameNorm = (p.nome || '').toLowerCase();
-        const descNorm = (p.descricao || '').toLowerCase();
-        return nameNorm.includes(queryNorm) || descNorm.includes(queryNorm);
+  const isCashAmountInsufficient = cashPaymentsCents > 0 && isPaid && deliveredCashCents < cashPaymentsCents;
+
+  const changeDueCents = (cashPaymentsCents > 0 && isPaid && deliveredCashCents >= cashPaymentsCents)
+    ? deliveredCashCents - cashPaymentsCents
+    : 0;
+
+  useEffect(() => {
+    if (availablePaymentMethods.length === 0) {
+      if (payments.length > 0) {
+        setPayments([]);
       }
-      return true;
-    });
-  }, [products, selectedCategory, searchQuery]);
+      return;
+    }
 
-  // Cart calculations in cents
-  const cartSubtotalCents = useMemo(() => {
-    return cart.reduce((sum, item) => sum + Math.round(Number(item.precoFinal || 0) * 100) * item.quantidade, 0);
-  }, [cart]);
+    if (payments.length === 0) {
+      const defaultMethod = availablePaymentMethods[0];
+      setPayments([{
+        id: uuidv4(),
+        paymentMethodId: defaultMethod.id,
+        paymentMethodName: defaultMethod.name,
+        amount: cartTotalCents,
+        status: isPaid ? 'PAID' : 'PENDING'
+      }]);
+    } else if (payments.length === 1) {
+      const p = payments[0];
+      const needsAmountUpdate = p.amount !== cartTotalCents;
+      const isMethodValid = availablePaymentMethods.some(m => m.id === p.paymentMethodId);
+      
+      if (needsAmountUpdate || !isMethodValid) {
+        const nextMethodId = isMethodValid ? p.paymentMethodId : availablePaymentMethods[0].id;
+        const nextMethodName = isMethodValid ? p.paymentMethodName : availablePaymentMethods[0].name;
+        
+        setPayments([{
+          ...p,
+          paymentMethodId: nextMethodId,
+          paymentMethodName: nextMethodName,
+          amount: cartTotalCents
+        }]);
+      }
+    }
+  }, [cartTotalCents, availablePaymentMethods, isPaid, payments]);
 
-  const cartTotalCents = cartSubtotalCents;
-  const cartTotal = cartTotalCents / 100;
+  const removeCartItem = (cartId: string) => {
+    setCart(cart.filter((item) => item.cartId !== cartId));
+  };
 
-  const amountPaidParsed = useMemo(() => {
-    return parseCurrencyDigits(amountPaidDigits);
-  }, [amountPaidDigits]);
+  const updateCartQuantity = (cartId: string, delta: number) => {
+    setCart(cart.map(item => {
+      if (item.cartId === cartId) {
+        const newQty = item.quantidade + delta;
+        if (newQty < 1) return item;
+        return { ...item, quantidade: newQty };
+      }
+      return item;
+    }));
+  };
 
-  const changeDueCents = useMemo(() => {
-    if (paymentMethod !== 'dinheiro' || !isPaid) return 0;
-    const paidCents = Math.round(amountPaidParsed.numberValue * 100);
-    if (paidCents <= cartTotalCents) return 0;
-    return paidCents - cartTotalCents;
-  }, [paymentMethod, isPaid, amountPaidParsed.numberValue, cartTotalCents]);
-
-  const changeDue = changeDueCents / 100;
-
-  const isCashAmountInsufficient = useMemo(() => {
-    if (paymentMethod !== 'dinheiro' || !isPaid) return false;
-    const paidCents = Math.round(amountPaidParsed.numberValue * 100);
-    return paidCents > 0 && paidCents < cartTotalCents;
-  }, [paymentMethod, isPaid, amountPaidParsed.numberValue, cartTotalCents]);
-
-  // Handle customization open
   const handleProductClick = (product: any) => {
     setCustomizingProduct(product);
-    if (product.sizes && product.sizes.length > 0) {
-      setSelectedSize(product.sizes[0]);
-    } else {
-      setSelectedSize(null);
-    }
+    const pSizes = getProductSizes(product);
+    setSelectedSize(pSizes.length > 0 ? pSizes[0] : null);
     setSelectedOptions({});
     setCustomizationObs('');
   };
 
-  const isCustomizationValid = useMemo(() => {
-    if (!customizingProduct) return false;
-    const groups = customizingProduct.optionGroups || [];
-    for (const group of groups) {
-      if (group.obrigatorio) {
-        const selections = selectedOptions[group.groupId] || [];
-        const count = selections.length;
-        const min = group.min || 1;
-        if (count < min) return false;
-      }
-    }
-    return true;
-  }, [customizingProduct, selectedOptions]);
-
-  const handleOptionToggle = (group: any, option: OptionItem, isSingleSelection: boolean) => {
-    const groupId = group.groupId;
-    const currentSelections = selectedOptions[groupId] || [];
-    const max = group.max || 1;
-
-    if (isSingleSelection) {
-      setSelectedOptions(prev => ({
-        ...prev,
-        [groupId]: [option]
-      }));
-    } else {
-      const exists = currentSelections.some(item => item.id === option.id);
-      if (exists) {
-        setSelectedOptions(prev => ({
-          ...prev,
-          [groupId]: currentSelections.filter(item => item.id !== option.id)
-        }));
+  const handleOptionToggle = (group: any, opt: any, isSingle: boolean) => {
+    setSelectedOptions(prev => {
+      const current = prev[group.id] || [];
+      if (isSingle) {
+        return { ...prev, [group.id]: [opt] };
       } else {
-        if (currentSelections.length >= max) {
-          if (max === 1) {
-            setSelectedOptions(prev => ({
-              ...prev,
-              [groupId]: [option]
-            }));
-          } else {
-            return;
-          }
+        const exists = current.find((o: any) => o.id === opt.id);
+        if (exists) {
+          return { ...prev, [group.id]: current.filter((o: any) => o.id !== opt.id) };
         } else {
-          setSelectedOptions(prev => ({
-            ...prev,
-            [groupId]: [...currentSelections, option]
-          }));
+          if (group.max && current.length >= group.max) return prev;
+          return { ...prev, [group.id]: [...current, opt] };
         }
       }
-    }
+    });
   };
 
   const handleAddToCart = () => {
     if (!customizingProduct) return;
-
-    const basePrice = selectedSize 
-      ? Number(selectedSize.preco || 0) 
-      : getProductPriceForChannel(customizingProduct, 'counter');
     
-    const additionalsTotal = Object.values(selectedOptions)
-      .flat()
-      .reduce((sum, opt) => sum + Number(opt.preco || 0), 0);
+    // Resolve canonical base unit price in CENTS for Balcão
+    const baseUnitPriceCents = resolveCounterUnitPriceCents(customizingProduct, selectedSize);
 
-    const priceFinal = basePrice + additionalsTotal;
+    let totalUnitPriceCents = baseUnitPriceCents;
 
-    const additionalsFlattened = Object.entries(selectedOptions).flatMap(([grpId, items]) => {
-      const groupName = customizingProduct.optionGroups?.find((g: any) => g.groupId === grpId)?.nome || 'Adicional';
-      return items.map(it => ({
-        id: it.id || '',
-        nome: it.nome,
-        preco: Number(it.preco || 0),
-        grupoId: grpId,
-        grupoNome: groupName
-      }));
+    let tamanhoSelecionado = null;
+    if (selectedSize) {
+      tamanhoSelecionado = {
+        ...selectedSize,
+        preco: resolveCounterUnitPriceCents(customizingProduct, selectedSize) / 100
+      };
+    }
+
+    const adicionaisSelecionados: any[] = [];
+    Object.values(selectedOptions).forEach((opts: any) => {
+      opts.forEach((opt: any) => {
+        const addPriceCents = Math.round(Number(opt.preco || opt.price || opt.valor || 0) * 100);
+        totalUnitPriceCents += addPriceCents;
+        adicionaisSelecionados.push(opt);
+      });
     });
 
-    const newCartItem: CounterCartItem = {
-      cartId: `${customizingProduct.id}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      productId: customizingProduct.id || '',
-      nome: customizingProduct.nome,
-      precoBase: basePrice,
-      precoFinal: priceFinal,
+    const item: CounterCartItem = {
+      cartId: uuidv4(),
+      productId: customizingProduct.id,
+      nome: customizingProduct.nome || customizingProduct.name || 'Produto',
+      unitPriceCents: baseUnitPriceCents,
+      basePriceCents: baseUnitPriceCents,
+      pricingChannel: 'BALCAO',
+      precoBase: baseUnitPriceCents / 100,
+      precoFinal: totalUnitPriceCents / 100,
       quantidade: 1,
-      observacao: customizationObs.trim(),
-      selectedSizeId: selectedSize ? (selectedSize.id || `size_0`) : undefined,
-      selectedAdditionalIds: additionalsFlattened.map(a => a.id),
-      tamanhoSelecionado: selectedSize ? { id: selectedSize.id || `size_0`, nome: selectedSize.nome, preco: Number(selectedSize.preco || 0) } : undefined,
-      adicionaisSelecionados: additionalsFlattened
+      observacao: customizationObs,
+      selectedSizeId: selectedSize?.id,
+      tamanhoSelecionado,
+      adicionaisSelecionados
     };
 
-    setCart(prev => [...prev, newCartItem]);
+    setCart([...cart, item]);
     setCustomizingProduct(null);
   };
 
-  const updateCartQuantity = (cartId: string, amount: number) => {
-    setCart(prev => prev.map(item => {
-      if (item.cartId === cartId) {
-        const newQty = item.quantidade + amount;
-        return newQty > 0 ? { ...item, quantidade: newQty } : item;
-      }
-      return item;
-    }).filter(item => item.quantidade > 0));
-  };
-
-  const removeCartItem = (cartId: string) => {
-    setCart(prev => prev.filter(item => item.cartId !== cartId));
-  };
-
   const handleCheckout = async () => {
-    if (cart.length === 0 || !restaurantId || !activeRestaurantProfile) return;
-
-    setClientNameError(null);
     setError(null);
-
-    if (!user?.uid) {
-      setError("Sessão do operador não identificada. Por favor, faça login novamente.");
+    if (!restaurantId || cart.length === 0) return;
+    
+    const totalPaymentsCents = payments.reduce((acc, p) => acc + p.amount, 0);
+    if (totalPaymentsCents !== cartTotalCents) {
+      setError('A soma dos pagamentos deve ser igual ao total do pedido.');
       return;
     }
 
-    if (serviceMode === 'PICKUP' && !clientName.trim()) {
-      setClientNameError("Por favor, informe o nome do cliente para a retirada.");
+    if (isCashAmountInsufficient) {
+      setError('O valor entregue em dinheiro é menor que a parcela em dinheiro.');
       return;
-    }
-
-    const paidCents = Math.round(amountPaidParsed.numberValue * 100);
-    if (paymentMethod === 'dinheiro' && isPaid) {
-      if (paidCents < cartTotalCents) {
-        setError(`O valor em dinheiro recebido (${amountPaidParsed.formatted}) é menor que o total do pedido (${formatCurrency(cartTotal)}).`);
-        return;
-      }
     }
 
     setSaveLoading(true);
-
+    
     try {
       if (!clientActionIdRef.current) {
-        clientActionIdRef.current = `counter_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        clientActionIdRef.current = uuidv4();
       }
+
+      const primaryPaymentMethod = payments.length > 0 
+        ? payments.reduce((prev, current) => (prev.amount > current.amount) ? prev : current).paymentMethodId 
+        : 'dinheiro';
+
+      const finalAmountReceivedReais = (cashPaymentsCents > 0 && isPaid)
+        ? deliveredCashCents / 100
+        : 0;
 
       const result = await counterOrderService.createCounterOrder({
         restaurantId,
-        operatorId: user.uid,
-        operatorName: profile?.nome || profile?.nome_fantasia || 'Operador Balcão',
-        clientName: clientName.trim(),
+        operatorId: profile?.uid || user?.uid || '',
+        operatorName: profile?.nome || profile?.displayName || user?.displayName || 'Operador',
+        clientName,
         serviceMode,
         items: cart,
-        paymentMethod,
+        
+        forma_pagamento: primaryPaymentMethod,
+        payments: payments.map(p => ({ ...p, status: isPaid ? 'PAID' : 'PENDING' })),
         pago: isPaid,
-        amountReceived: paymentMethod === 'dinheiro' && isPaid ? amountPaidParsed.numberValue : 0,
+        amountReceived: finalAmountReceivedReais,
         clientActionId: clientActionIdRef.current
       });
 
@@ -412,7 +354,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
       // Reset cart and inputs
       setCart([]);
       setClientName('');
-      setAmountPaidDigits('');
+      setDeliveredCashCents(0);
       setMobileTab('catalog');
     } catch (err: any) {
       console.error("Error completing checkout on Counter:", err);
@@ -628,29 +570,19 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
             </div>
 
             {/* Client Identification Input */}
-            <div>
-              <label className="text-xs font-bold text-stone-600 block mb-1">
-                Nome do Cliente {serviceMode === 'PICKUP' && <span className="text-red-500">*</span>}
-              </label>
-              <input
-                type="text"
-                placeholder={serviceMode === 'PICKUP' ? 'Nome do cliente para chamada' : 'Nome do cliente (opcional)'}
+            <FormField 
+              label={`Nome do Cliente ${serviceMode === 'PICKUP' ? '*' : '(opcional)'}`}
+              error={clientNameError || undefined}
+            >
+              <TextInput
+                placeholder={serviceMode === 'PICKUP' ? 'Nome do cliente para chamada' : 'Nome do cliente'}
                 value={clientName}
                 onChange={(e) => {
                   setClientName(e.target.value);
                   if (clientNameError) setClientNameError(null);
                 }}
-                className={`w-full px-3 py-2 bg-stone-50 border rounded-xl text-xs focus:outline-none focus:ring-2 ${
-                  clientNameError ? 'border-red-500 focus:ring-red-500' : 'border-stone-200 focus:ring-emerald-500'
-                }`}
               />
-              {clientNameError && (
-                <p className="text-[11px] font-bold text-red-600 mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  <span>{clientNameError}</span>
-                </p>
-              )}
-            </div>
+            </FormField>
 
             {/* Cart Items List */}
             <div className="max-h-60 overflow-y-auto space-y-2.5 pr-1 divide-y divide-stone-100">
@@ -718,101 +650,53 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
               </div>
             </div>
 
-            {/* Payment Method Selector */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-stone-600 block">Forma de Pagamento</label>
-              {availablePaymentMethods.length === 0 ? (
-                <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl border border-red-200">
-                  Não existem formas de pagamento configuradas para este atendimento.
+            
+            <PaymentsComposer 
+              totalOrderCents={cartTotalCents}
+              payments={payments}
+              setPayments={setPayments}
+              configuredMethods={activeRestaurantProfile?.formas_pagamento || activeRestaurantProfile?.payment_methods}
+              serviceMode={serviceMode}
+              isPaid={isPaid}
+              setIsPaid={setIsPaid}
+            />
+            {/* Cash Change Input */}
+            {cashPaymentsCents > 0 && isPaid && (
+              <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-amber-900">Valor entregue em dinheiro</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Ex: R$ 10,00"
+                    value={deliveredCashCents > 0 ? (deliveredCashCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00'}
+                    onChange={(e) => {
+                      const rawDigits = e.target.value.replace(/\D/g, '');
+                      const cents = rawDigits ? parseInt(rawDigits, 10) : 0;
+                      setDeliveredCashCents(cents);
+                    }}
+                    className="w-32 text-right px-2 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
                 </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  {availablePaymentMethods.map(m => {
-                    const Icon = m.icon;
-                    const isSelected = paymentMethod === m.id;
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => setPaymentMethod(m.id)}
-                        className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-bold transition-all ${
-                          isSelected 
-                            ? 'border-emerald-600 bg-emerald-50 text-emerald-800 shadow-sm' 
-                            : 'border-stone-200 bg-white text-stone-600 hover:bg-stone-50'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4 flex-shrink-0" />
-                        <span className="truncate">{m.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
 
-            {/* Payment Status & Cash Details */}
-            <div className="space-y-2 pt-2 border-t border-stone-100">
-              <div className="flex items-center justify-between text-xs font-bold text-stone-600">
-                <span>Status do Pagamento</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsPaid(true)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
-                      isPaid ? 'bg-emerald-600 text-white' : 'bg-stone-100 text-stone-500'
-                    }`}
-                  >
-                    Pago Agora
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsPaid(false)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
-                      !isPaid ? 'bg-amber-600 text-white' : 'bg-stone-100 text-stone-500'
-                    }`}
-                  >
-                    Pagar na Entrega
-                  </button>
-                </div>
-              </div>
+                {isCashAmountInsufficient && (
+                  <p className="text-[11px] font-bold text-red-600">
+                    O valor entregue em dinheiro é menor que a parcela em dinheiro.
+                  </p>
+                )}
 
-              {/* Cash Change Input */}
-              {paymentMethod === 'dinheiro' && isPaid && (
-                <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-amber-900">Valor Entregue (R$)</label>
-                    <input
-                      type="text"
-                      placeholder="0,00"
-                      value={amountPaidParsed.formatted}
-                      onChange={(e) => {
-                        const digitsOnly = e.target.value.replace(/\D/g, '');
-                        setAmountPaidDigits(digitsOnly);
-                      }}
-                      className="w-28 text-right px-2 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    />
+                {changeDueCents > 0 && (
+                  <div className="flex justify-between items-center text-xs font-extrabold text-emerald-800 pt-1 border-t border-amber-200/80">
+                    <span>Troco a devolver:</span>
+                    <span>{(changeDueCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
                   </div>
-
-                  {isCashAmountInsufficient && (
-                    <p className="text-[11px] font-bold text-red-600">
-                      O valor recebido em dinheiro é menor que o total do pedido.
-                    </p>
-                  )}
-
-                  {changeDue > 0 && (
-                    <div className="flex justify-between items-center text-xs font-extrabold text-emerald-800 pt-1 border-t border-amber-200/80">
-                      <span>Troco a devolver:</span>
-                      <span>{formatCurrency(changeDue)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
+                )}
+              </div>
+            )}
             {/* Confirm Order Button */}
             <button
               onClick={handleCheckout}
-              disabled={cart.length === 0 || saveLoading || isCashAmountInsufficient || availablePaymentMethods.length === 0 || !paymentMethod}
+              disabled={cart.length === 0 || saveLoading || isCashAmountInsufficient || availablePaymentMethods.length === 0 || payments.reduce((a,b)=>a+b.amount,0)!==cartTotalCents}
               className="w-full flex items-center justify-center gap-2 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm rounded-xl shadow-lg shadow-emerald-100 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saveLoading ? (
@@ -829,160 +713,150 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
       </div>
 
       {/* Product Customization Modal */}
-      {customizingProduct && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white w-full sm:max-w-lg max-h-[90vh] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
-            {/* Modal Header */}
-            <div className="p-4 border-b border-stone-200 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-stone-800 text-base">{customizingProduct.nome}</h3>
-                <p className="text-xs text-stone-500">Personalize o produto conforme o pedido do cliente</p>
+      <FormModal
+        isOpen={!!customizingProduct}
+        onClose={() => setCustomizingProduct(null)}
+        title={customizingProduct?.nome || ''}
+        subtitle="Personalize o produto conforme o pedido do cliente"
+        icon={Utensils}
+        iconBgColor="bg-emerald-50"
+        iconTextColor="text-emerald-600"
+        footer={
+          <div className="flex items-center justify-end gap-2 w-full">
+            <button
+              onClick={() => setCustomizingProduct(null)}
+              className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-stone-200 rounded-xl transition-all"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleAddToCart}
+              disabled={!isCustomizationValid}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all disabled:opacity-50"
+            >
+              Adicionar ao Pedido
+            </button>
+          </div>
+        }
+      >
+        {customizingProduct && (
+          <div className="space-y-4 text-left">
+            {/* Sizes */}
+            {getProductSizes(customizingProduct).length > 0 && (
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-stone-700 block">Escolha o Tamanho</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {getProductSizes(customizingProduct).map((sz: any, idx: number) => {
+                    const sizeId = sz.id || `size_${idx}`;
+                    const normalizedSz = { ...sz, id: sizeId };
+                    const isSelected = selectedSize?.id === sizeId;
+                    const szPriceCents = resolveCounterUnitPriceCents(customizingProduct, normalizedSz);
+                    return (
+                      <button
+                        key={sizeId}
+                        onClick={() => setSelectedSize(normalizedSz)}
+                        className={`flex items-center justify-between p-3 rounded-xl border text-xs font-bold transition-all ${
+                          isSelected 
+                            ? 'border-emerald-600 bg-emerald-50 text-emerald-800' 
+                            : 'border-stone-200 text-stone-600 hover:bg-stone-50'
+                        }`}
+                      >
+                        <span>{sz.nome}</span>
+                        <span>{formatCurrency(szPriceCents / 100)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <button
-                onClick={() => setCustomizingProduct(null)}
-                className="p-1 text-stone-400 hover:text-stone-700 rounded-full hover:bg-stone-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            )}
 
-            {/* Modal Body */}
-            <div className="p-4 overflow-y-auto space-y-4 flex-1">
-              {/* Sizes */}
-              {customizingProduct.sizes && customizingProduct.sizes.length > 0 && (
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-stone-700 block">Escolha o Tamanho</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {customizingProduct.sizes.map((sz: any, idx: number) => {
-                      const sizeId = sz.id || `size_${idx}`;
-                      const normalizedSz = { ...sz, id: sizeId };
-                      const isSelected = selectedSize?.id === sizeId;
+            {/* Option Groups */}
+            {customizingProduct.optionGroups?.map((group: any) => {
+              const selections = selectedOptions[group.groupId] || [];
+              const isSingle = group.max === 1;
+
+              return (
+                <div key={group.groupId} className="space-y-2 pt-2 border-t border-stone-100">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-stone-800">{group.nome}</label>
+                    <span className="text-[10px] font-semibold text-stone-500">
+                      {group.obrigatorio ? 'Obrigatório' : 'Opcional'} • Max: {group.max || 1}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {group.options?.map((opt: OptionItem) => {
+                      const isSelected = selections.some(s => s.id === opt.id);
                       return (
                         <button
-                          key={idx}
-                          onClick={() => setSelectedSize(normalizedSz)}
-                          className={`flex items-center justify-between p-3 rounded-xl border text-xs font-bold transition-all ${
-                            isSelected 
-                              ? 'border-emerald-600 bg-emerald-50 text-emerald-800' 
-                              : 'border-stone-200 text-stone-600 hover:bg-stone-50'
+                          key={opt.id}
+                          type="button"
+                          onClick={() => handleOptionToggle(group, opt, isSingle)}
+                          className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all ${
+                            isSelected
+                              ? 'border-emerald-600 bg-emerald-50 text-emerald-900 font-bold'
+                              : 'border-stone-200 text-stone-700 hover:bg-stone-50'
                           }`}
                         >
-                          <span>{sz.nome}</span>
-                          <span>{formatCurrency(Number(sz.preco || 0))}</span>
+                          <span>{opt.nome}</span>
+                          <span className="font-semibold text-stone-600">
+                            {Number(opt.preco || 0) > 0 ? `+ ${formatCurrency(Number(opt.preco))}` : 'Grátis'}
+                          </span>
                         </button>
                       );
                     })}
                   </div>
                 </div>
-              )}
+              );
+            })}
 
-              {/* Option Groups */}
-              {customizingProduct.optionGroups?.map((group: any) => {
-                const selections = selectedOptions[group.groupId] || [];
-                const isSingle = group.max === 1;
-
-                return (
-                  <div key={group.groupId} className="space-y-2 pt-2 border-t border-stone-100">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-stone-800">{group.nome}</label>
-                      <span className="text-[10px] font-semibold text-stone-500">
-                        {group.obrigatorio ? 'Obrigatório' : 'Opcional'} • Max: {group.max || 1}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      {group.options?.map((opt: OptionItem) => {
-                        const isSelected = selections.some(s => s.id === opt.id);
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => handleOptionToggle(group, opt, isSingle)}
-                            className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all ${
-                              isSelected
-                                ? 'border-emerald-600 bg-emerald-50 text-emerald-900 font-bold'
-                                : 'border-stone-200 text-stone-700 hover:bg-stone-50'
-                            }`}
-                          >
-                            <span>{opt.nome}</span>
-                            <span className="font-semibold text-stone-600">
-                              {Number(opt.preco || 0) > 0 ? `+ ${formatCurrency(Number(opt.preco))}` : 'Grátis'}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Observation */}
-              <div className="pt-2 border-t border-stone-100 space-y-1">
-                <label className="text-xs font-bold text-stone-700 block">Observações do Item</label>
-                <textarea
-                  rows={2}
-                  placeholder="Ex: sem cebola, ponto da carne..."
-                  value={customizationObs}
-                  onChange={(e) => setCustomizationObs(e.target.value)}
-                  className="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-stone-200 bg-stone-50 flex items-center justify-end gap-2">
-              <button
-                onClick={() => setCustomizingProduct(null)}
-                className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:bg-stone-200 rounded-xl transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleAddToCart}
-                disabled={!isCustomizationValid}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all disabled:opacity-50"
-              >
-                Adicionar ao Pedido
-              </button>
+            {/* Observation */}
+            <div className="pt-2 border-t border-stone-100 space-y-1">
+              <label className="text-xs font-bold text-stone-700 block">Observações do Item</label>
+              <textarea
+                rows={2}
+                placeholder="Ex: sem cebola, ponto da carne..."
+                value={customizationObs}
+                onChange={(e) => setCustomizationObs(e.target.value)}
+                className="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </FormModal>
 
       {/* Success Modal with Thermal Receipt Button */}
-      {showSuccessModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white max-w-sm w-full rounded-3xl p-6 text-center shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-              <Check className="w-8 h-8" />
-            </div>
+      <FormModal
+        isOpen={showSuccessModal}
+        onClose={() => setShowSuccessModal(false)}
+        title="Pedido Realizado com Sucesso!"
+        subtitle="O pedido do balcão foi gerado e registrado no sistema."
+        icon={Check}
+        iconBgColor="bg-emerald-100"
+        iconTextColor="text-emerald-600"
+        footer={
+          <div className="flex flex-col gap-2 w-full">
+            <button
+              onClick={handlePrintReceipt}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-stone-900 hover:bg-black text-white font-bold text-xs rounded-xl shadow-md transition-all"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Imprimir Comprovante Térmico</span>
+            </button>
 
-            <div>
-              <h3 className="text-lg font-extrabold text-stone-800">Pedido Realizado com Sucesso!</h3>
-              <p className="text-xs text-stone-500 mt-1">
-                O pedido do balcão foi gerado e registrado no sistema.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={handlePrintReceipt}
-                className="w-full flex items-center justify-center gap-2 py-3 bg-stone-900 hover:bg-black text-white font-bold text-xs rounded-xl shadow-md transition-all"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Imprimir Comprovante Térmico</span>
-              </button>
-
-              <button
-                onClick={() => setShowSuccessModal(false)}
-                className="w-full py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition-all"
-              >
-                Fechar e Novo Pedido
-              </button>
-            </div>
+            <button
+              onClick={() => setShowSuccessModal(false)}
+              className="w-full py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition-all"
+            >
+              Fechar e Novo Pedido
+            </button>
           </div>
+        }
+      >
+        <div className="py-2 text-center text-stone-500 text-xs">
+          O pedido foi devidamente integrado ao painel e a impressão está pronta para ser emitida.
         </div>
-      )}
+      </FormModal>
     </div>
   );
 }

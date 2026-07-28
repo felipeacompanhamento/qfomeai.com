@@ -4,6 +4,7 @@ import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { restaurantService, invalidateRestaurantCache } from '../../services/restaurantService';
 import { Plus, Edit2, Trash2, X, Save, Loader2, AlertCircle } from 'lucide-react';
+import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
 
 export default function RestaurantSizes({ adminRestaurantId }: { adminRestaurantId?: string }) {
   const { profile, user } = useAuth();
@@ -184,74 +185,105 @@ export default function RestaurantSizes({ adminRestaurantId }: { adminRestaurant
       )}
 
       {/* Modal de Edição/Criação */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">{editingSize ? 'Editar Tamanho' : 'Novo Tamanho'}</h2>
-            <form onSubmit={handleSave}>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Nome</label>
-                  <input 
-                    type="text" 
-                    value={formData.nome} 
-                    onChange={e => setFormData({...formData, nome: e.target.value})}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-xl"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Ordem</label>
-                  <input 
-                    type="number" 
-                    value={formData.ordem} 
-                    onChange={e => setFormData({...formData, ordem: parseInt(e.target.value)})}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-xl"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Status</label>
-                  <select 
-                    value={formData.status} 
-                    onChange={e => setFormData({...formData, status: e.target.value})}
-                    className="w-full px-4 py-2 border border-stone-200 rounded-xl"
-                  >
-                    <option value="ativo">Ativo</option>
-                    <option value="inativo">Inativo</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-stone-600 font-bold">Cancelar</button>
-                <button type="submit" disabled={saveLoading} className="px-6 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 font-bold flex items-center gap-2">
-                  {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />} Salvar
-                </button>
-              </div>
-            </form>
+      <FormModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={editingSize ? 'Editar Tamanho' : 'Novo Tamanho'}
+        subtitle="Defina o nome e ordem de exibição do tamanho"
+        maxWidth="md"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(false)}
+              className="flex-1 px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="size-form"
+              disabled={saveLoading}
+              className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Salvar
+            </button>
           </div>
-        </div>
-      )}
+        }
+      >
+        <form id="size-form" onSubmit={handleSave} className="space-y-4">
+          <FormField label="Nome" required>
+            <TextInput
+              type="text"
+              required
+              value={formData.nome}
+              onChange={e => setFormData({ ...formData, nome: e.target.value })}
+              placeholder="Ex: Broto, Média, Grande"
+            />
+          </FormField>
+
+          <FormField label="Ordem" required>
+            <TextInput
+              type="number"
+              required
+              value={formData.ordem}
+              onChange={e => setFormData({ ...formData, ordem: parseInt(e.target.value) })}
+            />
+          </FormField>
+
+          <FormField label="Status">
+            <SelectInput
+              value={formData.status}
+              onChange={e => setFormData({ ...formData, status: e.target.value })}
+            >
+              <option value="ativo">Ativo</option>
+              <option value="inativo">Inativo</option>
+            </SelectInput>
+          </FormField>
+        </form>
+      </FormModal>
 
       {/* Modal de Confirmação de Exclusão */}
-      {isDeleteModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm text-center">
-            <h2 className="text-xl font-bold mb-4">Excluir Tamanho</h2>
-            <p className="text-stone-600 mb-6">Tem certeza que deseja excluir o tamanho "{sizeToDelete?.nome}"?</p>
-            <div className="flex justify-center gap-3">
-              <button onClick={() => setIsDeleteModalOpen(false)} className="px-4 py-2 text-stone-600 font-bold">Cancelar</button>
-              <button 
-                onClick={handleDelete} 
-                disabled={saveLoading}
-                className="px-6 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 font-bold flex items-center gap-2"
-              >
-                {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />} Excluir
-              </button>
-            </div>
+      <FormModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setSizeToDelete(null);
+        }}
+        title="Excluir Tamanho"
+        subtitle="Confirme a exclusão do tamanho de produto"
+        icon={Trash2}
+        iconBgColor="bg-red-50"
+        iconTextColor="text-red-500"
+        maxWidth="sm"
+        footer={
+          <div className="flex w-full gap-3">
+            <button
+              onClick={() => {
+                setIsDeleteModalOpen(false);
+                setSizeToDelete(null);
+              }}
+              className="flex-1 px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-2xl transition-all text-sm"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={saveLoading}
+              className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+            >
+              {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
+            </button>
           </div>
+        }
+      >
+        <div className="text-center py-2">
+          <p className="text-stone-500 text-sm">
+            Tem certeza que deseja excluir o tamanho <strong>{sizeToDelete?.nome}</strong>?
+            Esta ação não pode ser desfeita.
+          </p>
         </div>
-      )}
+      </FormModal>
     </div>
   );
 }
