@@ -268,7 +268,7 @@ async function startServer() {
   app.set('trust proxy', 1);
   logger.info(`[STARTUP] Starting server`);
   logger.info(`[STARTUP] Environment: ${process.env.NODE_ENV || 'development'}`);
-  const port = 3000;
+  const port = Number(process.env.PORT) || 3000;
   logger.info(`[STARTUP] Port: ${port}`);
 
   // Validation of environment variables & secrets without logging actual secret values
