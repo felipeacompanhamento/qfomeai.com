@@ -100,14 +100,19 @@ export function OpenTabModal({
     setError(null);
 
     const openedBy = user?.uid || profile?.uid || profile?.name || 'Sistema';
+    const selectedWaiter = waiters.find(w => w.id === waiterId.trim());
+    const resolvedWaiterName = lockedWaiterName || selectedWaiter?.name || profile?.nome || profile?.name || user?.displayName || undefined;
 
     try {
       const result = await tabRepository.openTabForTable({
         restaurantId,
         tableId: table.id,
+        tableName: table.name || undefined,
+        tableNumber: table.number !== undefined ? table.number : undefined,
         peopleCount: Number(peopleCount),
         openedBy,
         waiterId: waiterId.trim() ? waiterId.trim() : undefined,
+        waiterName: resolvedWaiterName,
         customerName: customerName.trim() ? customerName.trim() : undefined,
         observation: observation.trim() ? observation.trim() : undefined
       });

@@ -3,8 +3,11 @@ import { Tab, TabStatus, ServiceOrigin } from '../../types/mesas';
 export type CreateTabInput = {
   restaurantId: string;
   tableId?: string;
+  tableName?: string;
+  tableNumber?: number | string;
   hallId?: string;
   waiterId?: string;
+  waiterName?: string;
   customerName?: string;
   observation?: string;
   peopleCount: number;
@@ -100,11 +103,20 @@ export function createTabData(input: CreateTabInput): Omit<Tab, 'id'> {
   if (input.tableId) {
     data.tableId = input.tableId.trim();
   }
+  if (input.tableName) {
+    data.tableName = input.tableName.trim();
+  }
+  if (input.tableNumber !== undefined && input.tableNumber !== null) {
+    data.tableNumber = input.tableNumber;
+  }
   if (input.hallId) {
     data.hallId = input.hallId.trim();
   }
   if (input.waiterId) {
     data.waiterId = input.waiterId.trim();
+  }
+  if (input.waiterName) {
+    data.waiterName = input.waiterName.trim();
   }
   if (input.customerName) {
     data.customerName = input.customerName.trim();

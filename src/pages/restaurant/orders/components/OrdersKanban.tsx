@@ -72,7 +72,7 @@ export const OrdersKanban: React.FC<OrdersKanbanProps> = ({
   });
 
   return (
-    <div className="w-full max-w-full min-w-0 flex-1 grid grid-cols-4 gap-2 lg:gap-3 p-2 sm:p-3 h-full overflow-hidden">
+    <div className="w-full max-w-full min-w-0 flex-1 grid grid-cols-4 gap-2 lg:gap-3 p-2 sm:p-3 h-full max-h-full min-h-0 overflow-hidden">
       {KANBAN_COLUMNS.map((config) => (
         <OrdersKanbanColumn
           key={config.id}

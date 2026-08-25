@@ -43,7 +43,7 @@ export const OrdersKanbanColumn: React.FC<OrdersKanbanColumnProps> = ({
   };
 
   return (
-    <div className="flex flex-col bg-stone-100/80 rounded-2xl border border-stone-200/80 overflow-hidden h-full w-full min-w-0 max-w-full">
+    <div className="flex flex-col bg-stone-100/80 rounded-2xl border border-stone-200/80 overflow-hidden h-full max-h-full w-full min-w-0 min-h-0 max-w-full">
       {/* Column Top Header Accent Bar */}
       <div className={`h-1.5 w-full shrink-0 ${config.accentColor}`} />
 
@@ -65,7 +65,7 @@ export const OrdersKanbanColumn: React.FC<OrdersKanbanColumnProps> = ({
       </div>
 
       {/* Scrollable Card Container */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-2.5 custom-scrollbar">
+      <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-2.5 custom-scrollbar">
         {orders.length === 0 ? (
           <div className="h-40 flex flex-col items-center justify-center text-center p-4 rounded-xl border border-dashed border-stone-200 bg-white/50">
             <span className="text-xs font-semibold text-stone-400">

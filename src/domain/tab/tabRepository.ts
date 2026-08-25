@@ -68,8 +68,15 @@ export function normalizeTab(id: string, data: any): Tab {
     id,
     restaurantId: data.restaurantId || data.restaurante_id || data.restaurant_id || '',
     tableId: data.tableId || data.mesaId || '',
+    tableName: data.tableName || data.mesaNome || data.table_name || '',
+    tableNumber: (data.tableNumber !== undefined && data.tableNumber !== null)
+      ? data.tableNumber
+      : ((data.table_number !== undefined && data.table_number !== null)
+        ? data.table_number
+        : ((data.mesaNumero !== undefined && data.mesaNumero !== null) ? data.mesaNumero : undefined)),
     hallId: data.hallId || data.salaoId || '',
     waiterId: data.waiterId || data.garcomId || '',
+    waiterName: data.waiterName || data.garcomNome || data.waiter_name || '',
     customerName: data.customerName || data.nomeCliente || '',
     observation: data.observation || data.observacao || '',
     peopleCount: typeof data.peopleCount === 'number' ? data.peopleCount : (data.numeroPessoas || 1),
@@ -284,9 +291,12 @@ export function subscribeActiveTabs(
 export type OpenTabForTableParams = {
   restaurantId: string;
   tableId: string;
+  tableName?: string;
+  tableNumber?: number | string;
   peopleCount: number;
   openedBy: string;
   waiterId?: string;
+  waiterName?: string;
   customerName?: string;
   observation?: string;
 };
@@ -328,8 +338,11 @@ export async function openTabForTable(params: OpenTabForTableParams): Promise<{ 
     },
     body: JSON.stringify({
       tableId,
+      tableName: params.tableName,
+      tableNumber: params.tableNumber,
       peopleCount,
       waiterId,
+      waiterName: params.waiterName,
       customerName,
       observation
     })

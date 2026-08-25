@@ -683,11 +683,30 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
         const tabRef = db.collection('tabs').doc();
         const assignedWaiter = waiterId && typeof waiterId === 'string' && waiterId.trim() ? waiterId.trim() : uid;
 
+        const resolvedTableName = tableData.name || tableData.nome || (tableData.number !== undefined && tableData.number !== null ? `Mesa ${tableData.number}` : (tableData.numero !== undefined && tableData.numero !== null ? `Mesa ${tableData.numero}` : (body.tableName || '')));
+        const resolvedTableNumber = (tableData.number !== undefined && tableData.number !== null)
+          ? tableData.number
+          : ((tableData.numero !== undefined && tableData.numero !== null)
+            ? tableData.numero
+            : (body.tableNumber !== undefined && body.tableNumber !== null ? body.tableNumber : null));
+
+        let resolvedWaiterName = (body.waiterName && typeof body.waiterName === 'string' && body.waiterName.trim())
+          ? body.waiterName.trim()
+          : (req.user?.nome || req.user?.name || req.user?.displayName || null);
+
+        if (!resolvedWaiterName && staffProfileSnap.exists) {
+          const sData = staffProfileSnap.data();
+          resolvedWaiterName = sData?.nome || sData?.name || sData?.displayName || null;
+        }
+
         const newTabData = {
           restaurantId,
           tableId: cleanTableId,
+          tableName: resolvedTableName || null,
+          tableNumber: resolvedTableNumber,
           hallId: tableData.hallId || null,
           waiterId: assignedWaiter,
+          waiterName: resolvedWaiterName || null,
           customerName: customerName ? String(customerName).trim() : '',
           observation: observation ? String(observation).trim() : '',
           peopleCount: Math.floor(count),
@@ -1347,17 +1366,30 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
             const roundNumber = existingOrdersInTab.size + 1;
             const waiterResponsible = req.user.nome || req.user.name || req.user.displayName || currentTabData?.waiterName || null;
 
+            const resolvedTableId = tableId || currentTabData?.tableId || (tableRef ? tableRef.id : null) || null;
+            const resolvedTableName = tableData?.name || tableData?.nome || (tableNumOrName ? String(tableNumOrName) : null);
+            const resolvedTableNumber = (tableData?.number !== undefined && tableData?.number !== null)
+              ? tableData.number
+              : ((tableData?.numero !== undefined && tableData?.numero !== null)
+                ? tableData.numero
+                : (typeof tableNumOrName === 'number' ? tableNumOrName : (tableNumOrName ? String(tableNumOrName) : null)));
+            const resolvedTabId = tabId || currentTabData?.id || null;
+            const resolvedWaiterId = req.user?.uid || currentTabData?.waiterId || null;
+            const resolvedRoundId = clientActionId || orderId;
+
             const orderData = {
               id: orderId,
               restaurantId: tokenRestaurantId,
-              tableId: tableId || currentTabData?.tableId || null,
-              tabId: tabId || null,
-              comandaId: tabId || currentTabData?.id || null,
-              comanda_id: tabId || null,
-              waiterId: req.user.uid || currentTabData?.waiterId || null,
+              tableId: resolvedTableId,
+              tableName: resolvedTableName,
+              tableNumber: resolvedTableNumber,
+              tabId: resolvedTabId,
+              comandaId: resolvedTabId,
+              comanda_id: resolvedTabId,
+              waiterId: resolvedWaiterId,
               waiterName: waiterResponsible,
               garcom_nome: waiterResponsible,
-              roundId: clientActionId || orderId,
+              roundId: resolvedRoundId,
               roundNumber: roundNumber,
               numero_rodada: roundNumber,
               origem: 'GARCOM',
@@ -1376,7 +1408,7 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
               subtotalInCents: totalRoundCents,
               totalInCents: totalRoundCents,
               pago: false,
-              financialSettlementStatus: 'PENDING',
+              financialSettlementStatus: 'NOT_REQUIRED',
               clientActionId,
               sentBy: {
                 uid: req.user.uid,

@@ -516,8 +516,10 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
     };
   }).filter(group => group.items.length > 0);
 
+  const isFixedOperationalRoute = location.pathname.includes('/orders') || location.pathname.includes('/operacao') || location.pathname.includes('/cozinha');
+
   return (
-    <div className="flex min-h-screen bg-stone-100 overflow-x-hidden">
+    <div className={`flex bg-stone-100 overflow-x-hidden ${isFixedOperationalRoute ? 'h-screen max-h-screen overflow-hidden' : 'min-h-screen'}`}>
       {user && !user.emailVerified ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-screen text-center p-8 bg-stone-50">
           <div className="bg-white p-12 rounded-[2rem] border border-stone-200 shadow-xl max-w-lg w-full">
@@ -691,7 +693,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
           </aside>
 
           {/* Main Content */}
-          <main className="flex-1 flex flex-col min-w-0 max-w-full overflow-x-hidden">
+          <main className={`flex-1 flex flex-col min-w-0 max-w-full overflow-x-hidden ${isFixedOperationalRoute ? 'h-full max-h-full min-h-0 overflow-hidden' : ''}`}>
             <EmailVerificationBanner />
             
             {/* Banner de Faturas */}
@@ -702,7 +704,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
                 
                 if (overdue) {
                   return (
-                    <div className="mx-4 mt-4 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-red-800">
+                    <div className="mx-4 mt-4 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-3 text-red-800 shrink-0">
                       <AlertTriangle className="w-6 h-6 shrink-0" />
                       <p className="text-sm font-bold">
                         Atenção: Você possui faturas vencidas! O não pagamento poderá resultar no cancelamento do recebimento de pedidos. Por favor, regularize sua situação.
@@ -712,7 +714,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
                 }
                 
                 return (
-                  <div className="mx-4 mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-amber-800">
+                  <div className="mx-4 mt-4 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-amber-800 shrink-0">
                     <DollarSign className="w-6 h-6 shrink-0" />
                     <p className="text-sm font-bold">
                       Lembrete: Você possui faturas pendentes. Por favor, verifique e realize o pagamento para evitar interrupções.
@@ -722,7 +724,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
               })()
             )}
 
-            <header className="bg-white border-b border-stone-200 p-3.5 sticky top-0 z-50 lg:hidden flex items-center justify-between">
+            <header className="bg-white border-b border-stone-200 p-3.5 sticky top-0 z-50 lg:hidden flex items-center justify-between shrink-0">
               <button 
                 type="button"
                 onClick={() => setIsMobileMenuOpen(true)} 
@@ -737,7 +739,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
               </Link>
             </header>
 
-            <div className={location.pathname.includes('/orders') || location.pathname.includes('/operacao') ? "p-1 sm:p-2.5 flex-1 flex flex-col min-h-0 min-w-0 max-w-full overflow-hidden" : "p-3 sm:p-4 lg:p-8"}>
+            <div className={isFixedOperationalRoute ? "p-1 sm:p-2.5 flex-1 flex flex-col min-h-0 min-w-0 max-w-full h-full overflow-hidden" : "p-3 sm:p-4 lg:p-8"}>
               {children}
             </div>
           </main>

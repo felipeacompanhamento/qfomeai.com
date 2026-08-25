@@ -170,6 +170,8 @@ export interface Tab {
   id: string;
   restaurantId: string;
   tableId?: string;
+  tableName?: string;
+  tableNumber?: number | string;
   hallId?: string;
   waiterId?: string;
   waiterName?: string;

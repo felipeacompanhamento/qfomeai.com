@@ -93,9 +93,9 @@ export const ModuleHub: React.FC<ModuleHubProps> = ({ hub, restaurantProfile, ta
   const isCurrentTabAllowed = currentTabConfig ? isTabAllowed(currentTabConfig) : false;
 
   return (
-    <div className="space-y-3 sm:space-y-4 w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-full">
+    <div className="space-y-2 sm:space-y-3 w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-full h-full overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2 px-1 sm:px-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2 px-1 sm:px-0 shrink-0">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-stone-800 tracking-tight">{hub.title}</h2>
           <p className="text-stone-500 text-xs sm:text-sm">{hub.description}</p>
@@ -128,7 +128,7 @@ export const ModuleHub: React.FC<ModuleHubProps> = ({ hub, restaurantProfile, ta
       </div>
 
       {/* Active Tab Content */}
-      <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-full overflow-hidden">
+      <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-full h-full overflow-hidden">
         {isCurrentTabAllowed ? (
           tabComponents[activeTabId] || (
             <div className="p-8 sm:p-12 bg-white rounded-3xl border border-stone-200 text-center text-stone-400">

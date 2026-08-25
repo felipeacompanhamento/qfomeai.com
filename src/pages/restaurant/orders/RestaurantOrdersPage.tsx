@@ -365,7 +365,7 @@ export function RestaurantOrdersPage({
   }, [filteredOrders, activeMobileTab]);
 
   return (
-    <div className="flex-1 h-full w-full max-w-full min-w-0 flex flex-col bg-stone-100 overflow-hidden select-none font-sans">
+    <div className="flex-1 h-full max-h-full w-full max-w-full min-w-0 min-h-0 flex flex-col bg-stone-100 overflow-hidden select-none font-sans">
       {/* Top Header */}
       <OrdersHeader
         restaurantName={restaurantProfile?.nome || profile?.nome}
@@ -395,9 +395,9 @@ export function RestaurantOrdersPage({
       />
 
       {/* Main Operational Area */}
-      <div className="flex-1 overflow-hidden relative flex flex-col p-1.5 sm:p-3">
+      <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col p-1.5 sm:p-3">
         {/* Desktop Kanban View */}
-        <div className="hidden md:block h-full w-full overflow-hidden">
+        <div className="hidden md:flex flex-col h-full max-h-full w-full overflow-hidden min-h-0 flex-1">
           {viewMode === 'kanban' ? (
             <OrdersKanban
               orders={filteredOrders}
@@ -410,7 +410,7 @@ export function RestaurantOrdersPage({
             />
           ) : (
             /* Desktop List View Fallback */
-            <div className="p-3 sm:p-4 h-full overflow-y-auto space-y-2.5 custom-scrollbar">
+            <div className="p-3 sm:p-4 h-full max-h-full overflow-y-auto space-y-2.5 custom-scrollbar min-h-0 flex-1">
               {filteredOrders.length === 0 ? (
                 <EmptyState
                   title="Nenhum pedido operacional encontrado"
@@ -436,7 +436,7 @@ export function RestaurantOrdersPage({
         </div>
 
         {/* Mobile View: Vertical list for active tab */}
-        <div className="md:hidden flex-1 overflow-y-auto p-2 sm:p-3 space-y-2.5 custom-scrollbar">
+        <div className="md:hidden flex-1 min-h-0 overflow-y-auto p-2 sm:p-3 space-y-2.5 custom-scrollbar">
           {mobileTabOrders.length === 0 ? (
             <EmptyState
               title={`Nenhum pedido na etapa "${activeMobileTab.toUpperCase()}"`}
