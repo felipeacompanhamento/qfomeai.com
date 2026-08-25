@@ -672,6 +672,10 @@ function generateTotemReceiptHtml(order: any, restaurant?: any, profile?: any): 
 export function generateThermalReceiptHtml(order: any, restaurant?: any, profile?: any): string {
   if (!order) return '';
 
+  if (order.type === 'PRE_CONTA' || order.isPreConta || order.isPreBill) {
+    return generatePreContaReceiptHtml(order, restaurant, profile);
+  }
+
   // Automatically resolve the order origin model (GARCOM, DELIVERY, BALCAO, TOTEM)
   const modelType: OrderOrigem = normalizeOrderOrigem(order);
   const paperSize = restaurant?.defaultPaperSize || restaurant?.paperSize || '80mm';
@@ -728,6 +732,349 @@ export function generateThermalReceiptHtml(order: any, restaurant?: any, profile
     </body>
     </html>
   `;
+}
+
+// Helper: Formats items grouped by rounds for Pre-Conta
+function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubtotalCents: number } {
+  let roundsHtml = '';
+  let totalSubtotalCents = 0;
+
+  let groups: Array<{
+    roundNumber: number;
+    sentAt?: string;
+    items: any[];
+  }> = [];
+
+  if (Array.isArray(data.roundGroups) && data.roundGroups.length > 0) {
+    groups = data.roundGroups.map((rg: any) => ({
+      roundNumber: rg.roundNumber || 1,
+      sentAt: rg.sentAt ? new Date(rg.sentAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : undefined,
+      items: Array.isArray(rg.items) ? rg.items : []
+    }));
+  } else if (Array.isArray(data.orders) && data.orders.length > 0) {
+    groups = data.orders.map((ord: any, idx: number) => ({
+      roundNumber: ord.roundNumber || ord.numero_rodada || (idx + 1),
+      sentAt: (ord.createdAt || ord.data_criacao) ? new Date(ord.createdAt || ord.data_criacao).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : undefined,
+      items: Array.isArray(ord.itens) ? ord.itens : (Array.isArray(ord.items) ? ord.items : [])
+    }));
+  } else {
+    const tabItems = Array.isArray(data.tab?.items) ? data.tab.items : (Array.isArray(data.items) ? data.items : []);
+    if (tabItems.length > 0) {
+      const groupMap = new Map<string, any[]>();
+      tabItems.forEach((item: any) => {
+        const key = item.orderId || item.sentAt || 'default_round';
+        if (!groupMap.has(key)) groupMap.set(key, []);
+        groupMap.get(key)!.push(item);
+      });
+
+      let rIndex = 1;
+      groupMap.forEach((itemsInGroup, _key) => {
+        groups.push({
+          roundNumber: rIndex++,
+          items: itemsInGroup
+        });
+      });
+    }
+  }
+
+  if (groups.length === 0) {
+    return {
+      roundsHtml: '<div class="item-block text-center mt-2" style="font-style: italic;">Nenhum item consumido</div>',
+      totalSubtotalCents: 0
+    };
+  }
+
+  groups.forEach((group) => {
+    roundsHtml += `
+      <div class="divider-solid"></div>
+      <div class="font-bold mb-1" style="font-size: 10.5pt;">RODADA ${group.roundNumber}${group.sentAt ? ` (${group.sentAt})` : ''}:</div>
+    `;
+
+    group.items.forEach((item: any) => {
+      const statusStr = String(item.status || '').toLowerCase();
+      const isCancelled = ['cancelled', 'cancelado', 'canceled', 'removed', 'removido'].includes(statusStr);
+
+      const qty = Number(item.quantity || item.quantidade || 1);
+      const productName = escapeHtml(item.productName || item.produtoNome || item.nome || item.name || 'Item');
+
+      let unitCents = 0;
+      if (typeof item.unitPriceCents === 'number') {
+        unitCents = item.unitPriceCents;
+      } else if (typeof item.precoUnitario === 'number') {
+        unitCents = Math.round(item.precoUnitario * 100);
+      } else if (typeof item.price === 'number') {
+        unitCents = Math.round(item.price * 100);
+      } else if (typeof item.preco === 'number') {
+        unitCents = Math.round(item.preco * 100);
+      }
+
+      let totalCents = 0;
+      if (typeof item.totalPriceCents === 'number') {
+        totalCents = item.totalPriceCents;
+      } else if (typeof item.total === 'number') {
+        totalCents = Math.round(item.total * 100);
+      } else if (typeof item.valorTotal === 'number') {
+        totalCents = Math.round(item.valorTotal * 100);
+      } else {
+        totalCents = unitCents * qty;
+      }
+
+      if (!isCancelled) {
+        totalSubtotalCents += totalCents;
+      }
+
+      const unitFormatted = (unitCents / 100).toFixed(2);
+      const totalFormatted = (totalCents / 100).toFixed(2);
+
+      let sizeStr = '';
+      if (item.size) {
+        sizeStr = escapeHtml(item.size);
+      } else if (item.tamanho) {
+        sizeStr = escapeHtml(item.tamanho);
+      } else if (item.pedidosAdicionais?.size?.nome) {
+        sizeStr = escapeHtml(item.pedidosAdicionais.size.nome);
+      } else if (item.opcao_escolhida || item.variation) {
+        sizeStr = escapeHtml(item.opcao_escolhida || item.variation);
+      }
+
+      const optionsList: Array<{ name: string; priceFormatted?: string }> = [];
+      const rawOptions = item.options || item.adicionais || item.extras || [];
+      if (Array.isArray(rawOptions)) {
+        rawOptions.forEach((opt: any) => {
+          const name = opt.optionName || opt.itemNome || opt.nome || opt.name;
+          const pCents = opt.priceCents ?? (opt.precoCents ?? (opt.preco ? Math.round(opt.preco * 100) : 0));
+          if (name) {
+            optionsList.push({
+              name: escapeHtml(name),
+              priceFormatted: pCents > 0 ? (pCents / 100).toFixed(2) : undefined
+            });
+          }
+        });
+      }
+
+      const obs = escapeHtml(item.observation || item.observacao || item.observacoes || item.notes || '');
+
+      roundsHtml += `
+        <div class="item-block" style="${isCancelled ? 'opacity: 0.65;' : ''}">
+          <div class="item-title flex">
+            <span class="font-bold ${isCancelled ? 'line-through' : ''}">${qty}x ${productName} ${isCancelled ? '<b>[CANCELADO]</b>' : ''}</span>
+            <span class="item-price ${isCancelled ? 'line-through' : ''}">R$ ${totalFormatted}</span>
+          </div>
+          <div class="item-sub-info">• Valor unitário: R$ ${unitFormatted}</div>
+          ${sizeStr ? `<div class="item-sub-info">• Tamanho/Variação: ${sizeStr}</div>` : ''}
+          ${optionsList.map(o => `<div class="item-extra flex"><span>+ ${o.name}</span>${o.priceFormatted ? `<span>R$ ${o.priceFormatted}</span>` : ''}</div>`).join('')}
+          ${obs ? `<div class="item-obs">Obs: ${obs}</div>` : ''}
+        </div>
+      `;
+    });
+  });
+
+  return { roundsHtml, totalSubtotalCents };
+}
+
+// ============================================================================
+// MODELO PRÉ-CONTA (Mesa / Comanda - Consolidação para Conferência)
+// ============================================================================
+export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile?: any): string {
+  if (!data) return '';
+
+  const tab = data.tab || data;
+  const table = data.table || tab.table;
+  const rest = restaurant || data.restaurant;
+  const paperSize = rest?.defaultPaperSize || rest?.paperSize || '80mm';
+
+  const restName = escapeHtml(rest?.nome_fantasia || rest?.nome || profile?.nome || '');
+
+  // Header Details
+  const tableName = escapeHtml(
+    table?.name ||
+    table?.nome ||
+    tab?.tableName ||
+    (tab?.tableNumber !== undefined && tab?.tableNumber !== null ? `Mesa ${tab.tableNumber}` : '') ||
+    (table?.number !== undefined && table?.number !== null ? `Mesa ${table.number}` : '') ||
+    'Mesa'
+  );
+
+  const rawTab = tab?.id || tab?.comandaId || tab?.number || data?.tabId || '';
+  const tabDisplay = rawTab ? escapeHtml(String(rawTab).startsWith('#') ? rawTab : `#${String(rawTab).slice(-6).toUpperCase()}`) : 'Comanda';
+
+  const waiterName = escapeHtml(
+    data?.waiterName ||
+    tab?.waiterName ||
+    (Array.isArray(data?.orders) && data.orders[0]?.waiterName) ||
+    tab?.openedBy ||
+    profile?.nome ||
+    'Garçom'
+  );
+
+  const peopleCount = Number(tab?.peopleCount || tab?.quantidade_pessoas || table?.peopleCount || 1);
+
+  const openedAtRaw = tab?.openedAt || tab?.createdAt || tab?.data_abertura;
+  const openedAtDate = openedAtRaw ? new Date(openedAtRaw) : new Date();
+  const openedAtStr = openedAtDate.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  const printDateStr = new Date().toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+
+  // Body: Grouped by rounds
+  const { roundsHtml, totalSubtotalCents } = formatPreContaItemsByRound(data);
+
+  // Summary
+  const subtotalCents = totalSubtotalCents;
+  const discountCents = tab?.discountInCents ?? Math.round(Number(tab?.discount || tab?.valor_desconto || tab?.desconto || 0) * 100);
+  const serviceFeeCents = tab?.serviceFeeInCents ?? Math.round(Number(tab?.taxaServico || tab?.taxa_servico || 0) * 100);
+  const totalCents = Math.max(0, subtotalCents - discountCents + serviceFeeCents);
+  const paidCents = tab?.paidInCents ?? Math.round(Number(tab?.paidAmount || tab?.valor_pago || tab?.paid || 0) * 100);
+  const balanceDueCents = Math.max(0, totalCents - paidCents);
+
+  const bodyContent = `
+    ${restName ? `<div class="text-center font-bold mb-1" style="font-size: 11pt;">${restName}</div>` : ''}
+
+    <!-- Top Title Header -->
+    <div class="text-center font-bold" style="font-size: 14pt; border-bottom: 2px solid #000; padding-bottom: 4px; margin-bottom: 6px; letter-spacing: 0.5px; text-transform: uppercase;">
+      PRÉ-CONTA
+    </div>
+
+    <!-- Header Info Block -->
+    <div class="info-row" style="font-size: 11.5pt; font-weight: bold;"><b>Mesa:</b> ${tableName}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Comanda:</b> ${tabDisplay}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Garçom:</b> ${waiterName}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Quantidade de pessoas:</b> ${peopleCount}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Data/hora de abertura:</b> ${openedAtStr}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Data/hora da impressão:</b> ${printDateStr}</div>
+
+    <!-- Items Grouped by Round -->
+    ${roundsHtml}
+
+    <!-- Summary / Resumo -->
+    <div class="divider-solid"></div>
+    <div class="font-bold mb-1 text-center" style="font-size: 11pt; text-transform: uppercase;">RESUMO DA COMANDA</div>
+    <div class="flex"><span>Subtotal:</span><span>R$ ${(subtotalCents / 100).toFixed(2)}</span></div>
+    ${discountCents > 0 ? `<div class="flex"><span>Desconto:</span><span>- R$ ${(discountCents / 100).toFixed(2)}</span></div>` : ''}
+    ${serviceFeeCents > 0 ? `<div class="flex"><span>Taxa de Serviço:</span><span>R$ ${(serviceFeeCents / 100).toFixed(2)}</span></div>` : ''}
+    <div class="flex font-bold" style="font-size: 11pt; margin-top: 4px; border-top: 1px dashed #000; padding-top: 4px;">
+      <span>TOTAL DA COMANDA:</span><span>R$ ${(totalCents / 100).toFixed(2)}</span>
+    </div>
+    ${paidCents > 0 ? `<div class="flex" style="margin-top: 2px;"><span>Valor Já Pago:</span><span>R$ ${(paidCents / 100).toFixed(2)}</span></div>` : ''}
+    <div class="flex font-bold" style="font-size: 12pt; margin-top: 4px; border-top: 1px solid #000; padding-top: 4px;">
+      <span>SALDO A PAGAR:</span><span>R$ ${(balanceDueCents / 100).toFixed(2)}</span>
+    </div>
+
+    <!-- Footer -->
+    <div class="divider-solid"></div>
+    <div class="text-center font-bold" style="font-size: 10pt; margin-top: 8px; text-transform: uppercase;">
+      PRÉ-CONTA — NÃO É DOCUMENTO FISCAL
+    </div>
+  `;
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Pré-Conta ${tabDisplay} - ${tableName}</title>
+      <style>
+        ${getThermalStyles(paperSize)}
+      </style>
+    </head>
+    <body>
+      <div class="receipt">
+        ${bodyContent}
+        <!-- Cutter Spacer (12mm) -->
+        <div style="height: 12mm;"></div>
+      </div>
+
+      <script>
+        window.onload = () => {
+          window.focus();
+          window.print();
+          setTimeout(() => {
+            try {
+              window.close();
+            } catch (e) {}
+          }, 800);
+        };
+      </script>
+    </body>
+    </html>
+  `;
+}
+
+// Global print handler for Pre-Conta
+export function printThermalPreConta(data: any, restaurant?: any, profile?: any) {
+  if (!data) return;
+
+  const htmlContent = generatePreContaReceiptHtml(data, restaurant, profile);
+
+  let printWindow: Window | null = null;
+  try {
+    printWindow = window.open('', '_blank', 'width=420,height=700');
+  } catch (e) {
+    console.warn('Popup blocked, attempting iframe fallback approach.', e);
+  }
+
+  if (printWindow) {
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  } else {
+    const iframeId = 'qfomeai-thermal-print-iframe';
+    let iframe = document.getElementById(iframeId) as HTMLIFrameElement;
+    
+    if (iframe) {
+      document.body.removeChild(iframe);
+    }
+    
+    iframe = document.createElement('iframe') as HTMLIFrameElement;
+    iframe.id = iframeId;
+    iframe.style.position = 'absolute';
+    iframe.style.width = '0px';
+    iframe.style.height = '0px';
+    iframe.style.border = 'none';
+    iframe.style.left = '-9999px';
+    iframe.style.top = '-9999px';
+    
+    document.body.appendChild(iframe);
+    
+    const doc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (doc) {
+      doc.open();
+      doc.write(htmlContent);
+      doc.close();
+      
+      iframe.onload = () => {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+            setTimeout(() => {
+              if (document.getElementById(iframeId)) {
+                document.body.removeChild(iframe);
+              }
+            }, 5000);
+          } catch (err) {
+            console.error('Error printing through hidden iframe:', err);
+            if (document.getElementById(iframeId)) {
+              document.body.removeChild(iframe);
+            }
+          }
+        }, 500);
+      };
+    } else {
+      console.error('Could not construct printable document context inside hidden iframe');
+    }
+  }
 }
 
 // Global print handler used by all buttons in the system

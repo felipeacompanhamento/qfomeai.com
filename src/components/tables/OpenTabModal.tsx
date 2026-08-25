@@ -100,8 +100,16 @@ export function OpenTabModal({
     setError(null);
 
     const openedBy = user?.uid || profile?.uid || profile?.name || 'Sistema';
-    const selectedWaiter = waiters.find(w => w.id === waiterId.trim());
-    const resolvedWaiterName = lockedWaiterName || selectedWaiter?.name || profile?.nome || profile?.name || user?.displayName || undefined;
+    const cleanWaiterId = waiterId.trim();
+    const selectedWaiter = waiters.find(w => w.id === cleanWaiterId);
+    let resolvedWaiterName: string | undefined;
+    if (selectedWaiter?.name) {
+      resolvedWaiterName = selectedWaiter.name;
+    } else if (lockedWaiterName && (lockedWaiterId === cleanWaiterId || !cleanWaiterId)) {
+      resolvedWaiterName = lockedWaiterName;
+    } else {
+      resolvedWaiterName = profile?.nome || profile?.name || user?.displayName || undefined;
+    }
 
     try {
       const result = await tabRepository.openTabForTable({
@@ -111,7 +119,7 @@ export function OpenTabModal({
         tableNumber: table.number !== undefined ? table.number : undefined,
         peopleCount: Number(peopleCount),
         openedBy,
-        waiterId: waiterId.trim() ? waiterId.trim() : undefined,
+        waiterId: cleanWaiterId ? cleanWaiterId : undefined,
         waiterName: resolvedWaiterName,
         customerName: customerName.trim() ? customerName.trim() : undefined,
         observation: observation.trim() ? observation.trim() : undefined

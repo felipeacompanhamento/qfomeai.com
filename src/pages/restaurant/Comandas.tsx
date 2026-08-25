@@ -677,7 +677,7 @@ export default function RestaurantComandas() {
           table={detailsTable}
           tab={detailsTab}
           hallName={detailsTable?.hallId ? hallsMap.get(detailsTable.hallId)?.name : undefined}
-          waiterName={detailsTab?.waiterId ? (waitersMap.get(detailsTab.waiterId)?.name || (waitersMap.get(detailsTab.waiterId) as any)?.nome) : undefined}
+          waiterName={detailsTab?.waiterName || (detailsTab?.waiterId ? (waitersMap.get(detailsTab.waiterId)?.name || (waitersMap.get(detailsTab.waiterId) as any)?.nome) : undefined)}
           onClose={() => {
             setIsDetailsOpen(false);
             setDetailsTab(null);

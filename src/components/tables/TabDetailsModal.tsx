@@ -6,6 +6,7 @@ import { Table, Tab, TabItem } from '../../types/mesas';
 import { tabRoundService } from '../../services/tabRoundService';
 import { tabRepository } from '../../domain/tab/tabRepository';
 import { useAuth } from '../../contexts/AuthContext';
+import { printThermalPreConta } from '../orders/OrderThermalPrint';
 import { 
   X, 
   UtensilsCrossed, 
@@ -838,7 +839,16 @@ export function TabDetailsModal({
   };
 
   const handlePrintPreview = () => {
-    window.print();
+    const currentTab = liveTab || tab;
+    if (!currentTab) return;
+
+    printThermalPreConta({
+      tab: currentTab,
+      table,
+      roundGroups,
+      orders,
+      waiterName: displayWaiterName
+    }, profile);
   };
 
   const handleManualRefresh = async () => {

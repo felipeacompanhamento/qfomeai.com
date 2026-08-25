@@ -8,6 +8,8 @@ export interface SendTabRoundInput {
   origin?: 'TABLE' | 'WAITER';
   items: TabDraftItem[];
   clientActionId: string;
+  waiterId?: string | null;
+  waiterName?: string | null;
 }
 
 export interface SendTabRoundResult {
@@ -64,7 +66,7 @@ export interface RefuseItemCancellationInput {
 
 export const tabRoundService = {
   async sendRound(input: SendTabRoundInput): Promise<SendTabRoundResult> {
-    const { restaurantId, tableId, tabId, origin = 'TABLE', items, clientActionId } = input;
+    const { restaurantId, tableId, tabId, origin = 'TABLE', items, clientActionId, waiterId, waiterName } = input;
 
     if (!restaurantId) {
       throw new Error('Restaurante não identificado.');
@@ -108,7 +110,9 @@ export const tabRoundService = {
           tabId: tabId || null,
           origin,
           items,
-          clientActionId
+          clientActionId,
+          waiterId: waiterId || null,
+          waiterName: waiterName || null
         }),
         signal: controller.signal
       });

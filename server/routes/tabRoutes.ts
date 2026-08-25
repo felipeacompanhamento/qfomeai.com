@@ -692,11 +692,44 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
 
         let resolvedWaiterName = (body.waiterName && typeof body.waiterName === 'string' && body.waiterName.trim())
           ? body.waiterName.trim()
-          : (req.user?.nome || req.user?.name || req.user?.displayName || null);
+          : null;
 
-        if (!resolvedWaiterName && staffProfileSnap.exists) {
-          const sData = staffProfileSnap.data();
-          resolvedWaiterName = sData?.nome || sData?.name || sData?.displayName || null;
+        if (!resolvedWaiterName) {
+          if (assignedWaiter === uid) {
+            resolvedWaiterName = req.user?.nome || req.user?.name || req.user?.displayName || null;
+            if (!resolvedWaiterName && staffProfileSnap.exists) {
+              const sData = staffProfileSnap.data();
+              resolvedWaiterName = sData?.nome || sData?.name || sData?.displayName || null;
+            }
+          } else {
+            try {
+              const assignedStaffSnap = await db.collection('restaurants').doc(restaurantId).collection('staffProfiles').doc(assignedWaiter).get();
+              if (assignedStaffSnap.exists) {
+                const sData = assignedStaffSnap.data();
+                resolvedWaiterName = sData?.nome || sData?.name || sData?.displayName || null;
+              }
+              if (!resolvedWaiterName) {
+                const assignedUserSnap = await db.collection('users').doc(assignedWaiter).get();
+                if (assignedUserSnap.exists) {
+                  const uData = assignedUserSnap.data();
+                  resolvedWaiterName = uData?.nome || uData?.name || uData?.displayName || null;
+                }
+              }
+              if (!resolvedWaiterName) {
+                const legacyWaiterSnap = await db.collection('restaurants').doc(restaurantId).collection('waiters').doc(assignedWaiter).get();
+                if (legacyWaiterSnap.exists) {
+                  const wData = legacyWaiterSnap.data();
+                  resolvedWaiterName = wData?.nome || wData?.name || null;
+                }
+              }
+            } catch (e) {
+              // Ignore lookup errors
+            }
+          }
+        }
+
+        if (!resolvedWaiterName) {
+          resolvedWaiterName = req.user?.nome || req.user?.name || req.user?.displayName || null;
         }
 
         const newTabData = {
@@ -769,7 +802,9 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
       tabId,
       origin,
       items,
-      restaurantId
+      restaurantId,
+      waiterId: bodyWaiterId,
+      waiterName: bodyWaiterName
     } = body;
 
     try {
@@ -851,6 +886,8 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
         });
       }
 
+      let cachedStaffWaiterName: string | null = null;
+
       // Validação granular específica de staffProfile para garçons
       if (['WAITER', 'GARCOM'].includes(roleUpper)) {
         const staffProfileSnap = await db.collection('restaurants').doc(tokenRestaurantId).collection('staffProfiles').doc(req.user.uid).get();
@@ -867,6 +904,7 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
         }
 
         const staffData = staffProfileSnap.data() || {};
+        cachedStaffWaiterName = staffData.nome || staffData.name || staffData.displayName || null;
         const opStatus = (staffData.operationalStatus || staffData.status || '').toUpperCase();
         const isStaffActive = staffData.active !== false && opStatus !== 'INACTIVE' && opStatus !== 'BLOCKED' && opStatus !== 'DESATIVADO';
 
@@ -1364,7 +1402,10 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
                 .filter(Boolean)
             );
             const roundNumber = existingOrdersInTab.size + 1;
-            const waiterResponsible = req.user.nome || req.user.name || req.user.displayName || currentTabData?.waiterName || null;
+            const resolvedWaiterId = bodyWaiterId || req.user?.uid || currentTabData?.waiterId || null;
+            const waiterResponsible = (bodyWaiterName && typeof bodyWaiterName === 'string' && bodyWaiterName.trim())
+              ? bodyWaiterName.trim()
+              : (req.user?.nome || req.user?.name || req.user?.displayName || cachedStaffWaiterName || currentTabData?.waiterName || null);
 
             const resolvedTableId = tableId || currentTabData?.tableId || (tableRef ? tableRef.id : null) || null;
             const resolvedTableName = tableData?.name || tableData?.nome || (tableNumOrName ? String(tableNumOrName) : null);
@@ -1374,7 +1415,6 @@ export function createTabRouter(authAdmin: Auth, db: Firestore): Router {
                 ? tableData.numero
                 : (typeof tableNumOrName === 'number' ? tableNumOrName : (tableNumOrName ? String(tableNumOrName) : null)));
             const resolvedTabId = tabId || currentTabData?.id || null;
-            const resolvedWaiterId = req.user?.uid || currentTabData?.waiterId || null;
             const resolvedRoundId = clientActionId || orderId;
 
             const orderData = {
