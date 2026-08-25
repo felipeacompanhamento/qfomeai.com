@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { ChevronLeft, TrendingUp, Clock, ShieldCheck, ArrowRight, Star, Users, CheckCircle, HelpCircle } from 'lucide-react';
+import { ChevronLeft, TrendingUp, Clock, ShieldCheck, ArrowRight, Star, Users, CheckCircle, HelpCircle, LogIn } from 'lucide-react';
 import { collection, collectionGroup, query, where, getCountFromServer, getDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -35,19 +35,42 @@ export default function PartnerPage() {
       {/* Hero */}
       <header className="bg-emerald-600 text-white py-12 md:py-20 px-4">
         <div className="max-w-4xl mx-auto text-center">
-          <button onClick={() => navigate('/')} className="mb-8 flex items-center gap-2 text-emerald-100 hover:text-white transition-all">
-            <ChevronLeft className="w-5 h-5" />
-            Voltar para o app
-          </button>
+          <div className="mb-8 flex items-center justify-between">
+            <button 
+              onClick={() => navigate('/')} 
+              className="flex items-center gap-2 text-emerald-100 hover:text-white transition-all text-sm font-semibold cursor-pointer"
+            >
+              <ChevronLeft className="w-5 h-5" />
+              <span>Voltar para o app</span>
+            </button>
+            <Link 
+              to="/login" 
+              className="inline-flex items-center gap-2 bg-emerald-700/80 hover:bg-emerald-800 text-white px-4 py-2 rounded-xl text-sm font-bold border border-emerald-400/40 shadow-sm transition-all active:scale-95"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Já sou parceiro (Entrar)</span>
+            </Link>
+          </div>
+
           <h1 className="text-3xl md:text-5xl font-extrabold mb-6 tracking-tight leading-tight">Transforme sua cozinha em uma máquina de vendas. Entregue mais, lucre mais.</h1>
           <p className="text-lg md:text-xl text-emerald-100 mb-10">Alcance milhares de clientes famintos na sua região, gerencie tudo de forma simples e aumente seu faturamento sem taxas abusivas.</p>
-          <Link 
-            to="/register-restaurant" 
-            className="inline-flex items-center gap-3 bg-white text-emerald-600 px-6 py-4 md:px-10 md:py-5 rounded-2xl font-bold text-lg md:text-xl shadow-2xl hover:bg-emerald-50 transition-all active:scale-95"
-          >
-            Quero cadastrar meu restaurante agora
-            <ArrowRight className="w-6 h-6" />
-          </Link>
+          
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link 
+              to="/register-restaurant" 
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-white text-emerald-600 px-6 py-4 md:px-10 md:py-5 rounded-2xl font-bold text-lg md:text-xl shadow-2xl hover:bg-emerald-50 transition-all active:scale-95"
+            >
+              <span>Quero cadastrar meu restaurante agora</span>
+              <ArrowRight className="w-6 h-6" />
+            </Link>
+            <Link 
+              to="/login" 
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white px-6 py-4 md:px-8 md:py-5 rounded-2xl font-bold text-base md:text-lg border border-emerald-400/30 transition-all active:scale-95"
+            >
+              <LogIn className="w-5 h-5" />
+              <span>Acessar minha conta</span>
+            </Link>
+          </div>
           <p className="mt-4 text-emerald-100 text-sm">Cadastro rápido e sem burocracia. Leva menos de 5 minutos.</p>
           
           <div className="mt-12 flex justify-center gap-4 md:gap-8 text-emerald-50">
@@ -64,11 +87,20 @@ export default function PartnerPage() {
       </header>
 
       {/* Navigation Menu */}
-      <nav className="sticky top-0 bg-white border-b border-stone-200 z-50 py-4 px-4 shadow-sm overflow-x-auto whitespace-nowrap scrollbar-hide">
-        <div className="max-w-4xl mx-auto flex justify-center md:justify-center gap-4 md:gap-6 text-sm font-bold text-stone-600">
-          <button onClick={() => document.getElementById('planos')?.scrollIntoView({ behavior: 'smooth' })} className="hover:text-emerald-600 transition-colors shrink-0">Planos</button>
-          <button onClick={() => document.getElementById('como-funciona')?.scrollIntoView({ behavior: 'smooth' })} className="hover:text-emerald-600 transition-colors shrink-0">Como funciona</button>
-          <button onClick={() => document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' })} className="hover:text-emerald-600 transition-colors shrink-0">Perguntas frequentes</button>
+      <nav className="sticky top-0 bg-white border-b border-stone-200 z-50 py-3.5 px-4 shadow-sm">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 md:gap-6 text-sm font-bold text-stone-600 overflow-x-auto whitespace-nowrap scrollbar-hide">
+            <button onClick={() => document.getElementById('planos')?.scrollIntoView({ behavior: 'smooth' })} className="hover:text-emerald-600 transition-colors shrink-0 cursor-pointer">Planos</button>
+            <button onClick={() => document.getElementById('como-funciona')?.scrollIntoView({ behavior: 'smooth' })} className="hover:text-emerald-600 transition-colors shrink-0 cursor-pointer">Como funciona</button>
+            <button onClick={() => document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' })} className="hover:text-emerald-600 transition-colors shrink-0 cursor-pointer">Perguntas frequentes</button>
+          </div>
+          <Link
+            to="/login"
+            className="shrink-0 inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs md:text-sm font-bold px-3.5 py-2 rounded-xl shadow-sm transition-all active:scale-95"
+          >
+            <LogIn className="w-4 h-4" />
+            <span>Fazer Login</span>
+          </Link>
         </div>
       </nav>
 
@@ -181,13 +213,22 @@ export default function PartnerPage() {
       {/* CTA Final */}
       <section className="py-16 md:py-24 px-4 text-center bg-stone-900 text-white">
         <h2 className="text-3xl md:text-4xl font-bold mb-8">Não perca mais nenhum pedido.</h2>
-        <Link 
-          to="/register-restaurant" 
-          className="inline-flex items-center gap-3 bg-emerald-600 text-white px-8 py-4 md:px-10 md:py-5 rounded-2xl font-bold text-lg md:text-xl shadow-xl hover:bg-emerald-700 transition-all active:scale-95"
-        >
-          Quero cadastrar meu restaurante agora
-        </Link>
-        <p className="mt-4 text-stone-400">Sem taxa de adesão. Cancele quando quiser.</p>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-xl mx-auto">
+          <Link 
+            to="/register-restaurant" 
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-emerald-600 text-white px-8 py-4 md:px-10 md:py-5 rounded-2xl font-bold text-lg md:text-xl shadow-xl hover:bg-emerald-700 transition-all active:scale-95"
+          >
+            <span>Quero cadastrar meu restaurante agora</span>
+          </Link>
+          <Link 
+            to="/login" 
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-stone-800 hover:bg-stone-700 text-stone-200 px-6 py-4 md:px-8 md:py-5 rounded-2xl font-bold text-base md:text-lg border border-stone-700 transition-all active:scale-95"
+          >
+            <LogIn className="w-5 h-5" />
+            <span>Fazer Login</span>
+          </Link>
+        </div>
+        <p className="mt-4 text-stone-400 text-sm">Sem taxa de adesão. Cancele quando quiser.</p>
       </section>
     </div>
   );
