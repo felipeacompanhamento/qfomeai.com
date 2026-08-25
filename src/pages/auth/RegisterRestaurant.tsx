@@ -7,6 +7,7 @@ import { UserPlus, Mail, Lock, User, Phone, Store, FileText, Eye, EyeOff, Buildi
 import ConsentCheckbox from '../../components/ConsentCheckbox';
 import { useAuth } from '../../contexts/AuthContext';
 import { authApi } from '../../services/authApi';
+import { staticDataCacheService } from '../../services/staticDataCacheService';
 
 export default function RegisterRestaurant() {
   const { user: authUser, refreshProfile, refreshUser } = useAuth();
@@ -51,9 +52,8 @@ export default function RegisterRestaurant() {
   useEffect(() => {
     const fetchEstados = async () => {
       try {
-        const q = query(collection(db, 'estados'), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setEstados(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getStates();
+        setEstados(list);
       } catch (error) {
         console.error("Error fetching estados:", error);
       }
@@ -68,9 +68,8 @@ export default function RegisterRestaurant() {
     }
     const fetchCidades = async () => {
       try {
-        const q = query(collection(db, 'cidades'), where('estado_id', '==', selectedEstadoId), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setCidades(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getCidades(selectedEstadoId);
+        setCidades(list);
       } catch (error) {
         console.error("Error fetching cidades:", error);
       }
@@ -85,9 +84,8 @@ export default function RegisterRestaurant() {
     }
     const fetchBairros = async () => {
       try {
-        const q = query(collection(db, 'bairros'), where('cidade_id', '==', selectedCidadeId), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setBairros(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getNeighborhoods(selectedCidadeId);
+        setBairros(list);
       } catch (error) {
         console.error("Error fetching bairros:", error);
       }
@@ -229,15 +227,24 @@ export default function RegisterRestaurant() {
           await setDoc(doc(db, 'users', user.uid), {
             uid: user.uid,
             nome: nomeProprietario,
+            name: nomeProprietario,
             email: email,
             telefone: phone,
+            phone: phone,
             whatsapp: whatsapp || phone,
             instagram: instagram,
+            accountType: 'RESTAURANT',
+            role: 'OWNER',
+            status: 'ACTIVE',
+            permissions: [],
+            _migratedAt: new Date().toISOString(),
+            _migrationVersion: '1.0.0',
             tipo_usuario: 'restaurant',
             restaurantId: user.uid,
             status_conta: 'pendente_aprovacao',
             onboarding_completo: true,
             data_criacao: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
             lgpdAccepted: true,
             acceptedAt: serverTimestamp(),
             termsVersion: "1.0"
@@ -248,13 +255,17 @@ export default function RegisterRestaurant() {
             user = userCredential.user;
             
             const userDoc = await getDoc(doc(db, 'users', user.uid));
-            if (userDoc.exists() && userDoc.data().tipo_usuario === 'restaurant') {
+            if (userDoc.exists() && (userDoc.data().accountType === 'RESTAURANT' || userDoc.data().tipo_usuario === 'restaurant')) {
               setError('Este e-mail já está cadastrado como restaurante.');
               setLoading(false);
               return;
             }
 
             await setDoc(doc(db, 'users', user.uid), {
+              accountType: 'RESTAURANT',
+              role: 'OWNER',
+              status: 'ACTIVE',
+              _migratedAt: new Date().toISOString(),
               tipo_usuario: 'restaurant',
               restaurantId: user.uid,
               status_conta: 'pendente_aprovacao',
@@ -266,6 +277,10 @@ export default function RegisterRestaurant() {
         }
       } else {
         await setDoc(doc(db, 'users', user.uid), {
+          accountType: 'RESTAURANT',
+          role: 'OWNER',
+          status: 'ACTIVE',
+          _migratedAt: new Date().toISOString(),
           tipo_usuario: 'restaurant',
           restaurantId: user.uid,
           status_conta: 'pendente_aprovacao',

@@ -1,10 +1,4 @@
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs
-} from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { staticDataCacheService } from './staticDataCacheService';
 
 export interface Neighborhood {
   id?: string;
@@ -14,17 +8,12 @@ export interface Neighborhood {
 }
 
 export const neighborhoodService = {
-  async getAllNeighborhoods() {
-    try {
-      const q = query(
-        collection(db, 'bairros'),
-        where('ativo', '==', true)
-      );
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Neighborhood));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'bairros');
-      return [];
-    }
+  async getAllNeighborhoods(): Promise<Neighborhood[]> {
+    return staticDataCacheService.getNeighborhoods();
+  },
+
+  async getNeighborhoodsByCity(cidadeId: string): Promise<Neighborhood[]> {
+    return staticDataCacheService.getNeighborhoods(cidadeId);
   }
 };
+

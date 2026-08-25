@@ -13,7 +13,7 @@ import {
   limit
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage, handleFirestoreError, OperationType } from '../firebase';
+import { db, storage, handleFirestoreError, OperationType, auth } from '../firebase';
 import { invalidateRestaurantCache } from './restaurantService';
 import { ProductSalesChannels, ProductChannelPricing } from '../domain/product/productChannels';
 
@@ -47,6 +47,16 @@ export interface Product {
   created_at?: any;
   salesChannels?: ProductSalesChannels;
   channelPricing?: ProductChannelPricing;
+  controlarEstoque?: boolean;
+  estoqueAtual?: number;
+  estoqueMinimo?: number;
+  unidadeMedida?: string;
+  permitirVendaSemEstoque?: boolean;
+  estoque?: number;
+  stock?: number;
+  stockControl?: boolean;
+  disponivel?: boolean;
+  estoque_quantidade?: number;
 }
 
 export const productService = {
@@ -149,5 +159,42 @@ export const productService = {
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `restaurants/${restaurantId}/products/${productId}`);
     }
+  },
+
+  async movimentarEstoque(restaurantId: string, productId: string, data: { tipo: 'entrada' | 'saida' | 'ajuste'; quantidade: number; motivo: string; observacao?: string }) {
+    const token = await auth.currentUser?.getIdToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-restaurant-id': restaurantId
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`/api/restaurant/products/${productId}/stock-movement`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json.error || `Erro (${res.status}) ao movimentar estoque`);
+    }
+    return json;
+  },
+
+  async getStockMovements(restaurantId: string, productId: string) {
+    const token = await auth.currentUser?.getIdToken();
+    const headers: Record<string, string> = {
+      'x-restaurant-id': restaurantId
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`/api/restaurant/products/${productId}/stock-movements`, {
+      headers
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json.error || `Erro (${res.status}) ao carregar histórico`);
+    }
+    return json;
   }
 };

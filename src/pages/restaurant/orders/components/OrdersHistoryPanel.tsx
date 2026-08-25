@@ -1,9 +1,7 @@
 import React, { useEffect } from 'react';
-import { 
-  X, Search, Calendar, Filter, CheckCircle2, XCircle, DollarSign, 
-  ShoppingBag, ArrowRight, Loader2, RefreshCw 
-} from 'lucide-react';
-import { useOrdersHistory, HistoryFilterOptions } from '../hooks/useOrdersHistory';
+import { X, Calendar, Filter, Clock, ShoppingBag, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
+import { useOrdersHistory } from '../hooks/useOrdersHistory';
+import { SearchInput, Button, IconButton, Badge, EmptyState } from '../../../../components/ui';
 
 interface OrdersHistoryPanelProps {
   isOpen: boolean;
@@ -43,55 +41,52 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
         {/* Header */}
         <div className="bg-stone-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0">
           <div>
-            <h2 className="text-base sm:text-lg font-black tracking-tight flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-extrabold tracking-tight flex items-center gap-2">
+              <Clock className="w-5 h-5 text-emerald-400" />
               <span>Histórico de Pedidos</span>
             </h2>
-            <p className="text-xs text-stone-400">
+            <p className="text-xs text-stone-400 mt-0.5">
               Consulte pedidos concluídos, entregues e cancelados
             </p>
           </div>
-          <button
-            type="button"
+          <IconButton
+            variant="ghost"
+            aria-label="Fechar histórico"
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-stone-800 text-stone-400 hover:text-white transition-colors"
+            className="text-stone-400 hover:text-white hover:bg-stone-800"
           >
             <X className="w-5 h-5" />
-          </button>
+          </IconButton>
         </div>
 
         {/* Metrics Summary Row */}
-        <div className="bg-stone-50 border-b border-stone-200 p-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center shrink-0">
-          <div className="bg-white p-2.5 rounded-xl border border-stone-200">
-            <span className="text-[10px] font-bold text-stone-400 uppercase block">Total Pedidos</span>
-            <span className="text-base font-black text-stone-900">{historyMetrics.totalCount}</span>
+        <div className="bg-stone-50 border-b border-stone-200/80 p-3 sm:p-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center shrink-0">
+          <div className="bg-white p-3 rounded-2xl border border-stone-200/80 shadow-2xs">
+            <span className="text-xs font-semibold text-stone-500 block">Total Pedidos</span>
+            <span className="text-base font-black text-stone-900 mt-0.5 block">{historyMetrics.totalCount}</span>
           </div>
-          <div className="bg-white p-2.5 rounded-xl border border-stone-200">
-            <span className="text-[10px] font-bold text-stone-400 uppercase block">Faturamento</span>
-            <span className="text-base font-black text-emerald-700">R$ {historyMetrics.totalSales.toFixed(2)}</span>
+          <div className="bg-white p-3 rounded-2xl border border-stone-200/80 shadow-2xs">
+            <span className="text-xs font-semibold text-stone-500 block">Faturamento</span>
+            <span className="text-base font-black text-emerald-700 mt-0.5 block">R$ {historyMetrics.totalSales.toFixed(2)}</span>
           </div>
-          <div className="bg-white p-2.5 rounded-xl border border-stone-200">
-            <span className="text-[10px] font-bold text-stone-400 uppercase block">Entregues</span>
-            <span className="text-base font-black text-stone-900">{historyMetrics.deliveredCount}</span>
+          <div className="bg-white p-3 rounded-2xl border border-stone-200/80 shadow-2xs">
+            <span className="text-xs font-semibold text-stone-500 block">Entregues</span>
+            <span className="text-base font-black text-stone-900 mt-0.5 block">{historyMetrics.deliveredCount}</span>
           </div>
-          <div className="bg-white p-2.5 rounded-xl border border-stone-200">
-            <span className="text-[10px] font-bold text-stone-400 uppercase block">Cancelados</span>
-            <span className="text-base font-black text-red-600">{historyMetrics.cancelledCount}</span>
+          <div className="bg-white p-3 rounded-2xl border border-stone-200/80 shadow-2xs">
+            <span className="text-xs font-semibold text-stone-500 block">Cancelados</span>
+            <span className="text-base font-black text-rose-600 mt-0.5 block">{historyMetrics.cancelledCount}</span>
           </div>
         </div>
 
         {/* Filter Controls Bar */}
-        <div className="p-4 bg-white border-b border-stone-200 space-y-3 shrink-0">
+        <div className="p-4 bg-white border-b border-stone-200/80 space-y-3 shrink-0">
           {/* Search Input */}
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-            <input
-              type="text"
-              value={filters.searchTerm}
-              onChange={(e) => setFilters(prev => ({ ...prev, searchTerm: e.target.value }))}
-              placeholder="Buscar #código, cliente ou telefone..."
-              className="w-full pl-9 pr-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs font-medium text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
+          <SearchInput
+            value={filters.searchTerm}
+            onChange={(e) => setFilters(prev => ({ ...prev, searchTerm: e.target.value }))}
+            placeholder="Buscar #código, cliente ou telefone..."
+          />
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             {/* Period Selector */}
@@ -101,10 +96,10 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
                   key={p}
                   type="button"
                   onClick={() => setFilters(prev => ({ ...prev, period: p }))}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 ${
+                  className={`px-2.5 py-1 rounded-xl font-bold transition-all shrink-0 cursor-pointer border ${
                     filters.period === p
-                      ? 'bg-stone-900 text-white'
-                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                      ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
+                      : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
                   }`}
                 >
                   {p === 'today' ? 'Hoje' : p === 'yesterday' ? 'Ontem' : p === '7days' ? '7 dias' : p === '30days' ? '30 dias' : 'Todos'}
@@ -119,10 +114,10 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
                   key={s}
                   type="button"
                   onClick={() => setFilters(prev => ({ ...prev, status: s }))}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 ${
+                  className={`px-2.5 py-1 rounded-xl font-bold transition-all shrink-0 cursor-pointer border ${
                     filters.status === s
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                      : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
                   }`}
                 >
                   {s === 'ALL' ? 'Todos' : s === 'FINALIZED' ? 'Concluídos' : 'Cancelados'}
@@ -140,11 +135,11 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
               <span className="text-xs font-semibold">Carregando histórico...</span>
             </div>
           ) : historyOrders.length === 0 ? (
-            <div className="p-12 text-center text-stone-400 bg-white rounded-2xl border border-stone-200 space-y-2">
-              <ShoppingBag className="w-8 h-8 mx-auto text-stone-300" />
-              <p className="text-xs font-bold text-stone-700">Nenhum pedido encontrado no histórico</p>
-              <p className="text-[11px] text-stone-500">Tente alterar os filtros acima para expandir a busca.</p>
-            </div>
+            <EmptyState
+              title="Nenhum pedido no histórico"
+              description="Tente alterar os filtros acima para expandir a busca."
+              icon={ShoppingBag}
+            />
           ) : (
             <>
               {historyOrders.map((order) => {
@@ -163,21 +158,17 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
                       onSelectOrder(order);
                       onClose();
                     }}
-                    className="bg-white p-3.5 rounded-2xl border border-stone-200 hover:border-emerald-500 transition-all cursor-pointer shadow-2xs hover:shadow-xs flex items-center justify-between gap-3"
+                    className="bg-white p-3.5 rounded-2xl border border-stone-200/80 hover:border-emerald-500 transition-all cursor-pointer shadow-2xs hover:shadow-xs flex items-center justify-between gap-3"
                   >
                     <div className="min-w-0 space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-black text-stone-900">
                           #{orderCode}
                         </span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          isCancelled
-                            ? 'bg-red-50 text-red-700 border-red-200'
-                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        }`}>
+                        <Badge variant={isCancelled ? 'danger' : 'success'} size="sm">
                           {isCancelled ? 'Cancelado' : 'Concluído'}
-                        </span>
-                        <span className="text-[11px] text-stone-400">
+                        </Badge>
+                        <span className="text-xs text-stone-400">
                           {formattedDate}
                         </span>
                       </div>
@@ -185,7 +176,7 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
                       <p className="text-xs font-bold text-stone-800 truncate">
                         {customer}
                       </p>
-                      <p className="text-[11px] text-stone-500">
+                      <p className="text-xs text-stone-500">
                         {order.forma_pagamento || order.paymentMethod || 'Pagamento na entrega'} • R$ {total.toFixed(2)}
                       </p>
                     </div>
@@ -198,15 +189,16 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
               })}
 
               {hasMore && (
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="md"
                   onClick={loadMore}
-                  disabled={loading}
-                  className="w-full py-3 bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 text-xs font-bold rounded-2xl transition-all flex items-center justify-center gap-2"
+                  loading={loading}
+                  icon={<RefreshCw className="w-4 h-4 text-stone-500" />}
+                  className="w-full mt-2"
                 >
-                  {loading ? <Loader2 className="w-4 h-4 animate-spin text-emerald-600" /> : <RefreshCw className="w-4 h-4 text-stone-500" />}
-                  <span>Carregar mais histórico</span>
-                </button>
+                  Carregar mais histórico
+                </Button>
               )}
             </>
           )}
@@ -215,3 +207,4 @@ export const OrdersHistoryPanel: React.FC<OrdersHistoryPanelProps> = ({
     </div>
   );
 };
+

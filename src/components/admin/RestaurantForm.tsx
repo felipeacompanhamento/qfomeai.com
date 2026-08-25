@@ -5,37 +5,76 @@ import { db } from '../../firebase';
 import ImageUpload from '../ImageUpload';
 
 export default function RestaurantForm({ restaurant, categories, onSave, onCancel }: any) {
-  const [formData, setFormData] = useState(restaurant || {
-    nome: '',
-    slug: '',
-    descricao: '',
-    nome_proprietario: '',
-    cpf_cnpj: '',
-    email: '',
-    telefone: '',
-    whatsapp: '',
-    instagram: '',
-    password: '',
-    status_operacao_config: 'automatico',
-    aceita_entrega: true,
-    aceita_retirada: true,
-    tempo_min_entrega: 30,
-    tempo_max_entrega: 45,
-    tempo_max_aceite: 15,
-    valor_minimo_pedido: 0,
-    valor_minimo_frete_gratis: 0,
-    categorias: [],
-    endereco: { 
-      rua: '', 
-      numero: '', 
-      complemento: '',
-      bairro: '', 
-      cidade: '', 
-      estado: '', 
-      cep: '',
-      estado_id: '',
-      cidade_id: ''
-    }
+  const [formData, setFormData] = useState(() => {
+    const base = {
+      nome: '',
+      slug: '',
+      descricao: '',
+      nome_proprietario: '',
+      cpf_cnpj: '',
+      email: '',
+      telefone: '',
+      whatsapp: '',
+      instagram: '',
+      password: '',
+      status_operacao_config: 'automatico',
+      aceita_entrega: true,
+      aceita_retirada: true,
+      tempo_min_entrega: 30,
+      tempo_max_entrega: 45,
+      tempo_max_aceite: 15,
+      valor_minimo_pedido: 0,
+      valor_minimo_frete_gratis: 0,
+      categorias: [] as string[],
+      endereco: { 
+        rua: '', 
+        numero: '', 
+        complemento: '',
+        bairro: '', 
+        cidade: '', 
+        estado: '', 
+        cep: '',
+        estado_id: '',
+        cidade_id: ''
+      }
+    };
+    if (!restaurant) return base;
+    return {
+      ...base,
+      ...restaurant,
+      nome: restaurant.nome || restaurant.name || '',
+      slug: restaurant.slug || '',
+      descricao: restaurant.descricao || '',
+      nome_proprietario: restaurant.nome_proprietario || restaurant.owner_name || '',
+      cpf_cnpj: restaurant.cpf_cnpj || '',
+      email: restaurant.email || restaurant.owner_email || '',
+      telefone: restaurant.telefone || restaurant.owner_phone || '',
+      whatsapp: restaurant.whatsapp || '',
+      instagram: restaurant.instagram || '',
+      password: '',
+      status_operacao_config: restaurant.status_operacao_config || 'automatico',
+      aceita_entrega: restaurant.aceita_entrega ?? true,
+      aceita_retirada: restaurant.aceita_retirada ?? true,
+      tempo_min_entrega: restaurant.tempo_min_entrega ?? 30,
+      tempo_max_entrega: restaurant.tempo_max_entrega ?? 45,
+      tempo_max_aceite: restaurant.tempo_max_aceite ?? 15,
+      valor_minimo_pedido: restaurant.valor_minimo_pedido ?? 0,
+      valor_minimo_frete_gratis: restaurant.valor_minimo_frete_gratis ?? 0,
+      categorias: Array.isArray(restaurant.categorias) ? restaurant.categorias : [],
+      endereco: {
+        ...base.endereco,
+        ...(restaurant.endereco || {}),
+        rua: restaurant.endereco?.rua || '',
+        numero: restaurant.endereco?.numero || '',
+        complemento: restaurant.endereco?.complemento || '',
+        bairro: restaurant.endereco?.bairro || '',
+        cidade: restaurant.endereco?.cidade || '',
+        estado: restaurant.endereco?.estado || '',
+        cep: restaurant.endereco?.cep || '',
+        estado_id: restaurant.endereco?.estado_id || '',
+        cidade_id: restaurant.endereco?.cidade_id || ''
+      }
+    };
   });
 
   const [estados, setEstados] = useState<any[]>([]);
@@ -119,7 +158,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="text" 
                   placeholder="Nome completo" 
-                  value={formData.nome_proprietario} 
+                  value={formData.nome_proprietario || ''} 
                   onChange={e => {
                     const val = e.target.value;
                     setFormData({
@@ -137,7 +176,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="tel" 
                   placeholder="(00) 00000-0000" 
-                  value={formData.telefone} 
+                  value={formData.telefone || ''} 
                   onChange={e => {
                     const val = e.target.value;
                     setFormData({
@@ -155,7 +194,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="tel" 
                   placeholder="(00) 00000-0000" 
-                  value={formData.whatsapp} 
+                  value={formData.whatsapp || ''} 
                   onChange={e => setFormData({...formData, whatsapp: e.target.value})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                 />
@@ -165,7 +204,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="text" 
                   placeholder="@seurestaurante" 
-                  value={formData.instagram} 
+                  value={formData.instagram || ''} 
                   onChange={e => setFormData({...formData, instagram: e.target.value})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                 />
@@ -175,7 +214,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="email" 
                   placeholder="seu@email.com" 
-                  value={formData.email} 
+                  value={formData.email || ''} 
                   onChange={e => {
                     const val = e.target.value;
                     setFormData({
@@ -194,7 +233,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                   <input 
                     type="password" 
                     placeholder="••••••••" 
-                    value={formData.password} 
+                    value={formData.password || ''} 
                     onChange={e => setFormData({...formData, password: e.target.value})}
                     className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                     required
@@ -216,7 +255,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="text" 
                   placeholder="Nome do seu restaurante" 
-                  value={formData.nome} 
+                  value={formData.nome || ''} 
                   onChange={e => {
                     const val = e.target.value;
                     setFormData({
@@ -235,7 +274,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="text" 
                   placeholder="ex: pizzaria-do-ze" 
-                  value={formData.slug} 
+                  value={formData.slug || ''} 
                   onChange={e => setFormData({...formData, slug: e.target.value.toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]+/g, '')})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                   required
@@ -246,7 +285,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="text" 
                   placeholder="000.000.000-00" 
-                  value={formData.cpf_cnpj} 
+                  value={formData.cpf_cnpj || ''} 
                   onChange={e => setFormData({...formData, cpf_cnpj: e.target.value})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                   required
@@ -269,7 +308,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
               <label className="text-xs font-bold text-stone-400 uppercase">Descrição</label>
               <textarea 
                 placeholder="Uma breve descrição do restaurante..." 
-                value={formData.descricao} 
+                value={formData.descricao || ''} 
                 onChange={e => setFormData({...formData, descricao: e.target.value})}
                 className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                 rows={3}
@@ -344,7 +383,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <label className="text-xs font-bold text-stone-400 uppercase">Estado</label>
                 <select 
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
-                  value={selectedEstadoId}
+                  value={selectedEstadoId || ''}
                   onChange={e => {
                     const id = e.target.value;
                     setSelectedEstadoId(id);
@@ -373,7 +412,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <label className="text-xs font-bold text-stone-400 uppercase">Cidade</label>
                 <select 
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
-                  value={selectedCidadeId}
+                  value={selectedCidadeId || ''}
                   onChange={e => {
                     const id = e.target.value;
                     setSelectedCidadeId(id);
@@ -400,7 +439,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <label className="text-xs font-bold text-stone-400 uppercase">Bairro</label>
                 <select 
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
-                  value={formData.endereco.bairro}
+                  value={formData.endereco?.bairro || ''}
                   onChange={e => setFormData({...formData, endereco: {...formData.endereco, bairro: e.target.value}})}
                   required
                   disabled={!selectedCidadeId}
@@ -416,7 +455,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="text" 
                   placeholder="Nome da rua, avenida, etc" 
-                  value={formData.endereco.rua} 
+                  value={formData.endereco?.rua || ''} 
                   onChange={e => setFormData({...formData, endereco: {...formData.endereco, rua: e.target.value}})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                   required
@@ -428,7 +467,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                   <input 
                     type="text" 
                     placeholder="123" 
-                    value={formData.endereco.numero} 
+                    value={formData.endereco?.numero || ''} 
                     onChange={e => setFormData({...formData, endereco: {...formData.endereco, numero: e.target.value}})}
                     className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                     required
@@ -439,7 +478,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                   <input 
                     type="text" 
                     placeholder="Sala, Loja, etc" 
-                    value={formData.endereco.complemento} 
+                    value={formData.endereco?.complemento || ''} 
                     onChange={e => setFormData({...formData, endereco: {...formData.endereco, complemento: e.target.value}})}
                     className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                   />
@@ -461,7 +500,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input 
                       type="checkbox"
-                      checked={formData.aceita_entrega}
+                      checked={Boolean(formData.aceita_entrega)}
                       onChange={e => setFormData({...formData, aceita_entrega: e.target.checked})}
                       className="w-5 h-5 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
                     />
@@ -470,7 +509,7 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input 
                       type="checkbox"
-                      checked={formData.aceita_retirada}
+                      checked={Boolean(formData.aceita_retirada)}
                       onChange={e => setFormData({...formData, aceita_retirada: e.target.checked})}
                       className="w-5 h-5 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
                     />
@@ -484,8 +523,8 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                   <label className="text-xs font-bold text-stone-400 uppercase">Tempo Mín. (min)</label>
                   <input 
                     type="number"
-                    value={formData.tempo_min_entrega}
-                    onChange={e => setFormData({...formData, tempo_min_entrega: parseInt(e.target.value)})}
+                    value={formData.tempo_min_entrega ?? 30}
+                    onChange={e => setFormData({...formData, tempo_min_entrega: parseInt(e.target.value) || 0})}
                     className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
                   />
                 </div>
@@ -493,8 +532,8 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                   <label className="text-xs font-bold text-stone-400 uppercase">Tempo Máx. (min)</label>
                   <input 
                     type="number"
-                    value={formData.tempo_max_entrega}
-                    onChange={e => setFormData({...formData, tempo_max_entrega: parseInt(e.target.value)})}
+                    value={formData.tempo_max_entrega ?? 45}
+                    onChange={e => setFormData({...formData, tempo_max_entrega: parseInt(e.target.value) || 0})}
                     className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
                   />
                 </div>
@@ -507,8 +546,8 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="number"
                   step="0.01"
-                  value={formData.valor_minimo_pedido}
-                  onChange={e => setFormData({...formData, valor_minimo_pedido: parseFloat(e.target.value)})}
+                  value={formData.valor_minimo_pedido ?? 0}
+                  onChange={e => setFormData({...formData, valor_minimo_pedido: parseFloat(e.target.value) || 0})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                 />
               </div>
@@ -517,8 +556,8 @@ export default function RestaurantForm({ restaurant, categories, onSave, onCance
                 <input 
                   type="number"
                   step="0.01"
-                  value={formData.valor_minimo_frete_gratis}
-                  onChange={e => setFormData({...formData, valor_minimo_frete_gratis: parseFloat(e.target.value)})}
+                  value={formData.valor_minimo_frete_gratis ?? 0}
+                  onChange={e => setFormData({...formData, valor_minimo_frete_gratis: parseFloat(e.target.value) || 0})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl"
                 />
               </div>

@@ -12,6 +12,7 @@ import {
   Wallet, Gift, Star, Bell, Headphones, FileText, Lock, Home, ShoppingCart
 } from 'lucide-react';
 import { authApi } from '../../services/authApi';
+import { staticDataCacheService } from '../../services/staticDataCacheService';
 
 
 export default function Profile() {
@@ -474,9 +475,8 @@ export default function Profile() {
   useEffect(() => {
     const fetchEstados = async () => {
       try {
-        const q = query(collection(db, 'estados'), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setEstados(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getStates();
+        setEstados(list);
       } catch (error) {
         console.error("Error fetching estados:", error);
         handleFirestoreError(error, OperationType.GET, 'estados');
@@ -514,9 +514,8 @@ export default function Profile() {
     }
     const fetchCidades = async () => {
       try {
-        const q = query(collection(db, 'cidades'), where('estado_id', '==', selectedEstadoId), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setCidades(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getCidades(selectedEstadoId);
+        setCidades(list);
       } catch (error) {
         console.error("Error fetching cidades:", error);
         handleFirestoreError(error, OperationType.GET, 'cidades');
@@ -532,9 +531,8 @@ export default function Profile() {
     }
     const fetchBairros = async () => {
       try {
-        const q = query(collection(db, 'bairros'), where('cidade_id', '==', selectedCidadeId), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setBairros(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getNeighborhoods(selectedCidadeId);
+        setBairros(list);
       } catch (error) {
         console.error("Error fetching bairros:", error);
         handleFirestoreError(error, OperationType.GET, 'bairros');

@@ -11,12 +11,22 @@ interface AppLoadingContextType {
 const AppLoadingContext = createContext<AppLoadingContextType | undefined>(undefined);
 
 export const AppLoadingProvider = ({ children }: { children: ReactNode }) => {
-  const [isAppReady, setIsAppReady] = useState(false);
-  const [isVisible, setIsVisible] = useState(true);
+  const [isAppReady, setIsAppReady] = useState(true);
+  const [isVisible, setIsVisible] = useState(false);
+  const timerRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const triggerSplash = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
     setIsVisible(true);
-    setTimeout(() => setIsVisible(false), 1500);
+    timerRef.current = setTimeout(() => {
+      setIsVisible(false);
+    }, 600);
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, []);
 
   return (

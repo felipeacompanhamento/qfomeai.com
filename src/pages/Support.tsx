@@ -13,8 +13,12 @@ const Support = () => {
   useEffect(() => {
     const fetchAdmin = async () => {
       try {
-        const q = query(collection(db, 'users'), where('tipo_usuario', '==', 'admin'));
-        const snap = await getDocs(q);
+        const q = query(collection(db, 'users'), where('accountType', '==', 'ADMIN'));
+        let snap = await getDocs(q);
+        if (snap.empty) {
+          const qRole = query(collection(db, 'users'), where('role', '==', 'ADMIN'));
+          snap = await getDocs(qRole);
+        }
         if (!snap.empty) {
           const admin = snap.docs[0].data();
           setAdminPhone(admin.telefone || '');

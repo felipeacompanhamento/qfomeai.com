@@ -84,6 +84,8 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
   const [createdOrder, setCreatedOrder] = useState<any | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
+  const loadedRestIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     let isMounted = true;
     const loadData = async () => {
@@ -101,6 +103,12 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
         
         if (currentRestId && isMounted) {
           setRestaurantId(currentRestId);
+          if (loadedRestIdRef.current === currentRestId) {
+            setLoading(false);
+            return;
+          }
+          loadedRestIdRef.current = currentRestId;
+
           const [cats, prods, options] = await Promise.all([
             productService.getCategoriesByRestaurant(currentRestId),
             productService.getProducts(currentRestId),
@@ -124,7 +132,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
     loadData();
     
     return () => { isMounted = false; };
-  }, [user?.uid, profile?.restaurantId, restaurantProfile]);
+  }, [user?.uid, profile?.restaurantId, restaurantProfile?.id]);
 
 
   // Cart total

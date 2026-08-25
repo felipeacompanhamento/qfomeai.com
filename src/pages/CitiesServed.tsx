@@ -1,18 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
+import { staticDataCacheService } from '../services/staticDataCacheService';
 
 interface City {
   id: string;
   nome: string;
   estado_id: string;
-}
-
-interface State {
-  id: string;
-  nome: string;
 }
 
 const CitiesServed = () => {
@@ -24,21 +18,20 @@ const CitiesServed = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const statesSnapshot = await getDocs(collection(db, 'estados'));
+        const statesData = await staticDataCacheService.getStates();
         const statesMap: Record<string, string> = {};
-        statesSnapshot.forEach(doc => {
-          statesMap[doc.id] = doc.data().nome;
+        statesData.forEach((st: any) => {
+          statesMap[st.id] = st.nome;
         });
         setStates(statesMap);
 
-        const citiesSnapshot = await getDocs(collection(db, 'cidades'));
+        const citiesData = await staticDataCacheService.getCidades();
         const grouped: Record<string, City[]> = {};
-        citiesSnapshot.forEach(doc => {
-          const city = { id: doc.id, ...doc.data() } as City;
+        citiesData.forEach((city: any) => {
           if (!grouped[city.estado_id]) {
             grouped[city.estado_id] = [];
           }
-          grouped[city.estado_id].push(city);
+          grouped[city.estado_id].push(city as City);
         });
         setGroupedCities(grouped);
       } catch (error) {
@@ -50,6 +43,7 @@ const CitiesServed = () => {
 
     fetchData();
   }, []);
+
 
   if (loading) return <div className="p-12 text-center">Carregando...</div>;
 

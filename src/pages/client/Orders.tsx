@@ -227,6 +227,26 @@ function PixPaymentInfo({ order }: { order: any }) {
   );
 }
 
+// Module-level cache for restaurant settings to avoid repeated getDoc calls
+const restaurantCache = new Map<string, any>();
+
+async function getRestaurantMaxDeliveryTime(restaurantId: string): Promise<number> {
+  if (restaurantCache.has(restaurantId)) {
+    return restaurantCache.get(restaurantId)?.tempo_max_entrega || 60;
+  }
+  try {
+    const restDoc = await getDoc(doc(db, 'restaurants', restaurantId));
+    if (restDoc.exists()) {
+      const data = restDoc.data();
+      restaurantCache.set(restaurantId, data);
+      return data?.tempo_max_entrega || 60;
+    }
+  } catch (e) {
+    console.error("Error fetching restaurant for timeout:", e);
+  }
+  return 60;
+}
+
 export default function Orders() {
   const { user } = useAuth();
   const { triggerSplash } = useAppLoading();
@@ -300,113 +320,94 @@ export default function Orders() {
     fetchOrders();
   }, [userId, triggerSplash]);
 
-  // 3. Setup individual onSnapshot listeners for active orders
+  // 3. Setup single real-time listener for all active orders of the client
   useEffect(() => {
     if (!userId) return;
-    
-    const unsubscribeMap = new Map<string, () => void>();
+
     const timeoutMap = new Map<string, NodeJS.Timeout>();
 
-    const setupOrderListener = async (order: any) => {
-      if (unsubscribeMap.has(order.id)) return;
+    const qActive = query(
+      collectionGroup(db, 'orders'),
+      where('cliente_id', '==', userId),
+      where('status', 'not-in', ['entregue', 'cancelado', 'rejeitado'])
+    );
 
-      const restaurantId = order.restaurant_id || order.restaurante_id || order.restaurantId;
-      if (!restaurantId) {
-        console.warn(`[Orders] Pedido ${order.id} sem ID de restaurante.`);
-        return;
-      }
+    console.log('[Firestore] Registrando assinatura única para pedidos ativos do cliente.');
+    const unsubscribe = onSnapshot(qActive, async (snapshot) => {
+      const activeDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
 
-      // 1. Get restaurant max delivery time
-      let maxDeliveryTime = 60; // Default 60 mins
-      try {
-        const restDoc = await getDoc(doc(db, 'restaurants', restaurantId));
-        if (restDoc.exists()) {
-          maxDeliveryTime = restDoc.data().tempo_max_entrega || 60;
-        }
-      } catch (e) {
-        console.error("Error fetching restaurant for timeout:", e);
-      }
+      // Group active orders by restaurant_id to pre-cache restaurant configs
+      const restaurantIds = Array.from(
+        new Set(
+          activeDocs
+            .map(o => o.restaurant_id || o.restaurante_id || o.restaurantId)
+            .filter(Boolean)
+        )
+      );
 
-      // 2. Calculate expiration
-      const createdAt = new Date(order.data_criacao).getTime();
-      const expirationTime = createdAt + (maxDeliveryTime * 60 * 1000);
+      // Fetch restaurant settings in parallel for uncached restaurants only once
+      await Promise.all(restaurantIds.map(rid => getRestaurantMaxDeliveryTime(rid)));
+
       const now = Date.now();
-      const remainingTime = expirationTime - now;
 
-      if (remainingTime <= 0) {
-        console.log(`[Firestore] Pedido ${order.id} já expirou.`);
-        return;
+      for (const order of activeDocs) {
+        const restaurantId = order.restaurant_id || order.restaurante_id || order.restaurantId;
+        const maxDeliveryTime = restaurantId ? (restaurantCache.get(restaurantId)?.tempo_max_entrega || 60) : 60;
+        const createdAt = new Date(order.data_criacao || order.createdAt || now).getTime();
+        const expirationTime = createdAt + (maxDeliveryTime * 60 * 1000);
+        const remainingTime = expirationTime - now;
+
+        if (remainingTime > 0) {
+          if (!timeoutMap.has(order.id)) {
+            const timeout = setTimeout(() => {
+              console.log(`[Firestore] Timeout atingido para pedido ${order.id}, removendo de ativos.`);
+              setOrders(prev => prev.filter(o => o.id !== order.id));
+              timeoutMap.delete(order.id);
+            }, remainingTime);
+            timeoutMap.set(order.id, timeout);
+          }
+        }
       }
 
-      // 3. Setup listener
-      console.log(`[Firestore] Iniciando listener para pedido ${order.id}, expira em ${Math.round(remainingTime/1000/60)} min.`);
-      const unsubscribe = onSnapshot(doc(db, 'restaurants', restaurantId, 'orders', order.id), (docSnap) => {
-        if (!docSnap.exists()) return;
-        const updatedOrder = { id: docSnap.id, ...docSnap.data() } as any;
-        
-        setOrders(prev => {
-          const oldOrder = prev.find(o => o.id === updatedOrder.id);
-          if (oldOrder && oldOrder.status !== updatedOrder.status) {
+      // Merge active docs into orders state
+      setOrders(prev => {
+        const newOrdersMap = new Map(prev.map(o => [o.id, o]));
+
+        snapshot.docChanges().forEach(change => {
+          const docData = { id: change.doc.id, ...change.doc.data() } as any;
+          const oldOrder = newOrdersMap.get(docData.id);
+
+          if (oldOrder && oldOrder.status !== docData.status) {
             playChefBell();
           }
-          return prev.map(o => o.id === updatedOrder.id ? updatedOrder : o);
+
+          newOrdersMap.set(docData.id, docData);
         });
 
-        setSelectedOrder((prevSelected: any) => {
-          if (prevSelected && prevSelected.id === updatedOrder.id) {
-            return updatedOrder;
-          }
-          return prevSelected;
+        const merged = Array.from(newOrdersMap.values());
+        merged.sort((a, b) => {
+          const tA = new Date(a.data_criacao || a.createdAt || 0).getTime();
+          const tB = new Date(b.data_criacao || b.createdAt || 0).getTime();
+          return tB - tA;
         });
-
-        if (['entregue', 'cancelado', 'rejeitado'].includes(updatedOrder.status)) {
-          console.log(`[Firestore] Pedido ${updatedOrder.id} terminal, removendo listener.`);
-          cleanupOrder(updatedOrder.id);
-        }
+        return merged;
       });
 
-      unsubscribeMap.set(order.id, unsubscribe);
-
-      // 4. Set timeout
-      const timeout = setTimeout(() => {
-        console.log(`[Firestore] Timeout atingido para pedido ${order.id}, removendo listener.`);
-        cleanupOrder(order.id);
-      }, remainingTime);
-
-      timeoutMap.set(order.id, timeout);
-    };
-
-    const cleanupOrder = (orderId: string) => {
-      if (unsubscribeMap.has(orderId)) {
-        unsubscribeMap.get(orderId)!();
-        unsubscribeMap.delete(orderId);
-      }
-      if (timeoutMap.has(orderId)) {
-        clearTimeout(timeoutMap.get(orderId)!);
-        timeoutMap.delete(orderId);
-      }
-    };
-
-    // Fetch active orders to setup listeners
-    const fetchActiveOrders = async () => {
-        const q = query(
-          collectionGroup(db, 'orders'),
-          where('cliente_id', '==', userId),
-          where('status', 'not-in', ['entregue', 'cancelado', 'rejeitado']),
-          orderBy('status'),
-          orderBy('data_criacao', 'desc')
-        );
-        const snapshot = await getDocs(q);
-        const activeDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any));
-        activeDocs.forEach(setupOrderListener);
-    };
-    
-    fetchActiveOrders();
+      // Update selected order if open
+      setSelectedOrder((prevSelected: any) => {
+        if (!prevSelected) return prevSelected;
+        const updated = activeDocs.find(o => o.id === prevSelected.id);
+        return updated || prevSelected;
+      });
+    }, (err) => {
+      console.error('[Orders] Erro no listener de pedidos ativos:', err);
+    });
 
     return () => {
-      console.log('[Firestore] Removendo todos os listeners de pedidos.');
-      unsubscribeMap.forEach(unsub => unsub());
-      timeoutMap.forEach(timeout => clearTimeout(timeout));
+      console.log('[Firestore] Limpando listener único e timeouts de pedidos ativos.');
+      unsubscribe();
+      timeoutMap.forEach(t => clearTimeout(t));
+      timeoutMap.clear();
     };
   }, [userId]);
 
@@ -647,7 +648,7 @@ export default function Orders() {
               <p><strong>Data:</strong> {new Date(selectedOrder.data_criacao).toLocaleString()}</p>
               <div className="border-t pt-4">
                 <h3 className="font-bold mb-2">Produtos:</h3>
-                {selectedOrder.itens.map((item: any, idx: number) => (
+                {(selectedOrder.items || selectedOrder.itens)?.map((item: any, idx: number) => (
                   <div key={idx} className="flex justify-between text-sm">
                     <span>{item.quantidade}x {item.nome}</span>
                     <span>R$ {(item.preco * item.quantidade).toFixed(2)}</span>

@@ -55,10 +55,12 @@ interface OrderListItemProps {
 }
 
 const OrderListItem = React.memo(({ order, isSelected, onClick }: OrderListItemProps) => {
-  const [clientName, setClientName] = useState<string>(order.cliente_nome || 'Cliente');
+  const resolvedName = order.cliente_nome || order.customerName || order.nome_cliente || order.cliente?.nome || order.usuario_nome || 'Cliente';
+  const [clientName, setClientName] = useState<string>(resolvedName);
 
   useEffect(() => {
-    if ((!order.cliente_nome || order.cliente_nome === 'Cliente') && order.cliente_id) {
+    const currentName = order.cliente_nome || order.customerName || order.nome_cliente || order.cliente?.nome || order.usuario_nome || 'Cliente';
+    if (currentName === 'Cliente' && order.cliente_id) {
       const fetchClientName = async () => {
         try {
           const userDoc = await getDoc(doc(db, 'users', order.cliente_id));
@@ -66,15 +68,15 @@ const OrderListItem = React.memo(({ order, isSelected, onClick }: OrderListItemP
             const userData = userDoc.data();
             setClientName(userData.nome || userData.displayName || 'Cliente');
           }
-        } catch (error) {
-          console.error("Error fetching client name:", error);
+        } catch {
+          // Handled gracefully
         }
       };
       fetchClientName();
-    } else if (order.cliente_nome) {
-      setClientName(order.cliente_nome);
+    } else {
+      setClientName(currentName);
     }
-  }, [order.cliente_id, order.cliente_nome]);
+  }, [order.cliente_id, order.cliente_nome, order.customerName, order.nome_cliente, order.cliente?.nome, order.usuario_nome]);
 
   return (
     <div 
@@ -97,7 +99,7 @@ const OrderListItem = React.memo(({ order, isSelected, onClick }: OrderListItemP
       <div className="mb-2">
         <p className="font-bold text-stone-800 truncate">{clientName.trim().split(' ')[0] || 'Cliente'}</p>
         <p className="text-xs text-stone-500 truncate mt-0.5">
-          {order.itens?.map((i: any) => `${i.quantidade}x ${i.nome}`).join(', ')}
+          {(order.items || order.itens)?.map((i: any) => `${i.quantidade}x ${i.nome}`).join(', ')}
         </p>
       </div>
 

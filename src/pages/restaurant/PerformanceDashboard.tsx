@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import { dashboardService } from '../../services/dashboardService';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { cache } from '../../utils/cache';
 
@@ -29,7 +29,7 @@ export default function PerformanceDashboard({ orders: initialOrders }: { orders
 
     const fetchProducts = async () => {
       try {
-        const q = query(collection(db, 'restaurants', profile.restaurantId, 'products'));
+        const q = query(collection(db, 'restaurants', profile.restaurantId, 'products'), limit(100));
         const snapshot = await getDocs(q);
         setAllProducts(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (error) {

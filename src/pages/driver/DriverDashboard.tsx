@@ -83,12 +83,23 @@ export default function DriverDashboard() {
   useEffect(() => {
     if (!user || !restaurantId) return;
 
-    const driverRef = doc(db, 'restaurants', restaurantId, 'drivers', user.uid);
+    const profileRef = doc(db, 'restaurants', restaurantId, 'staffProfiles', user.uid);
     const unsub = onSnapshot(
-      driverRef,
+      profileRef,
       (snap) => {
         if (snap.exists()) {
-          setDriverDoc(snap.data() as DriverInfo);
+          const pData = snap.data();
+          const roleData = pData.roleSpecificData || {};
+          setDriverDoc({
+            id: user.uid,
+            restaurantId,
+            userId: user.uid,
+            name: profile?.nome || user.displayName || roleData.nickname || 'Entregador',
+            phone: profile?.telefone || '',
+            email: user.email || '',
+            availabilityStatus: roleData.availability || 'OFFLINE',
+            ...pData
+          } as any);
         } else {
           setDriverDoc({
             id: user.uid,
@@ -98,7 +109,7 @@ export default function DriverDashboard() {
             phone: profile?.telefone || '',
             email: user.email || '',
             availabilityStatus: 'OFFLINE'
-          });
+          } as any);
         }
       },
       (err) => {

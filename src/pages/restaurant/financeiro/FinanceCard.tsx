@@ -8,7 +8,7 @@ interface FinanceCardProps {
   description: string;
   path: string;
   enabled?: boolean;
-  accentColor?: 'emerald' | 'rose' | 'amber' | 'stone' | 'indigo';
+  accentColor?: 'emerald' | 'rose' | 'amber' | 'stone';
 }
 
 export function FinanceCard({ 
@@ -25,8 +25,6 @@ export function FinanceCard({
     switch (accentColor) {
       case 'rose':
         return 'bg-rose-50 text-rose-600 border-rose-100 group-hover:bg-rose-600 group-hover:text-white';
-      case 'indigo':
-        return 'bg-indigo-50 text-indigo-600 border-indigo-100 group-hover:bg-indigo-600 group-hover:text-white';
       case 'amber':
         return 'bg-amber-50 text-amber-600 border-amber-100 group-hover:bg-amber-600 group-hover:text-white';
       case 'stone':
@@ -40,8 +38,6 @@ export function FinanceCard({
     switch (accentColor) {
       case 'rose':
         return 'bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border-rose-200/80';
-      case 'indigo':
-        return 'bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white border-indigo-200/80';
       case 'amber':
         return 'bg-amber-50 hover:bg-amber-600 text-amber-700 hover:text-white border-amber-200/80';
       case 'stone':
@@ -71,7 +67,7 @@ export function FinanceCard({
         <h3 className="text-base sm:text-lg font-bold text-stone-800 mb-1.5 flex items-center gap-2">
           {title}
           {!enabled && (
-            <span className="text-[10px] bg-stone-100 text-stone-500 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+            <span className="text-xs bg-stone-100 text-stone-500 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
               Em breve
             </span>
           )}

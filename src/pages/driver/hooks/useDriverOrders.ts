@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { User } from 'firebase/auth';
-import { collection, doc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, doc, query, where, onSnapshot, getDocs, limit } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { AssignedOrder } from '../types';
 import { alertSoundService } from '../../../services/alertSoundService';
@@ -79,22 +79,22 @@ export const useDriverOrders = ({
 
     const ordersRef = collection(db, 'restaurants', restaurantId, 'orders');
 
-    // Query assigned orders by driver UID fields
-    const q1 = query(ordersRef, where('assignedDriverId', '==', user.uid));
-    const q2 = query(ordersRef, where('driverId', '==', user.uid));
-    const q3 = query(ordersRef, where('entregador_id', '==', user.uid));
+    // Canonical query for active assigned orders using canonical field
+    const qCanonical = query(ordersRef, where('assignedDriverId', '==', user.uid));
 
-    // History query from deliveries collection
+    // History query from deliveries collection with limit
     const deliveriesRef = collection(db, 'restaurants', restaurantId, 'deliveries');
-    const qHistory = query(deliveriesRef, where('responsibleDriverId', '==', user.uid));
+    const qHistory = query(deliveriesRef, where('responsibleDriverId', '==', user.uid), limit(50));
 
-    let list1: AssignedOrder[] = [];
-    let list2: AssignedOrder[] = [];
-    let list3: AssignedOrder[] = [];
+    let canonicalList: AssignedOrder[] = [];
+    let legacyList: AssignedOrder[] = [];
 
     const mergeActiveOrders = () => {
       const mergedObj: Record<string, AssignedOrder> = {};
-      [...list1, ...list2, ...list3].forEach(o => {
+      legacyList.forEach(o => {
+        if (o && o.id) mergedObj[o.id] = o;
+      });
+      canonicalList.forEach(o => {
         if (o && o.id) mergedObj[o.id] = o;
       });
       const merged = Object.values(mergedObj);
@@ -103,25 +103,37 @@ export const useDriverOrders = ({
       saveCachedOrders(merged);
     };
 
-    const unsub1 = onSnapshot(q1, (snap) => {
-      list1 = snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedOrder));
-      mergeActiveOrders();
-    }, (err) => {
-      console.warn('[useDriverOrders] Query 1 listener fallback:', err);
-    });
+    // Point-in-time check for legacy fields (driverId, entregador_id) to avoid continuous multiple listeners
+    const fetchLegacyOrders = async () => {
+      try {
+        const qLegacyDriver = query(ordersRef, where('driverId', '==', user.uid));
+        const qLegacyEntregador = query(ordersRef, where('entregador_id', '==', user.uid));
 
-    const unsub2 = onSnapshot(q2, (snap) => {
-      list2 = snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedOrder));
-      mergeActiveOrders();
-    }, (err) => {
-      console.warn('[useDriverOrders] Query 2 listener fallback:', err);
-    });
+        const [snapDriver, snapEntregador] = await Promise.all([
+          getDocs(qLegacyDriver),
+          getDocs(qLegacyEntregador)
+        ]);
 
-    const unsub3 = onSnapshot(q3, (snap) => {
-      list3 = snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedOrder));
+        const legacyMap = new Map<string, AssignedOrder>();
+        snapDriver.docs.forEach(d => legacyMap.set(d.id, { id: d.id, ...d.data() } as AssignedOrder));
+        snapEntregador.docs.forEach(d => legacyMap.set(d.id, { id: d.id, ...d.data() } as AssignedOrder));
+
+        legacyList = Array.from(legacyMap.values());
+        mergeActiveOrders();
+      } catch (err) {
+        console.warn('[useDriverOrders] Legacy order fetch fallback:', err);
+      }
+    };
+
+    fetchLegacyOrders();
+
+    // Single canonical real-time listener
+    const unsubCanonical = onSnapshot(qCanonical, (snap) => {
+      canonicalList = snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedOrder));
       mergeActiveOrders();
     }, (err) => {
-      console.warn('[useDriverOrders] Query 3 listener fallback:', err);
+      console.warn('[useDriverOrders] Canonical query listener fallback:', err);
+      setOrdersLoading(false);
     });
 
     const unsubHistory = onSnapshot(qHistory, (snap) => {
@@ -131,7 +143,7 @@ export const useDriverOrders = ({
       console.warn('[useDriverOrders] History listener fallback:', err);
     });
 
-    // Fallback load from cache if offline or listener delay
+    // Fallback load from cache if offline
     if (!isOnline) {
       getCachedOrders().then(cached => {
         if (cached && cached.length > 0) {
@@ -142,9 +154,7 @@ export const useDriverOrders = ({
     }
 
     return () => {
-      unsub1();
-      unsub2();
-      unsub3();
+      unsubCanonical();
       unsubHistory();
     };
   }, [user, restaurantId, isOnline]);

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { PermissionGuard } from '../../components/PermissionGuard';
 import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { 
   collection, query, where, doc, updateDoc, orderBy, getDoc, getDocs, limit, startAfter, onSnapshot 
@@ -7,8 +8,18 @@ import { db, auth, handleFirestoreError, OperationType } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { authApi } from '../../services/authApi';
 import { normalizeRestaurantFeatures } from '../../domain/restaurant/restaurantFeatures';
+import {
+  PageHeader,
+  SectionHeader,
+  Card,
+  StatCard as UiStatCard,
+  Badge,
+  Button,
+  EmptyState,
+  LoadingState,
+} from '../../components/ui';
 import { 
-  LayoutDashboard, ShoppingBag, Utensils, Clock, Settings, Bell, BellRing, 
+  LayoutDashboard, ShoppingBag, Utensils, Clock, Settings, 
   Check, X, LogOut, ChevronDown, ChevronRight, Tags, PlusCircle, Plus, 
   Percent, Ticket, Users, CreditCard, MapPin, User, Lock, Menu, Edit2, Save, ArrowLeft, Printer,
   TrendingUp, XCircle, CheckCircle2, BarChart3, AlertTriangle, DollarSign, PieChart, Mail, RefreshCw, List, LayoutGrid, Search, Loader2
@@ -19,7 +30,7 @@ import {
 } from 'recharts';
 import { cache } from '../../utils/cache';
 import { cacheOrders } from '../../utils/cacheOrders';
-import { registerClientOrderPaymentMovement, registerClientOrderRefundMovement } from '../../utils/financeIntegration';
+import { processOrderPaymentsApi, processOrderRefundApi, normalizePaymentMethodId, registerClientOrderPaymentMovement, registerClientOrderRefundMovement } from '../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../services/paymentMethodsService';
 import { scheduleService, Schedule } from '../../services/scheduleService';
 import PerformanceDashboard from './PerformanceDashboard';
@@ -32,6 +43,7 @@ import DeliveryAreas from './DeliveryAreas';
 import Schedules from './Schedules';
 import RestaurantPayments from './Payments';
 import AccountSettings from './AccountSettings';
+import TeamSettings from './settings/TeamSettings';
 import PasswordSettings from './PasswordSettings';
 import PrintSettings from './PrintSettings';
 import Promotions from './Promotions';
@@ -44,6 +56,9 @@ import AssignedDeliveries from './drivers/AssignedDeliveries';
 import DeliverySettings from './drivers/DeliverySettings';
 import CounterPage from './Counter';
 import WaitersPage from './Waiters';
+import RestaurantHalls from './Halls';
+import RestaurantTables from './Tables';
+import OperationalTablesMap from './TablesMap';
 import { UnpaidOrderAlertDialog } from '../../components/orders/UnpaidOrderAlertDialog';
 
 import { registerPushNotifications } from '../../firebaseMessaging';
@@ -53,6 +68,15 @@ import { printThermalOrder } from '../../components/orders/OrderThermalPrint';
 import OrderListItem, { getOrderCardStyle } from './components/OrderListItem';
 import OrderDetails from './components/OrderDetails';
 import RestaurantOrdersPage from './orders/RestaurantOrdersPage';
+import { RestaurantOrderCard } from './orders/components/RestaurantOrderCard';
+import { getOrderKanbanColumn } from '../../domain/order/orderLifecycle';
+import {
+  OperacaoHubWrapper,
+  CardapioHubWrapper,
+  GestaoHubWrapper,
+  FinanceiroHubWrapper,
+  ConfiguracoesHubWrapper
+} from './hubs/RestaurantHubs';
 
 import FinanceiroPage from './financeiro/FinanceiroPage';
 import CaixaPage from './financeiro/CaixaPage';
@@ -112,10 +136,6 @@ export default function RestaurantDashboard() {
   const updatingOrdersRef = useRef<Set<string>>(new Set());
   const location = useLocation();
   const navigate = useNavigate();
-  const isOrdersPage = location.pathname.includes('/orders');
-  const isBalcaoPage = location.pathname.includes('/balcao');
-  const isWaitersPage = location.pathname.includes('/waiters');
-  const hideHeader = isOrdersPage || isBalcaoPage || isWaitersPage;
 
   const handleResendVerification = async () => {
     if (!user || !user.email) return;
@@ -267,21 +287,12 @@ export default function RestaurantDashboard() {
       }
     }
     
-    console.log('[Firestore] restaurantProfile:', restaurantProfile);
-    console.log('[Firestore] Config:', statusConfig, 'Aprovacao:', statusAprovacao, 'isRestaurantOpen:', isRestaurantOpen);
-
-    if (!isRestaurantOpen) {
-      console.log('[Firestore] Restaurante fechado. Listener de pedidos em tempo real desativado.');
-      // Se estiver fechado, podemos fazer um fetch inicial apenas para mostrar o que já tem, 
-      // mas não mantemos o listener ativo.
-      if (isInitialLoad.current) {
-        fetchOrders(true);
-        isInitialLoad.current = false;
-      }
-      return;
+    if (process.env.NODE_ENV !== 'production') {
+      const maskedId = restaurantId ? `${restaurantId.slice(0, 4)}***` : 'none';
+      console.log(`[Dashboard] Restaurant ${maskedId} config: ${statusConfig}, isOpen: ${isRestaurantOpen}`);
     }
 
-    console.log('[Firestore] Restaurante aberto. Iniciando listener em tempo real para pedidos...');
+    console.log('[Firestore] Iniciando listener em tempo real para pedidos da operação/cozinha...');
     
     const q = query(
       collection(db, 'restaurants', restaurantId, 'orders'), 
@@ -362,14 +373,12 @@ export default function RestaurantDashboard() {
       setIsLive(false);
       unsubscribe();
     };
-  }, [restaurantId, user?.uid, restaurantProfile?.status_operacao, restaurantProfile?.status_operacao_config]);
+  }, [restaurantId, user?.uid]);
 
   useEffect(() => {
     const handleNewOrder = () => {
       console.log('DEBUG: handleNewOrder capturado no Dashboard (via evento)');
-      // Com onSnapshot, o pedido novo já deve estar sendo carregado automaticamente.
-      // O evento serve principalmente para logs ou se quisermos forçar algo extra.
-      // fetchOrders(false, true); // Removido para evitar buscas duplicadas
+      fetchOrders(true, true);
     };
 
     window.addEventListener('new-order-received', handleNewOrder);
@@ -377,7 +386,7 @@ export default function RestaurantDashboard() {
     return () => {
       window.removeEventListener('new-order-received', handleNewOrder);
     };
-  }, []);
+  }, [fetchOrders]);
 
   const hasNewOrder = React.useMemo(() => {
     const pending = orders.filter(o => o.status === 'pendente');
@@ -422,7 +431,7 @@ export default function RestaurantDashboard() {
 
   const [unpaidOrderDialog, setUnpaidOrderDialog] = useState<{ open: boolean; orderNumber?: string }>({ open: false });
 
-  const handleUpdateStatus = React.useCallback(async (orderId: string, newStatus: string, motivo?: string) => {
+  const handleUpdateStatus = React.useCallback(async (orderId: string, newStatus: string, motivo?: string, customClientActionId?: string) => {
     if (!profile?.restaurantId || updatingOrdersRef.current.has(orderId)) return;
     
     // Busca o pedido atual para verificar o status de pagamento
@@ -484,11 +493,67 @@ export default function RestaurantDashboard() {
       if (newStatus === 'rejeitado' && motivo) updateData.motivo_cancelamento = motivo;
       if (newStatus === 'finalizado') updateData.data_finalizado = new Date().toISOString();
 
-      // Atualiza diretamente no Firestore
-      const orderRef = doc(db, 'restaurants', profile.restaurantId, 'orders', orderId);
       const oldOrder = orders.find(o => o.id === orderId);
       
-      await updateDoc(orderRef, updateData);
+      const isKitchenAction = ['aceito', 'preparo', 'pronto'].includes(newStatus);
+      const idToken = await user?.getIdToken();
+      let updatedOrderFromBackend: any = null;
+
+      if (isKitchenAction) {
+        let actionPath = 'accept';
+        if (newStatus === 'preparo') actionPath = 'start-prepare';
+        if (newStatus === 'pronto') actionPath = 'conclude';
+
+        const clientActionId = customClientActionId || `act_ktc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+        const res = await fetch(`/api/restaurant/orders/${orderId}/kitchen/${actionPath}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ clientActionId })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          if (res.status === 409 && (errData.code === 'DUPLICATE_ACTION' || errData.error === 'DUPLICATE_ACTION')) {
+            console.log('[Kitchen Idempotency] Ação já processada anteriormente');
+          } else {
+            throw new Error(errData.message || errData.error || 'Erro ao processar ação na cozinha');
+          }
+        } else {
+          const resData = await res.json().catch(() => ({}));
+          updatedOrderFromBackend = resData.order;
+        }
+      } else {
+        const clientActionId = customClientActionId || `act_ord_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+        const res = await fetch(`/api/restaurant/orders/${orderId}/status`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({
+            status: newStatus,
+            motivo,
+            clientActionId
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          if (res.status === 409 && (errData.code === 'DUPLICATE_ACTION' || errData.error === 'DUPLICATE_ACTION')) {
+            console.log('[Order Status Idempotency] Ação já processada anteriormente');
+          } else {
+            throw new Error(errData.message || errData.error || 'Erro ao atualizar status do pedido');
+          }
+        } else {
+          const resData = await res.json().catch(() => ({}));
+          updatedOrderFromBackend = resData.order;
+        }
+      }
 
       if (oldOrder) {
         if (newStatus === 'finalizado') {
@@ -508,9 +573,14 @@ export default function RestaurantDashboard() {
         }
       }
       
-      // Atualiza o estado local e o cache imediatamente (evita nova leitura e não espera a notificação)
+      // Atualiza o estado local e o cache imediatamente com os dados do backend
       setOrders(prevOrders => {
-        const updatedOrders = prevOrders.map(o => o.id === orderId ? { ...o, ...updateData } : o);
+        const updatedOrders = prevOrders.map(o => {
+          if (o.id === orderId) {
+            return updatedOrderFromBackend ? { ...o, ...updatedOrderFromBackend } : { ...o, ...updateData };
+          }
+          return o;
+        });
         cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
         
         // Se o status mudou para algo que não seja 'pendente', paramos o som para este ciclo
@@ -561,22 +631,26 @@ export default function RestaurantDashboard() {
           };
           const statusMessage = statusNames[newStatus];
           if (statusMessage) {
-            const userDoc = await getDoc(doc(db, 'users', oldOrder.cliente_id));
-            const userData = userDoc.data();
-            if (userData?.fcmToken) {
-              // Não usamos await aqui para não bloquear a UI caso a requisição demore
-              fetch('/api/notifications/send', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  token: userData.fcmToken,
-                  title: statusMessage.title,
-                  body: statusMessage.body,
-                  orderId: orderId,
-                  restaurantId: profile.restaurantId,
-                  type: 'status_update'
-                })
-              }).catch(err => console.error('Erro ao enviar notificação:', err));
+            try {
+              const userDoc = await getDoc(doc(db, 'users', oldOrder.cliente_id));
+              const userData = userDoc.data();
+              if (userData?.fcmToken) {
+                // Não usamos await aqui para não bloquear a UI caso a requisição demore
+                fetch('/api/notifications/send', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    token: userData.fcmToken,
+                    title: statusMessage.title,
+                    body: statusMessage.body,
+                    orderId: orderId,
+                    restaurantId: profile.restaurantId,
+                    type: 'status_update'
+                  })
+                }).catch(err => console.error('Erro ao enviar notificação:', err));
+              }
+            } catch {
+              // Notification fallback handled silently
             }
           }
         } catch (notifError) {
@@ -638,58 +712,33 @@ export default function RestaurantDashboard() {
         </div>
       )}
 
-      {!hideHeader && (
-        <header className="flex items-center justify-between mb-8">
-          <div>
-            <h2 className="text-2xl font-bold text-stone-800">Olá, {profile?.nome}</h2>
-            <p className="text-stone-500 text-sm">Gerencie seu restaurante em tempo real.</p>
-          </div>
-          
-          <div className="hidden sm:flex items-center gap-4">
-            <button
-              onClick={async () => {
-                if (user) {
-                  const { registerPushNotifications } = await import('../../firebaseMessaging');
-                  const token = await registerPushNotifications(user.uid);
-                  if (token) {
-                    alert('Notificações ativadas com sucesso!');
-                  } else {
-                    alert('Não foi possível ativar as notificações. Verifique as permissões do navegador.');
-                  }
-                }
-              }}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-600 font-bold text-sm rounded-full hover:bg-stone-50 transition-all shadow-sm"
-              title="Ativar Notificações"
-            >
-              <Bell className="w-4 h-4" />
-              <span>Notificações</span>
-            </button>
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm ${hasNewOrder ? 'bg-red-100 text-red-600 animate-bounce' : 'bg-emerald-100 text-emerald-600'}`}>
-              {hasNewOrder ? <BellRing className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-              <span>{hasNewOrder ? 'Novo Pedido!' : 'Tudo em dia'}</span>
-            </div>
-          </div>
-        </header>
-      )}
-
       <Routes>
-        <Route path="/" element={<DashboardStats orders={orders} />} />
-        <Route path="dashboard" element={<DashboardStats orders={orders} />} />
+        <Route path="/" element={<PermissionGuard module="dashboard" allowedRoles={["MANAGER"]}><DashboardStats orders={orders} /></PermissionGuard>} />
+        <Route path="dashboard" element={<PermissionGuard module="dashboard" allowedRoles={["MANAGER"]}><DashboardStats orders={orders} /></PermissionGuard>} />
         <Route path="balcao" element={
-          normalizeRestaurantFeatures(restaurantProfile).counterEnabled ? (
-            <CounterPage restaurantProfile={restaurantProfile} />
-          ) : (
-            <Navigate to="/restaurant/dashboard" replace />
-          )
+          <PermissionGuard module="balcao">
+            {normalizeRestaurantFeatures(restaurantProfile).counterEnabled ? (
+              <CounterPage restaurantProfile={restaurantProfile} />
+            ) : (
+              <Navigate to="/restaurant/dashboard" replace />
+            )}
+          </PermissionGuard>
         } />
         <Route path="waiters/*" element={
-          normalizeRestaurantFeatures(restaurantProfile).waiterEnabled ? (
-            <WaitersPage />
-          ) : (
-            <Navigate to="/restaurant/dashboard" replace />
-          )
+          <PermissionGuard module="waiters">
+            {normalizeRestaurantFeatures(restaurantProfile).waiterEnabled ? (
+              <WaitersPage />
+            ) : (
+              <Navigate to="/restaurant/dashboard" replace />
+            )}
+          </PermissionGuard>
         } />
-        <Route path="desempenho" element={<PerformanceDashboard orders={orders} />} />
+        <Route path="desempenho" element={<PermissionGuard module="desempenho"><PerformanceDashboard orders={orders} /></PermissionGuard>} />
+        <Route path="clientes" element={<PermissionGuard module="clientes"><Navigate to="/restaurant/gestao/clientes?subtab=clientes" replace /></PermissionGuard>} />
+        <Route path="customers" element={<PermissionGuard module="clientes"><Navigate to="/restaurant/gestao/clientes?subtab=clientes" replace /></PermissionGuard>} />
+        <Route path="relatorios" element={<PermissionGuard module="relatorios"><Navigate to="/restaurant/gestao/relatorios?subtab=relatorios" replace /></PermissionGuard>} />
+        <Route path="reports" element={<PermissionGuard module="relatorios"><Navigate to="/restaurant/gestao/relatorios?subtab=relatorios" replace /></PermissionGuard>} />
+        <Route path="waiters" element={<PermissionGuard module="equipe"><Navigate to="/restaurant/gestao/equipe?subtab=equipe" replace /></PermissionGuard>} />
         <Route path="orders" element={
           <RestaurantOrdersPage 
             orders={orders} 
@@ -705,36 +754,77 @@ export default function RestaurantDashboard() {
           />
         } />
         
-        <Route path="menu/categories" element={<RestaurantCategories />} />
-        <Route path="menu/items" element={<RestaurantProducts />} />
-        <Route path="menu/sizes" element={<RestaurantSizes />} />
-        <Route path="fatura" element={<RestaurantInvoicePage />} />
-        <Route path="menu/extras" element={<RestaurantExtras />} />
-        <Route path="menu/grupos" element={<OptionGroups />} />
-        <Route path="delivery-areas" element={<DeliveryAreas />} />
-        <Route path="schedules" element={<Schedules />} />
-        <Route path="menu/promotions" element={<Promotions />} />
+        {/* Hubs da Arquitetura Base (Fase 8) */}
+        <Route path="operacao/*" element={
+          <OperacaoHubWrapper 
+            restaurantProfile={restaurantProfile} 
+            orders={orders}
+            setOrders={setOrders}
+            handleUpdateStatus={handleUpdateStatus}
+            fetchOrders={fetchOrders}
+            isRefreshing={isRefreshing}
+            isLoadingMore={isLoadingMore}
+            updatingOrderId={updatingOrderId}
+            fetchMoreOrders={fetchMoreOrders}
+            hasMore={hasMore}
+          />
+        } />
+        <Route path="cardapio/*" element={<CardapioHubWrapper restaurantProfile={restaurantProfile} />} />
+        <Route path="gestao/*" element={<GestaoHubWrapper restaurantProfile={restaurantProfile} orders={orders} />} />
+        
+        {/* Financeiro Subroutes and Aliases */}
+        <Route path="financeiro/caixa" element={<PermissionGuard module="caixa"><Navigate to="/restaurant/financeiro?subtab=caixa" replace /></PermissionGuard>} />
+        <Route path="financeiro/contas-receber" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=receber" replace /></PermissionGuard>} />
+        <Route path="financeiro/contas-pagar" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=pagar" replace /></PermissionGuard>} />
+        <Route path="financeiro/faturas" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=faturas" replace /></PermissionGuard>} />
+        <Route path="financeiro/visao" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=visao" replace /></PermissionGuard>} />
+        <Route path="finances" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=visao" replace /></PermissionGuard>} />
+        <Route path="finances/cash" element={<PermissionGuard module="caixa"><Navigate to="/restaurant/financeiro?subtab=caixa" replace /></PermissionGuard>} />
+        <Route path="finances/receivables" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=receber" replace /></PermissionGuard>} />
+        <Route path="finances/payables" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=pagar" replace /></PermissionGuard>} />
+        <Route path="finances/invoice" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=faturas" replace /></PermissionGuard>} />
 
-        {/* Entregadores / Drivers Routes */}
-        <Route path="drivers" element={<DriversList />} />
-        <Route path="drivers/new" element={<RegisterDriver />} />
-        <Route path="drivers/deliveries" element={<AssignedDeliveries />} />
-        <Route path="drivers/settings" element={<DeliverySettings />} />
+        <Route path="financeiro/*" element={<FinanceiroHubWrapper restaurantProfile={restaurantProfile} />} />
+        <Route path="configuracoes/*" element={<ConfiguracoesHubWrapper restaurantProfile={restaurantProfile} />} />
+
+        {/* Legacy Routes as Aliases (Fase 8) */}
+        <Route path="saloes" element={<PermissionGuard module="saloes"><Navigate to="/restaurant/operacao/mesas?subtab=saloes" replace /></PermissionGuard>} />
+        <Route path="halls" element={<PermissionGuard module="saloes"><Navigate to="/restaurant/operacao/mesas?subtab=saloes" replace /></PermissionGuard>} />
         
-        {/* Financeiro Subroutes */}
-        <Route path="financeiro" element={<FinanceiroPage />} />
-        <Route path="financeiro/caixa" element={<CaixaPage />} />
-        <Route path="financeiro/contas-receber" element={<ContasReceberPage />} />
-        <Route path="financeiro/contas-pagar" element={<ContasPagarPage />} />
-        <Route path="financeiro/lancamentos" element={<LancamentosPage />} />
+        <Route path="mesas" element={<PermissionGuard module="mesas"><Navigate to="/restaurant/operacao/mesas?subtab=mesas" replace /></PermissionGuard>} />
+        <Route path="tables" element={<PermissionGuard module="mesas"><Navigate to="/restaurant/operacao/mesas?subtab=mesas" replace /></PermissionGuard>} />
+        <Route path="mapa-mesas" element={<PermissionGuard module="mesas"><Navigate to="/restaurant/operacao/mesas?subtab=mapa" replace /></PermissionGuard>} />
+        <Route path="tables/map" element={<PermissionGuard module="mesas"><Navigate to="/restaurant/operacao/mesas?subtab=mapa" replace /></PermissionGuard>} />
+        <Route path="mesas/mapa" element={<PermissionGuard module="mesas"><Navigate to="/restaurant/operacao/mesas?subtab=mapa" replace /></PermissionGuard>} />
         
-        {/* Configurações Subroutes */}
-        <Route path="settings/payments" element={<RestaurantPayments />} />
-        <Route path="settings/account" element={<AccountSettings />} />
-        <Route path="settings/password" element={<PasswordSettings />} />
-        <Route path="settings/print" element={<PrintSettings />} />
-        <Route path="settings/integration" element={<MercadoPagoIntegration />} />
-        <Route path="settings/whatsapp" element={<WhatsAppIntegration />} />
+        <Route path="menu/categories" element={<PermissionGuard module="menu"><Navigate to="/restaurant/cardapio/categorias?subtab=categorias" replace /></PermissionGuard>} />
+        <Route path="menu/items" element={<PermissionGuard module="menu"><Navigate to="/restaurant/cardapio/produtos?subtab=produtos" replace /></PermissionGuard>} />
+        <Route path="menu/sizes" element={<PermissionGuard module="menu"><Navigate to="/restaurant/cardapio/tamanhos?subtab=tamanhos" replace /></PermissionGuard>} />
+        <Route path="fatura" element={<PermissionGuard module="financeiro"><Navigate to="/restaurant/financeiro?subtab=faturas" replace /></PermissionGuard>} />
+        <Route path="menu/extras" element={<PermissionGuard module="menu"><Navigate to="/restaurant/cardapio/adicionais?subtab=adicionais" replace /></PermissionGuard>} />
+        <Route path="menu/grupos" element={<PermissionGuard module="menu"><Navigate to="/restaurant/cardapio/grupos?subtab=grupos" replace /></PermissionGuard>} />
+        <Route path="delivery-areas" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/entrega?subtab=entrega" replace /></PermissionGuard>} />
+        <Route path="schedules" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/horarios?subtab=horarios" replace /></PermissionGuard>} />
+        <Route path="menu/promotions" element={<PermissionGuard module="menu"><Navigate to="/restaurant/cardapio/promocoes?subtab=promocoes" replace /></PermissionGuard>} />
+        <Route path="estoque" element={<PermissionGuard module="stock"><Navigate to="/restaurant/cardapio/estoque?subtab=estoque" replace /></PermissionGuard>} />
+        <Route path="inventory" element={<PermissionGuard module="stock"><Navigate to="/restaurant/cardapio/estoque?subtab=estoque" replace /></PermissionGuard>} />
+
+        {/* Entregadores / Drivers Routes as Aliases */}
+        <Route path="drivers" element={<PermissionGuard module="delivery"><Navigate to="/restaurant/operacao/entregas?subtab=entregadores" replace /></PermissionGuard>} />
+        <Route path="drivers/new" element={<PermissionGuard module="delivery"><Navigate to="/restaurant/gestao/equipe" replace /></PermissionGuard>} />
+        <Route path="drivers/deliveries" element={<PermissionGuard module="delivery"><Navigate to="/restaurant/operacao/entregas?subtab=ativas" replace /></PermissionGuard>} />
+        <Route path="drivers/settings" element={<PermissionGuard module="delivery"><Navigate to="/restaurant/operacao/entregas?subtab=configuracoes" replace /></PermissionGuard>} />
+        
+        {/* Financeiro is now managed by FinanceiroHubWrapper under financeiro/* */}
+        
+        {/* Configurações Subroutes as Aliases */}
+        <Route path="settings/payments" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/pagamentos?subtab=pagamentos" replace /></PermissionGuard>} />
+        <Route path="settings/account" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/dados?subtab=dados" replace /></PermissionGuard>} />
+        <Route path="settings/team" element={<PermissionGuard module="equipe"><Navigate to="/restaurant/gestao/equipe?subtab=equipe" replace /></PermissionGuard>} />
+        <Route path="settings/password" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/seguranca?subtab=seguranca" replace /></PermissionGuard>} />
+        <Route path="settings/print" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/impressao?subtab=impressao" replace /></PermissionGuard>} />
+        <Route path="settings/integration" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/integracoes?subtab=integracoes" replace /></PermissionGuard>} />
+        <Route path="settings/whatsapp" element={<PermissionGuard module="settings"><Navigate to="/restaurant/configuracoes/whatsapp?subtab=whatsapp" replace /></PermissionGuard>} />
         
         {/* Fallback for white screen prevention */}
         <Route path="*" element={
@@ -781,18 +871,6 @@ function PlaceholderPage({ title }: { title: string }) {
   );
 }
 
-const StatCard = React.memo(({ label, value, icon: Icon, color }: { label: string, value: string | number, icon: any, color: string }) => {
-  return (
-    <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-      <div className={`w-12 h-12 ${color} text-white rounded-2xl flex items-center justify-center mb-4 shadow-lg`}>
-        <Icon className="w-6 h-6" />
-      </div>
-      <p className="text-stone-500 font-bold text-sm uppercase tracking-wider">{label}</p>
-      <h3 className="text-3xl font-bold text-stone-800 mt-1">{value}</h3>
-    </div>
-  );
-});
-
 const DashboardStats = React.memo(({ orders }: { orders: any[] }) => {
   const [loading, setLoading] = React.useState(true);
 
@@ -807,37 +885,31 @@ const DashboardStats = React.memo(({ orders }: { orders: any[] }) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Início do mês atual para cálculo de faturamento mensal
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    // Filtra pedidos de hoje e do mês atual
     const todayOrders = orders.filter(o => new Date(o.data_criacao) >= today);
     const monthOrders = orders.filter(o => new Date(o.data_criacao) >= startOfMonth);
 
-    // 1. Pedidos em aberto (não finalizados/cancelados) vs concluídos (entregues/finalizados)
+    const pendingOrders = todayOrders.filter(o => o.status === 'pendente');
     const openOrdersCount = todayOrders.filter(o => ['pendente', 'aceito', 'preparo', 'pronto', 'entrega'].includes(o.status)).length;
     const completedOrdersCount = todayOrders.filter(o => ['entregue', 'finalizado'].includes(o.status)).length;
 
-    // 2. Pedidos cancelados hoje (contagem e percentual sobre o total do dia)
     const cancelledOrders = todayOrders.filter(o => ['cancelado', 'rejeitado'].includes(o.status));
     const cancelledCount = cancelledOrders.length;
     const cancelledPercent = todayOrders.length > 0 ? (cancelledCount / todayOrders.length) * 100 : 0;
 
-    // 3. Ticket médio do dia (faturamento total / total de pedidos)
     const totalRevenueToday = todayOrders.reduce((acc, o) => acc + (o.valor_total || 0), 0);
     const avgTicketToday = todayOrders.length > 0 ? totalRevenueToday / todayOrders.length : 0;
 
-    // 4. Produtos mais vendidos do dia (agrupados por nome)
     const productSales: Record<string, { nome: string, qtd: number }> = {};
     todayOrders.forEach(o => {
-      o.itens?.forEach((i: any) => {
+      (o.items || o.itens)?.forEach((i: any) => {
         if (!productSales[i.nome]) productSales[i.nome] = { nome: i.nome, qtd: 0 };
         productSales[i.nome].qtd += i.quantidade;
       });
     });
     const topProducts = Object.values(productSales).sort((a, b) => b.qtd - a.qtd).slice(0, 5);
 
-    // 5. Clientes recorrentes hoje (clientes que fizeram mais de 1 pedido no mesmo dia)
     const clientOrders: Record<string, number> = {};
     todayOrders.forEach(o => {
       if (o.cliente_id) {
@@ -846,15 +918,12 @@ const DashboardStats = React.memo(({ orders }: { orders: any[] }) => {
     });
     const recurringClientsToday = Object.values(clientOrders).filter(count => count > 1).length;
 
-    // 6. Horários de pico (contagem de pedidos por hora do dia)
     const hourlyVolume = Array.from({ length: 24 }, (_, i) => ({ hour: `${i}h`, count: 0 }));
     todayOrders.forEach(o => {
       const hour = new Date(o.data_criacao).getHours();
       hourlyVolume[hour].count += 1;
     });
 
-    // 7. Percentual de pedidos atrasados
-    // Regra: pendente há mais de 15min ou aceito há mais de 45min sem alteração de status
     const delayedOrders = todayOrders.filter(o => {
       const created = new Date(o.data_criacao);
       const diffMins = (now.getTime() - created.getTime()) / (1000 * 60);
@@ -864,11 +933,12 @@ const DashboardStats = React.memo(({ orders }: { orders: any[] }) => {
     });
     const delayedPercent = todayOrders.length > 0 ? (delayedOrders.length / todayOrders.length) * 100 : 0;
 
-    // 8. Faturamento acumulado no mês
     const totalRevenueMonth = monthOrders.reduce((acc, o) => acc + (o.valor_total || 0), 0);
 
     return {
       todayOrders,
+      pendingCount: pendingOrders.length,
+      delayedCount: delayedOrders.length,
       openOrdersCount,
       completedOrdersCount,
       cancelledCount,
@@ -884,197 +954,289 @@ const DashboardStats = React.memo(({ orders }: { orders: any[] }) => {
   }, [orders]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center p-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
-      </div>
-    );
+    return <LoadingState message="Carregando dados do restaurante..." />;
   }
 
-  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
+  const shortcuts = [
+    { title: 'Pedidos', subtitle: 'Gerenciar fila e status', path: '/restaurant/operacao/pedidos', icon: ShoppingBag },
+    { title: 'Balcão', subtitle: 'Atendimento e caixa rápido', path: '/restaurant/balcao', icon: Utensils },
+    { title: 'Mesas & Comandas', subtitle: 'Gestão de salão e mapa', path: '/restaurant/operacao/mesas', icon: LayoutGrid },
+    { title: 'Caixa', subtitle: 'Abertura, sangria e fecho', path: '/restaurant/financeiro?subtab=caixa', icon: DollarSign },
+    { title: 'Entregas', subtitle: 'Despacho e entregadores', path: '/restaurant/operacao/entregas', icon: MapPin },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Principais Indicadores */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard 
-          label="Faturamento Hoje" 
-          value={`R$ ${metrics.totalRevenueToday.toFixed(2)}`} 
+      {/* 1. CABEÇALHO CANÔNICO */}
+      <PageHeader
+        title="Visão Geral"
+        description="Resumo da operação e desempenho do restaurante."
+        icon={LayoutDashboard}
+      />
+
+      {/* 2. PRIMEIRO: ALERTAS OPERACIONAIS E SITUAÇÕES QUE EXIGEM AÇÃO */}
+      {(metrics.pendingCount > 0 || metrics.delayedCount > 0) && (
+        <Card className="bg-amber-50/70 border-amber-200 p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-extrabold text-amber-950 text-sm sm:text-base">Atenção Necessária na Operação</h3>
+                  {metrics.pendingCount > 0 && (
+                    <Badge variant="warning">{metrics.pendingCount} aguardando aceite</Badge>
+                  )}
+                  {metrics.delayedCount > 0 && (
+                    <Badge variant="danger">{metrics.delayedCount} atrasado(s)</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-amber-800 font-medium mt-1">
+                  {metrics.pendingCount > 0 && `${metrics.pendingCount} pedido(s) pendente(s) de confirmação. `}
+                  {metrics.delayedCount > 0 && `${metrics.delayedCount} pedido(s) ultrapassaram o tempo limite recomendado.`}
+                </p>
+              </div>
+            </div>
+            <Link to="/restaurant/operacao/pedidos" className="w-full sm:w-auto shrink-0">
+              <Button variant="primary" size="sm" icon={<ShoppingBag className="w-4 h-4" />} className="w-full sm:w-auto min-h-[44px]">
+                Atender Pedidos
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      )}
+
+      {/* 3. SEGUNDO: KPIS PRINCIPAIS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        <UiStatCard 
+          title="Faturamento Hoje" 
+          value={`R$ ${metrics.totalRevenueToday.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
           icon={DollarSign} 
-          color="bg-emerald-500" 
+          iconBgColor="bg-emerald-50"
+          iconTextColor="text-emerald-600"
         />
-        <StatCard 
-          label="Ticket Médio" 
-          value={`R$ ${metrics.avgTicketToday.toFixed(2)}`} 
+        <UiStatCard 
+          title="Ticket Médio" 
+          value={`R$ ${metrics.avgTicketToday.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
           icon={TrendingUp} 
-          color="bg-blue-500" 
+          iconBgColor="bg-blue-50"
+          iconTextColor="text-blue-600"
         />
-        <StatCard 
-          label="Pedidos Hoje" 
+        <UiStatCard 
+          title="Pedidos Hoje" 
           value={metrics.todayOrders.length} 
           icon={ShoppingBag} 
-          color="bg-orange-500" 
+          iconBgColor="bg-amber-50"
+          iconTextColor="text-amber-600"
         />
-        <StatCard 
-          label="Faturamento Mês" 
-          value={`R$ ${metrics.totalRevenueMonth.toFixed(2)}`} 
-          icon={LayoutDashboard} 
-          color="bg-purple-500" 
+        <UiStatCard 
+          title="Faturamento Mês" 
+          value={`R$ ${metrics.totalRevenueMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} 
+          icon={BarChart3} 
+          iconBgColor="bg-purple-50"
+          iconTextColor="text-purple-600"
         />
       </div>
 
-      {/* Detalhamento Operacional */}
+      {/* 4. TERCEIRO: VISÃO OPERACIONAL RESUMIDA */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pedidos em Aberto vs Concluídos */}
-        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-          <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-emerald-500" /> Operação Hoje
-          </h3>
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-              <p className="text-stone-500 text-xs font-bold uppercase">Em Aberto</p>
-              <p className="text-2xl font-bold text-stone-800">{metrics.openOrdersCount}</p>
+        <Card className="space-y-4">
+          <SectionHeader 
+            title="Operação Hoje" 
+            description="Status e andamento dos pedidos no dia"
+          />
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="bg-stone-50 p-4 rounded-2xl border border-stone-200/60">
+              <span className="text-stone-500 text-xs font-bold uppercase tracking-wider">Em Andamento</span>
+              <p className="text-2xl font-black text-stone-800 mt-1">{metrics.openOrdersCount}</p>
             </div>
-            <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-              <p className="text-stone-500 text-xs font-bold uppercase">Concluídos</p>
-              <p className="text-2xl font-bold text-stone-800">{metrics.completedOrdersCount}</p>
+            <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
+              <span className="text-emerald-700 text-xs font-bold uppercase tracking-wider">Concluídos</span>
+              <p className="text-2xl font-black text-emerald-800 mt-1">{metrics.completedOrdersCount}</p>
             </div>
           </div>
-          <div className="w-full overflow-hidden" style={{ minHeight: 250 }}>
+          <div className="w-full overflow-hidden flex items-center justify-center min-h-[200px]">
             {metrics.openOrdersCount + metrics.completedOrdersCount > 0 ? (
-              <ResponsiveContainer width="100%" height={250}>
+              <ResponsiveContainer width="100%" height={200}>
                 <RePieChart>
                   <Pie
                     data={[
-                      { name: 'Em Aberto', value: metrics.openOrdersCount },
+                      { name: 'Em Andamento', value: metrics.openOrdersCount },
                       { name: 'Concluídos', value: metrics.completedOrdersCount }
                     ]}
                     cx="50%"
                     cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
+                    innerRadius={55}
+                    outerRadius={75}
+                    paddingAngle={4}
                     dataKey="value"
                   >
-                    <Cell fill="#3b82f6" />
+                    <Cell fill="#059669" />
                     <Cell fill="#10b981" />
                   </Pie>
-                  <Tooltip />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '12px', border: '1px solid #e7e5e4', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
+                  />
                 </RePieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex items-center justify-center h-full text-stone-400 text-sm">
-                Nenhum dado para exibir hoje.
-              </div>
+              <EmptyState
+                title="Sem pedidos registrados hoje"
+                description="Os pedidos do dia aparecerão aqui conforme forem criados."
+                icon={ShoppingBag}
+              />
             )}
           </div>
-        </div>
+        </Card>
 
-        {/* Cancelamentos e Atrasos */}
-        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-          <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-orange-500" /> Alertas do Dia
-          </h3>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-4 bg-red-50 rounded-2xl border border-red-100">
+        {/* Alertas e Métricas do Dia */}
+        <Card className="space-y-4">
+          <SectionHeader 
+            title="Indicadores Operacionais" 
+            description="Métricas de qualidade e reincidência"
+          />
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between p-4 bg-stone-50 rounded-2xl border border-stone-200/60">
               <div className="flex items-center gap-3">
-                <XCircle className="w-6 h-6 text-red-500" />
+                <div className="w-9 h-9 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                  <XCircle className="w-5 h-5" />
+                </div>
                 <div>
-                  <p className="font-bold text-stone-800">Cancelados</p>
-                  <p className="text-xs text-stone-500">{metrics.cancelledCount} pedidos hoje</p>
+                  <p className="font-bold text-stone-800 text-sm">Cancelamentos</p>
+                  <p className="text-xs text-stone-500">{metrics.cancelledCount} pedido(s) hoje</p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-xl font-bold text-red-600">{metrics.cancelledPercent.toFixed(1)}%</p>
-              </div>
+              <Badge variant={metrics.cancelledCount > 0 ? 'danger' : 'neutral'}>
+                {metrics.cancelledPercent.toFixed(1)}%
+              </Badge>
             </div>
 
-            <div className="flex items-center justify-between p-4 bg-orange-50 rounded-2xl border border-orange-100">
+            <div className="flex items-center justify-between p-4 bg-stone-50 rounded-2xl border border-stone-200/60">
               <div className="flex items-center gap-3">
-                <Clock className="w-6 h-6 text-orange-500" />
+                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                  <Clock className="w-5 h-5" />
+                </div>
                 <div>
-                  <p className="font-bold text-stone-800">Atrasados</p>
-                  <p className="text-xs text-stone-500">Pedidos fora do prazo</p>
+                  <p className="font-bold text-stone-800 text-sm">Pedidos Atrasados</p>
+                  <p className="text-xs text-stone-500">Fora do tempo estimado</p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-xl font-bold text-orange-600">{metrics.delayedPercent.toFixed(1)}%</p>
-              </div>
+              <Badge variant={metrics.delayedCount > 0 ? 'warning' : 'neutral'}>
+                {metrics.delayedPercent.toFixed(1)}%
+              </Badge>
             </div>
 
-            <div className="flex items-center justify-between p-4 bg-blue-50 rounded-2xl border border-blue-100">
+            <div className="flex items-center justify-between p-4 bg-stone-50 rounded-2xl border border-stone-200/60">
               <div className="flex items-center gap-3">
-                <Users className="w-6 h-6 text-blue-500" />
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                  <Users className="w-5 h-5" />
+                </div>
                 <div>
-                  <p className="font-bold text-stone-800">Clientes Recorrentes</p>
-                  <p className="text-xs text-stone-500">Pediram mais de uma vez hoje</p>
+                  <p className="font-bold text-stone-800 text-sm">Clientes Recorrentes</p>
+                  <p className="text-xs text-stone-500">Compraram mais de uma vez hoje</p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-xl font-bold text-blue-600">{metrics.recurringClientsToday}</p>
-              </div>
+              <Badge variant="success">
+                {metrics.recurringClientsToday} cliente(s)
+              </Badge>
             </div>
           </div>
-        </div>
+        </Card>
       </div>
 
-      {/* Gráficos de Pico e Produtos */}
+      {/* 5. QUARTO: GRÁFICOS E INDICADORES SECUNDÁRIOS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Horários de Pico */}
-        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-          <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-blue-500" /> Horários de Pico
-          </h3>
-          <div className="w-full overflow-hidden" style={{ minHeight: 250 }}>
+        <Card className="space-y-4">
+          <SectionHeader 
+            title="Horários de Pico" 
+            description="Distribuição de volume de pedidos por hora"
+          />
+          <div className="w-full overflow-hidden min-h-[220px] flex items-center justify-center">
             {metrics.hourlyVolume.some(h => h.count > 0) ? (
-              <ResponsiveContainer width="100%" height={250}>
+              <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={metrics.hourlyVolume.filter(h => h.count > 0)}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f5f5f5" />
-                  <XAxis dataKey="hour" axisLine={false} tickLine={false} fontSize={12} />
-                  <YAxis axisLine={false} tickLine={false} fontSize={12} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f5f5f4" />
+                  <XAxis dataKey="hour" axisLine={false} tickLine={false} fontSize={11} stroke="#a8a29e" />
+                  <YAxis axisLine={false} tickLine={false} fontSize={11} stroke="#a8a29e" />
                   <Tooltip 
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '12px', border: '1px solid #e7e5e4', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
+                    cursor={{ fill: '#f5f5f4' }}
                   />
-                  <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" fill="#10b981" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex items-center justify-center h-full text-stone-400 text-sm">
-                Nenhuma atividade registrada hoje.
-              </div>
+              <EmptyState
+                title="Sem dados de horário"
+                description="O fluxo por horário será exibido conforme novos pedidos forem feitos."
+                icon={BarChart3}
+              />
             )}
           </div>
-        </div>
+        </Card>
 
         {/* Top Produtos */}
-        <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
-          <h3 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-            <Utensils className="w-5 h-5 text-orange-500" /> Top Produtos Hoje
-          </h3>
-          <div className="space-y-3">
+        <Card className="space-y-4">
+          <SectionHeader 
+            title="Top Produtos Hoje" 
+            description="Itens mais vendidos no dia"
+          />
+          <div className="space-y-2.5">
             {metrics.topProducts.length > 0 ? (
               metrics.topProducts.map((product, index) => (
-                <div key={product.nome} className="flex items-center justify-between p-3 bg-stone-50 rounded-2xl border border-stone-100">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center font-bold text-stone-400 text-xs border border-stone-200">
+                <div key={product.nome} className="flex items-center justify-between p-3 bg-stone-50 rounded-2xl border border-stone-200/60">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-7 h-7 rounded-full bg-white border border-stone-200 text-stone-600 font-bold text-xs flex items-center justify-center shrink-0">
                       {index + 1}
                     </div>
-                    <p className="font-bold text-stone-800 text-sm">{product.nome}</p>
+                    <p className="font-bold text-stone-800 text-sm truncate">{product.nome}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-stone-800">{product.qtd} vendas</p>
-                  </div>
+                  <Badge variant="neutral" className="shrink-0">
+                    {product.qtd} unidade(s)
+                  </Badge>
                 </div>
               ))
             ) : (
-              <div className="text-center py-12 text-stone-400">
-                Nenhuma venda registrada hoje.
-              </div>
+              <EmptyState
+                title="Sem produtos vendidos hoje"
+                description="Os produtos mais vendidos aparecerão aqui."
+                icon={Utensils}
+              />
             )}
           </div>
-        </div>
+        </Card>
       </div>
+
+      {/* 6. QUINTO: ATALHOS ÚTEIS */}
+      <Card>
+        <SectionHeader 
+          title="Atalhos da Operação" 
+          description="Acesso rápido aos principais módulos de trabalho"
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          {shortcuts.map((shortcut) => {
+            const Icon = shortcut.icon;
+            return (
+              <Link
+                key={shortcut.title}
+                to={shortcut.path}
+                className="p-3.5 bg-stone-50 hover:bg-emerald-50/60 border border-stone-200/80 hover:border-emerald-200 rounded-2xl flex items-center gap-3 transition-all group min-h-[44px]"
+              >
+                <div className="w-9 h-9 rounded-xl bg-white border border-stone-200 group-hover:border-emerald-300 text-stone-600 group-hover:text-emerald-600 flex items-center justify-center shrink-0 transition-colors shadow-2xs">
+                  <Icon className="w-4.5 h-4.5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-stone-800 group-hover:text-emerald-900 truncate">{shortcut.title}</p>
+                  <p className="text-[10px] text-stone-500 font-medium truncate">{shortcut.subtitle}</p>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </Card>
     </div>
   );
 });
@@ -1094,101 +1256,21 @@ const statusKanbanMap: Record<string, string> = {
   rejeitado: "finalizado"
 };
 
-const KanbanCard = React.memo(({ order, onUpdate, onClick, isUpdating }: { order: any, onUpdate: (id: string, status: string) => void, onClick: () => void, isUpdating: boolean }) => {
-  const [clientName, setClientName] = React.useState<string>(order.cliente_nome || 'Cliente');
-
-  React.useEffect(() => {
-    if ((!order.cliente_nome || order.cliente_nome === 'Cliente') && order.cliente_id) {
-      const fetchClientName = async () => {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', order.cliente_id));
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            setClientName(userData.nome || userData.displayName || 'Cliente');
-          }
-        } catch (error) {
-          console.error("Error fetching client name:", error);
-        }
-      };
-      fetchClientName();
-    } else if (order.cliente_nome) {
-      setClientName(order.cliente_nome);
-    }
-  }, [order.cliente_id, order.cliente_nome]);
-
-  const isPendingSettlement =
-    order.status === 'entregue' ||
-    order.status === 'delivered_pending_settlement' ||
-    order.deliveryStatus === 'DELIVERED_PENDING_SETTLEMENT' ||
-    order.financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
-
-  const getNextStatus = (currentStatus: string) => {
-    switch (currentStatus) {
-      case 'pendente': return 'aceito';
-      case 'aceito': return 'preparo';
-      case 'preparo':
-      case 'cozinha': return 'pronto';
-      case 'pronto': 
-        return ['retirada', 'balcao', 'consumo_local'].includes(order?.tipo_entrega) ? 'entregue' : 'entrega';
-      default: return null;
-    }
-  };
-
-  const nextStatus = getNextStatus(order.status);
-
-  return (
-    <div 
-      className={`p-4 rounded-2xl border shadow-sm space-y-2 cursor-pointer transition-colors ${getOrderCardStyle(order.status, false)}`}
-      onClick={onClick}
-    >
-      <div className="flex justify-between items-start">
-        <span className="text-xs font-bold text-stone-500">#{order.id.slice(-5).toUpperCase()}</span>
-        <span className="text-xs font-bold text-stone-400">{new Date(order.data_criacao).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-      </div>
-      <h4 className="font-bold text-stone-800 truncate">{clientName.trim().split(' ')[0] || 'Cliente'}</h4>
-      <p className="text-sm font-bold text-emerald-600">R$ {order.valor_total.toFixed(2)}</p>
-
-      {isPendingSettlement ? (
-        <div className="space-y-2 pt-1 border-t border-stone-100">
-          <p className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
-            Entregue — aguardando conferência
-          </p>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClick();
-            }}
-            className="w-full text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5"
-          >
-            Conferir Recebimento
-          </button>
-        </div>
-      ) : (
-        <>
-          <p className="text-xs text-stone-500 capitalize">{order.status}</p>
-          {nextStatus && (
-            <button
-              onClick={(e) => { 
-                e.stopPropagation(); 
-                onUpdate(order.id, nextStatus); 
-              }}
-              disabled={isUpdating}
-              className={`w-full mt-2 text-xs font-bold px-3 py-2 rounded-xl border transition-all ${
-                isUpdating
-                  ? 'bg-stone-100 text-stone-400 border-stone-200 cursor-not-allowed'
-                  : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200'
-              }`}
-            >
-              {isUpdating ? 'Atualizando...' : 'Avançar'}
-            </button>
-          )}
-        </>
-      )}
-    </div>
-  );
-});
-
-const KanbanBoard = ({ orders, onUpdateStatus, onOrderClick, updatingOrderId }: { orders: any[], onUpdateStatus: (id: string, status: string) => void, onOrderClick: (order: any) => void, updatingOrderId: string | null }) => {
+const KanbanBoard = ({ 
+  orders, 
+  onUpdateStatus, 
+  onOrderClick, 
+  updatingOrderId,
+  selectedOrder,
+  onPrintOrder
+}: { 
+  orders: any[], 
+  onUpdateStatus: (id: string, status: string) => void, 
+  onOrderClick: (order: any) => void, 
+  updatingOrderId: string | null,
+  selectedOrder?: any,
+  onPrintOrder?: (order: any) => void
+}) => {
   const pedidosPorColuna = useMemo(() => {
     const colunas: Record<string, any[]> = {
       novo: [],
@@ -1198,9 +1280,11 @@ const KanbanBoard = ({ orders, onUpdateStatus, onOrderClick, updatingOrderId }: 
       finalizado: []
     };
     orders.forEach(pedido => {
-      const coluna = statusKanbanMap[pedido.status] || "novo";
+      const coluna = getOrderKanbanColumn(pedido) || "novo";
       if (colunas[coluna]) {
         colunas[coluna].push(pedido);
+      } else {
+        colunas.novo.push(pedido);
       }
     });
     return colunas;
@@ -1228,12 +1312,14 @@ const KanbanBoard = ({ orders, onUpdateStatus, onOrderClick, updatingOrderId }: 
           <h3 className="font-bold capitalize" style={{ color: coresColunas[coluna] }}>{coluna}</h3>
           <div className="flex-1 space-y-4">
             {pedidos.map(pedido => (
-              <KanbanCard 
+              <RestaurantOrderCard 
                 key={pedido.id} 
                 order={pedido} 
-                onUpdate={onUpdateStatus} 
-                onClick={() => onOrderClick(pedido)} 
+                isSelected={selectedOrder?.id === pedido.id}
                 isUpdating={updatingOrderId === pedido.id}
+                onOrderClick={onOrderClick} 
+                onUpdateStatus={onUpdateStatus} 
+                onPrintOrder={onPrintOrder}
               />
             ))}
           </div>
@@ -1391,28 +1477,46 @@ function OrdersList({
   const handleSavePayment = React.useCallback(async () => {
     if (!profile?.restaurantId || !selectedOrder) return;
     try {
-      const updateData = {
-        forma_pagamento: editPaymentMethod,
-        troco: editPaymentMethod === 'dinheiro' ? editTroco : null
+      const pmId = normalizePaymentMethodId(editPaymentMethod) || editPaymentMethod || 'dinheiro';
+      const totalCents = Math.round(Number(selectedOrder.valor_total || selectedOrder.total || 0) * 100);
+      const clientActionId = `act_pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+      const res = await processOrderPaymentsApi({
+        restaurantId: profile.restaurantId,
+        orderId: selectedOrder.id,
+        payments: [{
+          paymentMethodId: pmId,
+          amount: totalCents,
+          status: 'PAID'
+        }],
+        operatorName: profile.nome || 'Operador',
+        clientActionId
+      });
+
+      if (!res.ok) {
+        alert(res.error || 'Erro ao salvar alteração de pagamento.');
+        return;
+      }
+
+      const updatedOrder = res.order || {
+        ...selectedOrder,
+        forma_pagamento: pmId,
+        troco: pmId === 'dinheiro' ? editTroco : null
       };
-      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
-      
-      // Atualiza estado local e cache
+
       setOrders((prevOrders: any[]) => {
-        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? { ...o, ...updateData } : o);
+        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? updatedOrder : o);
         cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
         return updatedOrders;
       });
-      
+
       setIsEditingPayment(false);
-      setSelectedOrder((prev: any) => ({
-        ...prev,
-        ...updateData
-      }));
-    } catch (error) {
+      setSelectedOrder(updatedOrder);
+    } catch (error: any) {
       console.error("Error updating payment", error);
+      alert(error?.message || "Erro ao atualizar pagamento.");
     }
-  }, [profile?.restaurantId, selectedOrder, editPaymentMethod, editTroco, setOrders]);
+  }, [profile?.restaurantId, profile?.nome, selectedOrder, editPaymentMethod, editTroco, setOrders]);
 
   const handleEditAddress = React.useCallback(() => {
     if (!selectedOrder) return;
@@ -1449,27 +1553,41 @@ function OrdersList({
     const fetchDetails = async () => {
       setLoadingDetails(true);
       try {
-        const userDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id));
-        if (userDoc.exists()) {
-          setCustomerData(userDoc.data());
-        } else {
-          setCustomerData(null);
+        const customer = selectedOrder.cliente || (selectedOrder.cliente_nome ? {
+          nome: selectedOrder.cliente_nome,
+          telefone: selectedOrder.cliente_telefone || selectedOrder.telefone || '',
+          email: selectedOrder.cliente_email || selectedOrder.email || ''
+        } : null);
+
+        const address = selectedOrder.endereco_entrega || selectedOrder.endereco || null;
+
+        setCustomerData(customer || { nome: selectedOrder.cliente_nome || 'Cliente' });
+        setAddressData(address);
+
+        if (!customer && selectedOrder.cliente_id) {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id));
+            if (userDoc.exists()) {
+              setCustomerData(userDoc.data());
+            }
+          } catch {
+            // Handled gracefully
+          }
         }
         
-        if (selectedOrder.endereco_entrega) {
-          setAddressData(selectedOrder.endereco_entrega);
-        } else if (selectedOrder.endereco_id) {
-          const addrDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id, 'enderecos', selectedOrder.endereco_id));
-          if (addrDoc.exists()) {
-            setAddressData(addrDoc.data());
-          } else {
-            setAddressData(null);
+        if (!address && selectedOrder.endereco_id && selectedOrder.cliente_id) {
+          try {
+            const addrDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id, 'enderecos', selectedOrder.endereco_id));
+            if (addrDoc.exists()) {
+              setAddressData(addrDoc.data());
+            }
+          } catch {
+            // Handled gracefully
           }
-        } else {
-          setAddressData(null);
         }
-      } catch (error) {
-        console.error("Error fetching details", error);
+      } catch {
+        setCustomerData(selectedOrder.cliente || { nome: selectedOrder.cliente_nome || 'Cliente' });
+        setAddressData(selectedOrder.endereco_entrega || selectedOrder.endereco || null);
       } finally {
         setLoadingDetails(false);
       }
@@ -1487,84 +1605,121 @@ function OrdersList({
     }
 
     try {
-      const novoStatusPago = !selectedOrder.pago;
-      const updateData = { pago: novoStatusPago };
-      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
-      
-      // Atualiza estado local e cache
-      setOrders((prevOrders: any[]) => {
-        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? { ...o, ...updateData } : o);
-        cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
-        return updatedOrders;
-      });
-      
-      setSelectedOrder((prev: any) => ({
-        ...prev,
-        ...updateData
-      }));
+      if (!selectedOrder.pago) {
+        const totalCents = Math.round(Number(selectedOrder.valor_total || selectedOrder.total || 0) * 100);
+        const pmId = normalizePaymentMethodId(selectedOrder.forma_pagamento) || 'dinheiro';
+        const clientActionId = `act_pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-      if (novoStatusPago) {
-        await registerClientOrderPaymentMovement(
-          profile.restaurantId,
-          selectedOrder.id,
-          { ...selectedOrder, ...updateData },
-          profile.nome || 'Operador'
-        );
+        const res = await processOrderPaymentsApi({
+          restaurantId: profile.restaurantId,
+          orderId: selectedOrder.id,
+          payments: [{
+            paymentMethodId: pmId,
+            amount: totalCents,
+            status: 'PAID'
+          }],
+          operatorName: profile.nome || 'Operador',
+          clientActionId
+        });
+
+        if (!res.ok) {
+          alert(res.error || 'Erro ao marcar pedido como pago.');
+          return;
+        }
+
+        const updatedOrder = res.order || { ...selectedOrder, pago: true };
+        setOrders((prevOrders: any[]) => {
+          const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? updatedOrder : o);
+          cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
+          return updatedOrders;
+        });
+        setSelectedOrder(updatedOrder);
+      } else {
+        const reasonInput = window.prompt("Informe o motivo do estorno para desmarcar o pagamento:");
+        if (reasonInput === null) return;
+
+        let targetPaymentId = 'legacy';
+        if (Array.isArray(selectedOrder.payments) && selectedOrder.payments.length > 0) {
+          const paid = selectedOrder.payments.find((p: any) => p.status === 'PAID');
+          if (paid) targetPaymentId = paid.id;
+        }
+
+        const clientActionId = `act_ref_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const res = await processOrderRefundApi({
+          restaurantId: profile.restaurantId,
+          orderId: selectedOrder.id,
+          paymentId: targetPaymentId,
+          reason: reasonInput,
+          operatorName: profile.nome || 'Operador',
+          clientActionId
+        });
+
+        if (!res.ok) {
+          alert(res.error || 'Erro ao estornar pagamento do pedido.');
+          return;
+        }
+
+        const updatedOrder = res.order || { ...selectedOrder, pago: false };
+        setOrders((prevOrders: any[]) => {
+          const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? updatedOrder : o);
+          cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
+          return updatedOrders;
+        });
+        setSelectedOrder(updatedOrder);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error updating payment status", error);
+      alert(error?.message || "Erro ao atualizar status de pagamento.");
     }
-  }, [profile?.restaurantId, selectedOrder, setOrders]);
+  }, [profile?.restaurantId, profile?.nome, selectedOrder, setOrders]);
 
-  const handleRefund = React.useCallback(async (orderId: string, amount?: number) => {
+  const handleRefund = React.useCallback(async (orderId: string, amount?: number, reason?: string) => {
     if (!profile?.restaurantId) return;
     try {
-      const response = await fetch('/api/payments/mercadopago/refund', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          restaurantId: profile.restaurantId,
-          orderId,
-          amount
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Erro ao realizar estorno');
+      const currentOrder = orders.find((o: any) => o.id === orderId) || selectedOrder;
+      let targetPaymentId = 'legacy';
+      if (Array.isArray(currentOrder?.payments) && currentOrder.payments.length > 0) {
+        const paid = currentOrder.payments.find((p: any) => p.status === 'PAID');
+        if (paid) targetPaymentId = paid.id;
       }
 
-      const data = await response.json();
-      
-      // Update local state and cache
+      const clientActionId = `act_ref_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const res = await processOrderRefundApi({
+        restaurantId: profile.restaurantId,
+        orderId,
+        paymentId: targetPaymentId,
+        reason: reason || 'Estorno solicitado no painel',
+        operatorName: profile.nome || 'Operador',
+        clientActionId
+      });
+
+      if (!res.ok) {
+        throw new Error(res.error || 'Erro ao realizar estorno.');
+      }
+
+      const updatedOrder = res.order || {
+        ...currentOrder,
+        estornado: true,
+        pago: false
+      };
+
       setOrders((prevOrders: any[]) => {
-        const updatedOrders = prevOrders.map(o => o.id === orderId ? { 
-          ...o, 
-          estornado: true,
-          valor_estornado: data.refunded_amount || amount || o.valor_total
-        } : o);
+        const updatedOrders = prevOrders.map(o => o.id === orderId ? updatedOrder : o);
         cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
         return updatedOrders;
       });
-      
-      setSelectedOrder((prev: any) => {
-        if (prev?.id === orderId) {
-          return {
-            ...prev,
-            estornado: true,
-            valor_estornado: data.refunded_amount || amount || prev.valor_total
-          };
-        }
-        return prev;
-      });
-      
-      alert(data.message || 'Estorno realizado com sucesso!');
+
+      if (selectedOrder?.id === orderId) {
+        setSelectedOrder(updatedOrder);
+      }
+
+      alert('Estorno realizado com sucesso!');
     } catch (error: any) {
       console.error("Erro ao realizar estorno:", error);
       alert(error.message || "Erro ao realizar estorno.");
       throw error;
     }
-  }, [profile?.restaurantId, setOrders]);
+  }, [profile?.restaurantId, profile?.nome, orders, selectedOrder, setOrders]);
 
   if (orders.length === 0) {
     return (
@@ -1662,6 +1817,8 @@ function OrdersList({
               onUpdateStatus={onUpdate} 
               onOrderClick={handleOrderClick} 
               updatingOrderId={updatingOrderId}
+              selectedOrder={selectedOrder}
+              onPrintOrder={handlePrint}
             />
           ) : (
             filteredOrders.length === 0 ? (

@@ -200,7 +200,7 @@ export const counterOrderService = {
       })
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
       const errCode = data.error || data.code || 'UNKNOWN_ERROR';

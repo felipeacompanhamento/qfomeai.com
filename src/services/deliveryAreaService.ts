@@ -1,15 +1,13 @@
 import { 
   collection, 
-  query, 
-  getDocs, 
   doc, 
   addDoc, 
   updateDoc, 
   deleteDoc, 
-  serverTimestamp,
-  orderBy
+  serverTimestamp
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
+import { staticDataCacheService } from './staticDataCacheService';
 
 export interface DeliveryArea {
   id?: string;
@@ -22,26 +20,18 @@ export interface DeliveryArea {
 }
 
 export const deliveryAreaService = {
-  async getDeliveryAreasByRestaurant(restaurantId: string) {
-    try {
-      const q = query(
-        collection(db, 'restaurants', restaurantId, 'delivery_areas'),
-        orderBy('created_at', 'desc')
-      );
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DeliveryArea));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, `restaurants/${restaurantId}/delivery_areas`);
-      return [];
-    }
+  async getDeliveryAreasByRestaurant(restaurantId: string): Promise<DeliveryArea[]> {
+    return staticDataCacheService.getDeliveryAreas(restaurantId);
   },
 
   async createDeliveryArea(restaurantId: string, areaData: Omit<DeliveryArea, 'id' | 'created_at'>) {
     try {
-      return await addDoc(collection(db, 'restaurants', restaurantId, 'delivery_areas'), {
+      const res = await addDoc(collection(db, 'restaurants', restaurantId, 'delivery_areas'), {
         ...areaData,
         created_at: serverTimestamp()
       });
+      staticDataCacheService.invalidateDeliveryAreas(restaurantId);
+      return res;
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `restaurants/${restaurantId}/delivery_areas`);
     }
@@ -50,6 +40,7 @@ export const deliveryAreaService = {
   async updateDeliveryArea(restaurantId: string, areaId: string, areaData: Partial<DeliveryArea>) {
     try {
       await updateDoc(doc(db, 'restaurants', restaurantId, 'delivery_areas', areaId), areaData);
+      staticDataCacheService.invalidateDeliveryAreas(restaurantId);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `restaurants/${restaurantId}/delivery_areas/${areaId}`);
     }
@@ -58,8 +49,10 @@ export const deliveryAreaService = {
   async deleteDeliveryArea(restaurantId: string, areaId: string) {
     try {
       await deleteDoc(doc(db, 'restaurants', restaurantId, 'delivery_areas', areaId));
+      staticDataCacheService.invalidateDeliveryAreas(restaurantId);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `restaurants/${restaurantId}/delivery_areas/${areaId}`);
     }
   }
 };
+

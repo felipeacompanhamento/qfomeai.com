@@ -16,10 +16,10 @@ export const authApi = {
         body: JSON.stringify({ email }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       
       if (!response.ok) {
-        throw new Error(data.error || 'Erro ao enviar e-mail de ativação');
+        throw new Error(data.error || `Erro (${response.status}) ao enviar e-mail de ativação`);
       }
 
       return { success: true, message: data.message };

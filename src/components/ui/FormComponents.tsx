@@ -1,104 +1,45 @@
 import React, { useEffect } from 'react';
-import { X, Loader2, AlertCircle } from 'lucide-react';
+import { X, AlertCircle } from 'lucide-react';
+import { Button, ButtonProps } from './Button';
+import { Input, InputProps, Select, SelectProps, Textarea, TextareaProps, FormField, FormLabel } from './InputComponents';
+import { Modal, ModalProps } from './ModalComponents';
+import { EmptyState as BaseEmptyState, EmptyStateProps } from './Feedback';
+
+export { FormLabel, FormField };
 
 // PrimaryButton
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  loading?: boolean;
-  icon?: React.ReactNode;
-}
-
-export const PrimaryButton: React.FC<ButtonProps> = ({
-  children,
-  loading,
-  disabled,
-  icon,
-  className = '',
-  ...props
-}) => {
-  return (
-    <button
-      disabled={disabled || loading}
-      className={`relative flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-sm rounded-xl shadow-xs transition-all duration-150 ease-in-out disabled:opacity-50 disabled:pointer-events-none disabled:transform-none select-none cursor-pointer ${className}`}
-      {...props}
-    >
-      {loading && <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />}
-      {!loading && icon && <span className="flex-shrink-0">{icon}</span>}
-      <span>{children}</span>
-    </button>
-  );
-};
+export const PrimaryButton: React.FC<ButtonProps> = (props) => (
+  <Button variant="primary" size="md" {...props} />
+);
 
 // SecondaryButton
-export const SecondaryButton: React.FC<ButtonProps> = ({
-  children,
-  loading,
-  disabled,
-  icon,
-  className = '',
-  ...props
-}) => {
-  return (
-    <button
-      disabled={disabled || loading}
-      className={`relative flex items-center justify-center gap-2 px-5 py-2.5 bg-white border border-stone-200 hover:bg-stone-50 active:bg-stone-100 text-stone-700 font-bold text-sm rounded-xl shadow-2xs transition-all duration-150 ease-in-out disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer ${className}`}
-      {...props}
-    >
-      {loading && <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />}
-      {!loading && icon && <span className="flex-shrink-0">{icon}</span>}
-      <span>{children}</span>
-    </button>
-  );
-};
+export const SecondaryButton: React.FC<ButtonProps> = (props) => (
+  <Button variant="secondary" size="md" {...props} />
+);
 
 // DangerButton
-export const DangerButton: React.FC<ButtonProps> = ({
-  children,
-  loading,
-  disabled,
-  icon,
-  className = '',
-  ...props
-}) => {
-  return (
-    <button
-      disabled={disabled || loading}
-      className={`relative flex items-center justify-center gap-2 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold text-sm rounded-xl shadow-xs transition-all duration-150 ease-in-out disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer ${className}`}
-      {...props}
-    >
-      {loading && <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />}
-      {!loading && icon && <span className="flex-shrink-0">{icon}</span>}
-      <span>{children}</span>
-    </button>
-  );
-};
+export const DangerButton: React.FC<ButtonProps> = (props) => (
+  <Button variant="destructive" size="md" {...props} />
+);
 
 // LoadingButton
-export const LoadingButton: React.FC<ButtonProps & { variant?: 'primary' | 'secondary' | 'danger' }> = ({
-  children,
-  loading,
+export interface LoadingButtonProps extends Omit<ButtonProps, 'variant'> {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'destructive' | 'success' | 'danger';
+}
+
+export const LoadingButton: React.FC<LoadingButtonProps> = ({
   variant = 'primary',
   ...props
 }) => {
-  if (variant === 'secondary') return <SecondaryButton loading={loading} {...props}>{children}</SecondaryButton>;
-  if (variant === 'danger') return <DangerButton loading={loading} {...props}>{children}</DangerButton>;
-  return <PrimaryButton loading={loading} {...props}>{children}</PrimaryButton>;
-};
-
-// FormLabel
-export interface FormLabelProps extends React.LabelHTMLAttributes<HTMLLabelElement> {
-  required?: boolean;
-}
-
-export const FormLabel: React.FC<FormLabelProps> = ({ children, required, className = '', ...props }) => {
-  return (
-    <label className={`block text-xs font-extrabold text-stone-500 uppercase tracking-wider ${className}`} {...props}>
-      {children} {required && <span className="text-rose-500 font-bold ml-0.5">*</span>}
-    </label>
-  );
+  const mappedVariant = variant === 'danger' ? 'destructive' : (variant as ButtonProps['variant']);
+  return <Button variant={mappedVariant} {...props} />;
 };
 
 // FormDescription
-export const FormDescription: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => {
+export const FormDescription: React.FC<{ children: React.ReactNode; className?: string }> = ({
+  children,
+  className = '',
+}) => {
   return <p className={`text-[11px] text-stone-400 mt-1 leading-normal ${className}`}>{children}</p>;
 };
 
@@ -107,37 +48,9 @@ export const FormError: React.FC<{ error?: string | null; className?: string }> 
   if (!error) return null;
   return (
     <p className={`text-xs text-rose-600 font-bold flex items-center gap-1.5 mt-1.5 animate-fade-in ${className}`}>
-      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
       <span>{error}</span>
     </p>
-  );
-};
-
-// FormField
-export interface FormFieldProps {
-  label?: string;
-  required?: boolean;
-  error?: string | null;
-  description?: React.ReactNode;
-  className?: string;
-  children: React.ReactNode;
-}
-
-export const FormField: React.FC<FormFieldProps> = ({
-  label,
-  required,
-  error,
-  description,
-  className = '',
-  children
-}) => {
-  return (
-    <div className={`space-y-1.5 ${className}`}>
-      {label && <FormLabel required={required}>{label}</FormLabel>}
-      {children}
-      {description && <FormDescription>{description}</FormDescription>}
-      <FormError error={error} />
-    </div>
   );
 };
 
@@ -166,230 +79,58 @@ export const FormSection: React.FC<FormSectionProps> = ({ title, description, ch
 // FormFooter
 export const FormFooter: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => {
   return (
-    <div className={`p-4 sm:p-5 bg-stone-50/80 border-t border-stone-100 flex items-center justify-end gap-3 flex-shrink-0 ${className}`}>
+    <div className={`p-4 sm:p-5 bg-stone-50/80 border-t border-stone-100 flex items-center justify-end gap-3 shrink-0 ${className}`}>
       {children}
     </div>
   );
 };
 
 // FormModal
-export interface FormModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  title: string;
-  subtitle?: string;
-  icon?: React.ComponentType<any>;
-  iconBgColor?: string;
-  iconTextColor?: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
+export interface FormModalProps extends Omit<ModalProps, 'children'> {
   error?: string | null;
-  loading?: boolean;
-  maxWidth?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl';
+  children: React.ReactNode;
 }
 
-export const FormModal: React.FC<FormModalProps> = ({
-  isOpen,
-  onClose,
-  title,
-  subtitle,
-  icon: Icon,
-  iconBgColor = 'bg-stone-100',
-  iconTextColor = 'text-stone-700',
-  children,
-  footer,
-  error,
-  loading = false,
-  maxWidth = 'md'
-}) => {
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !loading) onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, loading]);
-
-  if (!isOpen) return null;
-
-  const maxWidthClass = {
-    xs: 'max-w-xs',
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
-    '2xl': 'max-w-2xl',
-    '3xl': 'max-w-3xl'
-  }[maxWidth];
-
+export const FormModal: React.FC<FormModalProps> = ({ error, children, ...props }) => {
   return (
-    <div className="fixed inset-0 z-50 bg-stone-900/40 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-      <div
-        className={`bg-white rounded-2xl shadow-xl border border-stone-100 w-full ${maxWidthClass} my-auto overflow-hidden flex flex-col max-h-[92vh] transition-all transform animate-in fade-in zoom-in-95 duration-150`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-stone-100 flex items-center justify-between gap-3 bg-stone-50/50">
-          <div className="flex items-center gap-3 min-w-0">
-            {Icon && (
-              <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl ${iconBgColor} ${iconTextColor} flex items-center justify-center flex-shrink-0 shadow-xs`}>
-                <Icon className="w-5 h-5" />
-              </div>
-            )}
-            <div className="min-w-0 text-left">
-              <h2 className="text-base sm:text-lg font-bold text-stone-800 tracking-tight truncate">{title}</h2>
-              {subtitle && <p className="text-xs text-stone-400 font-medium truncate">{subtitle}</p>}
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            disabled={loading}
-            aria-label="Fechar"
-            className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-xl transition-all flex-shrink-0 disabled:opacity-50 focus:outline-none cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+    <Modal {...props}>
+      {error && (
+        <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs sm:text-sm font-medium flex items-start gap-2.5 animate-shake mb-4">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 shrink-0" />
+          <span>{error}</span>
         </div>
-
-        {/* Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
-          {error && (
-            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs sm:text-sm font-medium flex items-start gap-2.5 animate-shake">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 flex-shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-          {children}
-        </div>
-
-        {/* Footer */}
-        {footer && <FormFooter>{footer}</FormFooter>}
-      </div>
-    </div>
+      )}
+      {children}
+    </Modal>
   );
 };
 
 // TextInput
-export interface TextInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
-  error?: string | null;
-}
-
-export const TextInput = React.forwardRef<HTMLInputElement, TextInputProps>(
-  ({ error, className = '', ...props }, ref) => {
-    return (
-      <input
-        ref={ref}
-        className={`w-full px-3.5 py-2.5 bg-stone-50 border rounded-xl text-stone-800 text-sm font-semibold transition-all focus:bg-white focus:outline-none focus:ring-2 disabled:bg-stone-100 disabled:text-stone-400 ${
-          error
-            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500/20'
-            : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-500/20'
-        } ${className}`}
-        {...props}
-      />
-    );
-  }
-);
+export const TextInput = React.forwardRef<HTMLInputElement, InputProps>((props, ref) => (
+  <Input ref={ref} {...props} />
+));
 TextInput.displayName = 'TextInput';
 
 // DateInput
-export interface DateInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
-  error?: string | null;
-}
-
-export const DateInput = React.forwardRef<HTMLInputElement, DateInputProps>(
-  ({ error, className = '', ...props }, ref) => {
-    return (
-      <input
-        ref={ref}
-        type="date"
-        className={`w-full px-3.5 py-2.5 bg-stone-50 border rounded-xl text-stone-800 text-sm font-semibold transition-all focus:bg-white focus:outline-none focus:ring-2 disabled:bg-stone-100 disabled:text-stone-400 ${
-          error
-            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500/20'
-            : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-500/20'
-        } ${className}`}
-        {...props}
-      />
-    );
-  }
-);
+export const DateInput = React.forwardRef<HTMLInputElement, InputProps>((props, ref) => (
+  <Input ref={ref} type="date" {...props} />
+));
 DateInput.displayName = 'DateInput';
 
 // SelectInput
-export interface SelectInputProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
-  error?: string | null;
-}
-
-export const SelectInput = React.forwardRef<HTMLSelectElement, SelectInputProps>(
-  ({ error, children, className = '', ...props }, ref) => {
-    return (
-      <select
-        ref={ref}
-        className={`w-full px-3.5 py-2.5 bg-stone-50 border rounded-xl text-stone-800 text-sm font-semibold transition-all focus:bg-white focus:outline-none focus:ring-2 disabled:bg-stone-100 disabled:text-stone-400 ${
-          error
-            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500/20'
-            : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-500/20'
-        } ${className}`}
-        {...props}
-      >
-        {children}
-      </select>
-    );
-  }
-);
+export const SelectInput = React.forwardRef<HTMLSelectElement, SelectProps>((props, ref) => (
+  <Select ref={ref} {...props} />
+));
 SelectInput.displayName = 'SelectInput';
 
 // TextareaInput
-export interface TextareaInputProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
-  error?: string | null;
-}
-
-export const TextareaInput = React.forwardRef<HTMLTextAreaElement, TextareaInputProps>(
-  ({ error, className = '', ...props }, ref) => {
-    return (
-      <textarea
-        ref={ref}
-        className={`w-full p-3 bg-stone-50 border rounded-xl text-stone-800 text-sm font-semibold transition-all focus:bg-white focus:outline-none focus:ring-2 disabled:bg-stone-100 disabled:text-stone-400 resize-none ${
-          error
-            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-500/20'
-            : 'border-stone-200 focus:border-emerald-500 focus:ring-emerald-500/20'
-        } ${className}`}
-        {...props}
-      />
-    );
-  }
-);
+export const TextareaInput = React.forwardRef<HTMLTextAreaElement, TextareaProps>((props, ref) => (
+  <Textarea ref={ref} {...props} />
+));
 TextareaInput.displayName = 'TextareaInput';
 
 // EmptyState
-export interface EmptyStateProps {
-  title: string;
-  description: string;
-  icon?: React.ComponentType<any>;
-  action?: React.ReactNode;
-  className?: string;
-}
-
-export const EmptyState: React.FC<EmptyStateProps> = ({
-  title,
-  description,
-  icon: Icon,
-  action,
-  className = ''
-}) => {
-  return (
-    <div className={`p-8 text-center flex flex-col items-center justify-center bg-stone-50/50 border border-dashed border-stone-200/80 rounded-2xl max-w-lg mx-auto ${className}`}>
-      {Icon && (
-        <div className="w-12 h-12 bg-stone-100 rounded-2xl flex items-center justify-center text-stone-400 mb-4 shadow-2xs">
-          <Icon className="w-6 h-6" />
-        </div>
-      )}
-      <h4 className="text-base font-extrabold text-stone-700 tracking-tight mb-1">{title}</h4>
-      <p className="text-xs text-stone-400 font-medium leading-relaxed max-w-sm mb-5">{description}</p>
-      {action && <div className="flex justify-center">{action}</div>}
-    </div>
-  );
-};
+export const EmptyState: React.FC<EmptyStateProps> = (props) => <BaseEmptyState {...props} />;
 
 // ConfirmDialog
 export interface ConfirmDialogProps {
@@ -413,7 +154,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   confirmLabel = 'Confirmar',
   cancelLabel = 'Cancelar',
   type = 'primary',
-  loading = false
+  loading = false,
 }) => {
   if (!isOpen) return null;
 
@@ -449,5 +190,330 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   );
 };
 
-// Re-export CurrencyInput as requested
+// Re-export CurrencyInput
 export { CurrencyInput } from '../CurrencyInput';
+
+// Switch
+export interface SwitchProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type' | 'onChange'> {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label?: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+export const Switch: React.FC<SwitchProps> = ({
+  checked,
+  onChange,
+  label,
+  description,
+  disabled = false,
+  className = '',
+  id,
+  ...props
+}) => {
+  const generatedId = React.useId();
+  const inputId = id || generatedId;
+
+  return (
+    <label
+      htmlFor={inputId}
+      className={`inline-flex items-start justify-between gap-3 cursor-pointer select-none ${
+        disabled ? 'opacity-50 cursor-not-allowed' : ''
+      } ${className}`}
+    >
+      {(label || description) && (
+        <div className="flex flex-col pr-2">
+          {label && <span className="text-xs font-bold text-stone-800">{label}</span>}
+          {description && <span className="text-[11px] text-stone-400 font-medium leading-normal">{description}</span>}
+        </div>
+      )}
+      <div className="relative inline-shrink-0 pt-0.5">
+        <input
+          id={inputId}
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+          className="sr-only"
+          {...props}
+        />
+        <div
+          className={`w-11 h-6 rounded-full transition-colors duration-200 ease-in-out ${
+            checked ? 'bg-emerald-600' : 'bg-stone-200'
+          }`}
+        >
+          <div
+            className={`w-5 h-5 rounded-full bg-white shadow-xs transform transition-transform duration-200 ease-in-out mt-0.5 ml-0.5 ${
+              checked ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </div>
+      </div>
+    </label>
+  );
+};
+
+// Checkbox
+export interface CheckboxProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type' | 'onChange'> {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label?: React.ReactNode;
+  description?: string;
+  disabled?: boolean;
+}
+
+export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
+  ({ checked, onChange, label, description, disabled = false, className = '', id, ...props }, ref) => {
+    const generatedId = React.useId();
+    const inputId = id || generatedId;
+
+    return (
+      <label
+        htmlFor={inputId}
+        className={`inline-flex items-start gap-2.5 cursor-pointer select-none ${
+          disabled ? 'opacity-50 cursor-not-allowed' : ''
+        } ${className}`}
+      >
+        <div className="relative flex items-center justify-center mt-0.5 shrink-0">
+          <input
+            ref={ref}
+            id={inputId}
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            onChange={(e) => onChange(e.target.checked)}
+            className="sr-only"
+            {...props}
+          />
+          <div
+            className={`w-4 h-4 rounded border transition-colors flex items-center justify-center ${
+              checked
+                ? 'bg-emerald-600 border-emerald-600 text-white'
+                : 'bg-stone-50 border-stone-300 hover:border-stone-400'
+            }`}
+          >
+            {checked && (
+              <svg className="w-3 h-3 fill-current stroke-current" viewBox="0 0 12 12">
+                <path d="M3.707 5.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l5-5a1 1 0 00-1.414-1.414L5.5 8.086 3.707 5.293z" />
+              </svg>
+            )}
+          </div>
+        </div>
+        {(label || description) && (
+          <div className="flex flex-col">
+            {label && <span className="text-xs font-semibold text-stone-800">{label}</span>}
+            {description && <span className="text-[11px] text-stone-400 font-medium leading-normal">{description}</span>}
+          </div>
+        )}
+      </label>
+    );
+  }
+);
+Checkbox.displayName = 'Checkbox';
+
+// RadioGroup
+export interface RadioOption {
+  value: string;
+  label: React.ReactNode;
+  description?: string;
+  disabled?: boolean;
+}
+
+export interface RadioGroupProps {
+  name: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: RadioOption[];
+  disabled?: boolean;
+  className?: string;
+  layout?: 'vertical' | 'horizontal';
+}
+
+export const RadioGroup: React.FC<RadioGroupProps> = ({
+  name,
+  value,
+  onChange,
+  options,
+  disabled = false,
+  className = '',
+  layout = 'vertical',
+}) => {
+  return (
+    <div
+      className={`${
+        layout === 'horizontal' ? 'flex flex-wrap items-center gap-4' : 'flex flex-col space-y-2.5'
+      } ${className}`}
+    >
+      {options.map((option) => {
+        const optionId = `${name}-${option.value}`;
+        const isSelected = value === option.value;
+        const isOptionDisabled = disabled || option.disabled;
+
+        return (
+          <label
+            key={option.value}
+            htmlFor={optionId}
+            className={`inline-flex items-start gap-2.5 cursor-pointer select-none ${
+              isOptionDisabled ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            <div className="relative flex items-center justify-center mt-0.5 shrink-0">
+              <input
+                id={optionId}
+                type="radio"
+                name={name}
+                value={option.value}
+                checked={isSelected}
+                disabled={isOptionDisabled}
+                onChange={() => onChange(option.value)}
+                className="sr-only"
+              />
+              <div
+                className={`w-4 h-4 rounded-full border transition-colors flex items-center justify-center ${
+                  isSelected
+                    ? 'border-emerald-600 bg-emerald-600'
+                    : 'bg-stone-50 border-stone-300 hover:border-stone-400'
+                }`}
+              >
+                {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+              </div>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xs font-semibold text-stone-800">{option.label}</span>
+              {option.description && (
+                <span className="text-[11px] text-stone-400 font-medium leading-normal">{option.description}</span>
+              )}
+            </div>
+          </label>
+        );
+      })}
+    </div>
+  );
+};
+
+// FieldGroup
+export interface FieldGroupProps {
+  cols?: 1 | 2 | 3 | 4;
+  children: React.ReactNode;
+  className?: string;
+}
+
+export const FieldGroup: React.FC<FieldGroupProps> = ({ cols = 2, children, className = '' }) => {
+  const colsClass =
+    cols === 1
+      ? 'grid-cols-1'
+      : cols === 2
+      ? 'grid-cols-1 md:grid-cols-2'
+      : cols === 3
+      ? 'grid-cols-1 md:grid-cols-3'
+      : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4';
+
+  return <div className={`grid gap-4 ${colsClass} ${className}`}>{children}</div>;
+};
+
+// FormActions
+export interface FormActionsProps {
+  children: React.ReactNode;
+  align?: 'left' | 'center' | 'right' | 'between';
+  className?: string;
+}
+
+export const FormActions: React.FC<FormActionsProps> = ({ children, align = 'right', className = '' }) => {
+  const alignClass =
+    align === 'left'
+      ? 'justify-start'
+      : align === 'center'
+      ? 'justify-center'
+      : align === 'between'
+      ? 'justify-between'
+      : 'justify-end';
+
+  return (
+    <div className={`flex flex-wrap items-center gap-3 pt-4 border-t border-stone-100 ${alignClass} ${className}`}>
+      {children}
+    </div>
+  );
+};
+
+// FileUpload
+export interface FileUploadProps {
+  accept?: string;
+  onFileSelect: (file: File) => void;
+  previewUrl?: string | null;
+  onRemove?: () => void;
+  label?: string;
+  description?: string;
+  disabled?: boolean;
+  loading?: boolean;
+  error?: string | null;
+  className?: string;
+}
+
+export const FileUpload: React.FC<FileUploadProps> = ({
+  accept = 'image/*',
+  onFileSelect,
+  previewUrl,
+  onRemove,
+  label,
+  description = 'PNG, JPG ou WEBP até 5MB',
+  disabled = false,
+  loading = false,
+  error,
+  className = '',
+}) => {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      onFileSelect(e.target.files[0]);
+    }
+  };
+
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      {label && <FormLabel>{label}</FormLabel>}
+
+      {previewUrl ? (
+        <div className="relative inline-block group rounded-2xl overflow-hidden border border-stone-200">
+          <img src={previewUrl} alt="Preview" className="w-24 h-24 object-cover" />
+          {!disabled && onRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="absolute top-1 right-1 p-1 bg-stone-900/70 hover:bg-rose-600 text-white rounded-full transition-all cursor-pointer"
+              title="Remover imagem"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div
+          onClick={() => !disabled && !loading && fileInputRef.current?.click()}
+          className={`flex flex-col items-center justify-center p-5 border-2 border-dashed rounded-2xl transition-all cursor-pointer ${
+            disabled
+              ? 'bg-stone-50 border-stone-200 opacity-60 cursor-not-allowed'
+              : 'bg-stone-50/50 hover:bg-stone-50 border-stone-300 hover:border-emerald-500'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={accept}
+            onChange={handleFileChange}
+            disabled={disabled || loading}
+            className="hidden"
+          />
+          <div className="text-center space-y-1">
+            <p className="text-xs font-bold text-stone-700">Clique para enviar ou arraste até aqui</p>
+            {description && <p className="text-[11px] text-stone-400">{description}</p>}
+          </div>
+        </div>
+      )}
+
+      <FormError error={error} />
+    </div>
+  );
+};
+

@@ -29,13 +29,12 @@ export const createContaPagar = async (
     })
   });
 
-  const resData = await response.json();
+  const resData = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(resData.error || 'Erro ao criar conta a pagar.');
+    const error = new Error(resData.error || `Erro (${response.status}) ao criar conta a pagar.`);
     (error as any).code = resData.code || 'HTTP_ERROR';
     throw error;
   }
-
   return resData;
 };
 
@@ -67,9 +66,9 @@ export const registrarPagamento = async (
     })
   });
 
-  const resData = await response.json();
+  const resData = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(resData.error || 'Erro ao registrar pagamento.');
+    const error = new Error(resData.error || `Erro (${response.status}) ao registrar pagamento.`);
     (error as any).code = resData.code || 'HTTP_ERROR';
     throw error;
   }

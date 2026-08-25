@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { formatDate } from '../../../lib/utils';
 import { db } from '../../../firebase';
-import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, startAfter, getDocs, QueryDocumentSnapshot, QueryConstraint } from 'firebase/firestore';
 import { useAuth } from '../../../contexts/AuthContext';
 import { ContaPagar } from '../../../types/financeiro';
 import { formatCurrency } from '../../../utils/currencyUtils';
@@ -11,34 +12,100 @@ import { useRestaurantPaymentMethods } from '../../../services/paymentMethodsSer
 import { FinancialPageHeader } from './components/FinancialPageHeader';
 import { EmptyFinancialState } from './components/EmptyFinancialState';
 import { FinancialSummary } from './components/FinancialSummary';
-import { FormField, TextInput, DateInput, SelectInput, CurrencyInput } from '../../../components/ui/FormComponents';
+import { FormField, TextInput, DateInput, SelectInput, CurrencyInput, DangerButton, SecondaryButton } from '../../../components/ui/FormComponents';
 import { FinancialModal } from './components/FinancialModal';
+import { LoadingState } from '../../../components/ui/Feedback';
+import { Badge } from '../../../components/ui/Badge';
+import { SearchInput, Select } from '../../../components/ui/InputComponents';
+
+const PAGE_SIZE = 20;
 
 export const ContasPagarPage: React.FC = () => {
   const { profile } = useAuth();
   const [contas, setContas] = useState<ContaPagar[]>([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [isNovaContaModalOpen, setIsNovaContaModalOpen] = useState(false);
   const [isPagarModalOpen, setIsPagarModalOpen] = useState(false);
   const [selectedConta, setSelectedConta] = useState<ContaPagar | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
+  const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
   const restaurantId = profile?.restaurantId;
 
+  const fetchContas = useCallback(async (isReset = true) => {
+    if (!restaurantId) {
+      setLoadingData(false);
+      return;
+    }
+
+    if (isReset) {
+      setLoadingData(true);
+      lastDocRef.current = null;
+    } else {
+      setLoadingMore(true);
+    }
+
+    try {
+      const colRef = collection(db, 'restaurants', restaurantId, 'contasPagar');
+      const constraints: QueryConstraint[] = [];
+
+      if (filterStatus !== 'ALL') {
+        constraints.push(where('status', '==', filterStatus));
+      }
+
+      constraints.push(orderBy('dueDate', 'asc'));
+
+      if (!isReset && lastDocRef.current) {
+        constraints.push(startAfter(lastDocRef.current));
+      }
+
+      constraints.push(limit(PAGE_SIZE));
+
+      let snap;
+      try {
+        snap = await getDocs(query(colRef, ...constraints));
+      } catch (err) {
+        console.warn('[ContasPagar] Index missing fallback, querying by orderBy:', err);
+        const fallbackConstraints: QueryConstraint[] = [orderBy('dueDate', 'asc')];
+        if (!isReset && lastDocRef.current) {
+          fallbackConstraints.push(startAfter(lastDocRef.current));
+        }
+        fallbackConstraints.push(limit(PAGE_SIZE));
+        snap = await getDocs(query(colRef, ...fallbackConstraints));
+      }
+
+      const newDocs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as ContaPagar));
+
+      if (snap.docs.length < PAGE_SIZE) {
+        setHasMore(false);
+      } else {
+        setHasMore(true);
+        lastDocRef.current = snap.docs[snap.docs.length - 1];
+      }
+
+      if (isReset) {
+        setContas(newDocs);
+      } else {
+        setContas(prev => {
+          const map = new Map<string, ContaPagar>();
+          [...prev, ...newDocs].forEach(c => map.set(c.id, c));
+          return Array.from(map.values());
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao buscar contas a pagar:', err);
+    } finally {
+      setLoadingData(false);
+      setLoadingMore(false);
+    }
+  }, [restaurantId, filterStatus]);
+
   useEffect(() => {
-    if (!restaurantId) return;
-    setLoadingData(true);
-    const q = query(collection(db, 'restaurants', restaurantId, 'contasPagar'), orderBy('dueDate', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setContas(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ContaPagar)));
-      setLoadingData(false);
-    }, (err) => {
-      console.error('Erro ao escutar contas a pagar:', err);
-      setLoadingData(false);
-    });
-    return () => unsubscribe();
-  }, [restaurantId]);
+    fetchContas(true);
+  }, [restaurantId, filterStatus]);
 
   const filteredContas = useMemo(() => {
     return contas.filter(conta => {
@@ -73,38 +140,15 @@ export const ContasPagarPage: React.FC = () => {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'PAID':
-        return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/80">
-            Paga
-          </span>
-        );
+        return <Badge variant="success">Paga</Badge>;
       case 'PARTIALLY_PAID':
-        return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200/80">
-            Parcial
-          </span>
-        );
+        return <Badge variant="warning">Parcial</Badge>;
       default:
-        return (
-          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200/80">
-            Pendente
-          </span>
-        );
+        return <Badge variant="danger">Pendente</Badge>;
     }
   };
 
-  const formatDateBR = (isoDate: string) => {
-    if (!isoDate) return '-';
-    try {
-      const [year, month, day] = isoDate.split('T')[0].split('-');
-      if (year && month && day) {
-        return `${day}/${month}/${year}`;
-      }
-      return new Date(isoDate).toLocaleDateString('pt-BR');
-    } catch {
-      return isoDate;
-    }
-  };
+  const formatDateBR = (isoDate: string) => formatDate(isoDate);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-8">
@@ -125,37 +169,33 @@ export const ContasPagarPage: React.FC = () => {
 
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-stone-200/80 shadow-xs flex flex-col sm:flex-row gap-3 items-center justify-between">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
+        <div className="w-full sm:w-80">
+          <SearchInput
             placeholder="Buscar fornecedor, descrição ou categoria..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs sm:text-sm font-medium text-stone-800 placeholder-stone-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all"
           />
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Filter className="w-4 h-4 text-stone-400 hidden sm:block" />
-          <select
+          <Filter className="w-4 h-4 text-stone-400 hidden sm:block shrink-0" />
+          <Select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="w-full sm:w-auto px-3.5 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs sm:text-sm font-semibold text-stone-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all cursor-pointer"
+            className="w-full sm:w-auto min-w-[180px]"
           >
             <option value="ALL">Todos os status</option>
             <option value="OPEN">Pendente</option>
             <option value="PARTIALLY_PAID">Parcialmente Paga</option>
             <option value="PAID">Paga</option>
-          </select>
+          </Select>
         </div>
       </div>
 
       {/* Content Section */}
       {loadingData ? (
-        <div className="bg-white rounded-2xl border border-stone-200/80 p-12 text-center flex flex-col items-center justify-center space-y-3">
-          <Loader2 className="w-8 h-8 text-rose-600 animate-spin" />
-          <p className="text-sm font-bold text-stone-600">Carregando contas a pagar...</p>
+        <div className="bg-white rounded-2xl border border-stone-200/80 p-8">
+          <LoadingState message="Carregando contas a pagar..." />
         </div>
       ) : filteredContas.length === 0 ? (
         <EmptyFinancialState 
@@ -172,7 +212,7 @@ export const ContasPagarPage: React.FC = () => {
           <div className="hidden md:block overflow-hidden bg-white rounded-2xl border border-stone-200/80 shadow-xs">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-stone-50/80 border-b border-stone-100 text-[11px] font-extrabold text-stone-500 uppercase tracking-wider">
+                <tr className="bg-stone-50/80 border-b border-stone-100 text-xs font-semibold text-stone-500 uppercase tracking-wider">
                   <th className="py-3.5 px-4">Fornecedor</th>
                   <th className="py-3.5 px-4">Descrição</th>
                   <th className="py-3.5 px-4">Categoria</th>
@@ -201,14 +241,14 @@ export const ContasPagarPage: React.FC = () => {
                     <td className="py-3.5 px-4 text-center">{getStatusBadge(conta.status)}</td>
                     <td className="py-3.5 px-4 text-center">
                       {(conta.status === 'OPEN' || conta.status === 'PARTIALLY_PAID') ? (
-                        <button
+                        <DangerButton
                           onClick={() => { setSelectedConta(conta); setIsPagarModalOpen(true); }}
-                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white font-bold text-xs rounded-xl transition-all shadow-xs inline-flex items-center gap-1.5 active:scale-95"
+                          className="text-xs py-1 px-2.5"
                           title="Registrar Pagamento"
                         >
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          <span>Pagar</span>
-                        </button>
+                          <CheckCircle className="w-3.5 h-3.5 mr-1 inline" />
+                          Pagar
+                        </DangerButton>
                       ) : (
                         <span className="text-xs text-stone-400 font-semibold">Concluída</span>
                       )}
@@ -233,35 +273,49 @@ export const ContasPagarPage: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <span className="text-stone-400 block text-[10px] uppercase font-bold">Categoria</span>
+                    <span className="text-stone-400 block text-xs uppercase font-bold">Categoria</span>
                     <span className="font-semibold text-stone-700">{conta.category || 'Geral'}</span>
                   </div>
                   <div>
-                    <span className="text-stone-400 block text-[10px] uppercase font-bold">Vencimento</span>
+                    <span className="text-stone-400 block text-xs uppercase font-bold">Vencimento</span>
                     <span className="font-semibold text-stone-700">{formatDateBR(conta.dueDate)}</span>
                   </div>
                   <div>
-                    <span className="text-stone-400 block text-[10px] uppercase font-bold">Total</span>
+                    <span className="text-stone-400 block text-xs uppercase font-bold">Total</span>
                     <span className="font-bold text-stone-800">{formatCurrency(conta.totalAmount / 100)}</span>
                   </div>
                   <div>
-                    <span className="text-stone-400 block text-[10px] uppercase font-bold">Saldo Restante</span>
+                    <span className="text-stone-400 block text-xs uppercase font-bold">Saldo Restante</span>
                     <span className="font-bold text-rose-600">{formatCurrency(conta.remainingAmount / 100)}</span>
                   </div>
                 </div>
 
                 {(conta.status === 'OPEN' || conta.status === 'PARTIALLY_PAID') && (
-                  <button
+                  <DangerButton
                     onClick={() => { setSelectedConta(conta); setIsPagarModalOpen(true); }}
-                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 active:scale-95"
+                    className="w-full py-2"
                   >
-                    <CheckCircle className="w-4 h-4" />
-                    <span>Registrar Pagamento</span>
-                  </button>
+                    <CheckCircle className="w-4 h-4 mr-2 inline" />
+                    Registrar Pagamento
+                  </DangerButton>
                 )}
               </div>
             ))}
           </div>
+
+          {/* Pagination Load More Button */}
+          {hasMore && (
+            <div className="flex justify-center pt-4">
+              <SecondaryButton
+                onClick={() => fetchContas(false)}
+                disabled={loadingMore}
+                loading={loadingMore}
+                className="px-5 py-2"
+              >
+                Carregar mais contas
+              </SecondaryButton>
+            </div>
+          )}
         </div>
       )}
 
@@ -269,7 +323,10 @@ export const ContasPagarPage: React.FC = () => {
       {isNovaContaModalOpen && (
         <NovaContaModal
           isOpen={isNovaContaModalOpen}
-          onClose={() => setIsNovaContaModalOpen(false)}
+          onClose={() => {
+            setIsNovaContaModalOpen(false);
+            fetchContas(true);
+          }}
           restaurantId={restaurantId!}
           userId={profile?.id || ''}
         />
@@ -278,7 +335,11 @@ export const ContasPagarPage: React.FC = () => {
       {isPagarModalOpen && selectedConta && (
         <PagarContaModal
           isOpen={isPagarModalOpen}
-          onClose={() => { setIsPagarModalOpen(false); setSelectedConta(null); }}
+          onClose={() => {
+            setIsPagarModalOpen(false);
+            setSelectedConta(null);
+            fetchContas(true);
+          }}
           conta={selectedConta}
           restaurantId={restaurantId!}
           userId={profile?.id || ''}
@@ -515,7 +576,7 @@ const PagarContaModal: React.FC<{
         <div className="bg-stone-50 p-4 rounded-xl border border-stone-200/80 space-y-2">
           <div className="flex justify-between items-start">
             <div>
-              <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider block">Fornecedor</span>
+              <span className="text-xs font-bold text-stone-400 uppercase tracking-wider block">Fornecedor</span>
               <h4 className="text-sm font-bold text-stone-800">{conta.supplierName}</h4>
               <p className="text-xs text-stone-500 mt-0.5">{conta.description}</p>
             </div>
@@ -523,15 +584,15 @@ const PagarContaModal: React.FC<{
 
           <div className="grid grid-cols-3 gap-2 pt-2 border-t border-stone-200/60 text-xs">
             <div>
-              <span className="text-stone-400 text-[10px] block font-bold uppercase">Total</span>
+              <span className="text-stone-400 text-xs block font-bold uppercase">Total</span>
               <span className="font-bold text-stone-700">{formatCurrency(conta.totalAmount / 100)}</span>
             </div>
             <div>
-              <span className="text-stone-400 text-[10px] block font-bold uppercase">Já Pago</span>
+              <span className="text-stone-400 text-xs block font-bold uppercase">Já Pago</span>
               <span className="font-bold text-emerald-600">{formatCurrency(conta.paidAmount / 100)}</span>
             </div>
             <div>
-              <span className="text-rose-500 text-[10px] block font-bold uppercase">Saldo Restante</span>
+              <span className="text-rose-500 text-xs block font-bold uppercase">Saldo Restante</span>
               <span className="font-extrabold text-rose-600">{formatCurrency(conta.remainingAmount / 100)}</span>
             </div>
           </div>
@@ -594,7 +655,7 @@ const PagarContaModal: React.FC<{
             </div>
           )}
           {methodsError && (
-            <p className="text-rose-500 text-[10px] font-semibold mt-1">
+            <p className="text-rose-500 text-xs font-semibold mt-1">
               Nota: Erro ao carregar formas do servidor. Usando opções padrão.
             </p>
           )}

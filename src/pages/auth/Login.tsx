@@ -5,6 +5,10 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useNavigate, Link } from 'react-router-dom';
 import { LogIn, Mail, Lock, Eye, EyeOff, Chrome, ArrowLeft, Send, ChevronLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { resolveUserDestination } from '../../utils/authResolution';
+import { canonicalUserService } from '../../services/canonicalUserService';
+import { auth as firebaseAuth } from '../../firebase';
+
 
 export default function Login() {
   const { user, loading: authLoading } = useAuth();
@@ -25,6 +29,13 @@ export default function Login() {
       navigate('/');
     }
   }, [user, authLoading, navigate]);
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('error') === 'inactive') {
+      setError('Sua conta está desativada. Entre em contato com o proprietário ou administrador do restaurante.');
+    }
+  }, []);
 
   React.useEffect(() => {
     if (rememberMe) {
@@ -49,8 +60,19 @@ export default function Login() {
     }
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      navigate('/');
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      const canonicalUser = await canonicalUserService.getUserByUid(user.uid);
+      const resolution = resolveUserDestination(canonicalUser);
+      
+      if (!resolution.isValid) {
+        await firebaseAuth.signOut();
+        setError(resolution.error || 'Acesso negado.');
+        return;
+      }
+      
+      navigate(resolution.destination || '/');
     } catch (err: any) {
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         setError('E-mail ou senha incorretos. Verifique seus dados.');
@@ -108,12 +130,21 @@ export default function Login() {
           await setDoc(docRef, {
             uid: user.uid,
             nome: user.displayName || '',
+            name: user.displayName || '',
             email: user.email || '',
             telefone: user.phoneNumber || '',
+            phone: user.phoneNumber || '',
+            accountType: 'CLIENT',
+            role: 'CLIENT',
+            status: 'ACTIVE',
+            permissions: [],
+            _migratedAt: new Date().toISOString(),
+            _migrationVersion: '1.0.0',
             tipo_usuario: 'cliente',
             status_conta: 'ativo',
             onboarding_completo: false,
             data_criacao: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
             lgpdAccepted: false,
           });
         } catch (err) {

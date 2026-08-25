@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { DollarSign, Clock, FileText } from 'lucide-react';
+import { FinancialPageHeader } from './financeiro/components/FinancialPageHeader';
+import { EmptyFinancialState } from './financeiro/components/EmptyFinancialState';
+import { FinancialModal } from './financeiro/components/FinancialModal';
+import { LoadingState } from '../../components/ui/Feedback';
+import { Badge } from '../../components/ui/Badge';
+import { DataTableContainer, Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../../components/ui/TableComponents';
+import { SecondaryButton } from '../../components/ui/FormComponents';
 
 export default function RestaurantInvoicePage() {
   const { profile } = useAuth();
@@ -27,53 +33,98 @@ export default function RestaurantInvoicePage() {
     fetchInvoices();
   }, [profile?.restaurantId]);
 
-  if (loading) return <div className="p-8 text-center text-stone-500">Carregando faturas...</div>;
+  if (loading) {
+    return (
+      <div className="bg-white rounded-2xl border border-stone-200/80 p-8 max-w-7xl mx-auto">
+        <LoadingState message="Carregando faturas do QFomeAI..." />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6 p-4 md:p-6">
-      <h1 className="text-2xl font-bold text-stone-800">Minhas Faturas</h1>
+    <div className="space-y-6 max-w-7xl mx-auto pb-8">
+      <FinancialPageHeader 
+        title="Faturas QFomeAI"
+        subtitle="Acompanhamento e histórico das faturas da sua assinatura e comissões da plataforma."
+      />
 
-      <div className="bg-white rounded-3xl border border-stone-200 overflow-hidden">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-stone-50 border-b border-stone-200">
-              <th className="p-4">Vencimento</th>
-              <th className="p-4">Valor</th>
-              <th className="p-4">Status</th>
-              <th className="p-4">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.map(inv => (
-              <tr key={inv.id} className="border-b border-stone-100">
-                <td className="p-4">{new Date(inv.vencimento).toLocaleDateString()}</td>
-                <td className="p-4 font-bold">R$ {inv.valor?.toFixed(2)}</td>
-                <td className="p-4">
-                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${inv.status === 'paid' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                    {inv.status === 'paid' ? 'Pago' : 'Pendente'}
-                  </span>
-                </td>
-                <td className="p-4">
-                  <button onClick={() => setSelectedInvoice(inv)} className="text-emerald-600 font-bold text-sm">
-                    Ver Detalhes
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {invoices.length === 0 ? (
+        <EmptyFinancialState 
+          title="Nenhuma fatura encontrada"
+          description="Sua conta não possui faturas pendentes ou histórico registrado."
+        />
+      ) : (
+        <DataTableContainer>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Vencimento</TableHead>
+                <TableHead>Valor</TableHead>
+                <TableHead align="center">Status</TableHead>
+                <TableHead align="right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {invoices.map(inv => (
+                <TableRow key={inv.id}>
+                  <TableCell className="font-semibold text-stone-800">
+                    {new Date(inv.vencimento).toLocaleDateString('pt-BR')}
+                  </TableCell>
+                  <TableCell className="font-bold text-stone-900">
+                    R$ {inv.valor?.toFixed(2)}
+                  </TableCell>
+                  <TableCell align="center">
+                    <Badge variant={inv.status === 'paid' ? 'success' : 'danger'}>
+                      {inv.status === 'paid' ? 'Pago' : 'Pendente'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell align="right">
+                    <SecondaryButton 
+                      onClick={() => setSelectedInvoice(inv)} 
+                      className="text-xs py-1.5 px-3"
+                    >
+                      Ver Detalhes
+                    </SecondaryButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </DataTableContainer>
+      )}
 
       {selectedInvoice && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6">
-            <h3 className="text-xl font-bold text-stone-800 mb-4">Detalhes da Fatura</h3>
-            <p className="text-stone-600 mb-2">Vencimento: {new Date(selectedInvoice.vencimento).toLocaleDateString()}</p>
-            <p className="text-stone-600 mb-2">Valor: R$ {selectedInvoice.valor?.toFixed(2)}</p>
-            <p className="text-stone-600 mb-6">Status: {selectedInvoice.status === 'paid' ? 'Pago' : 'Pendente'}</p>
-            <button onClick={() => setSelectedInvoice(null)} className="w-full bg-stone-100 text-stone-800 py-3 rounded-xl font-bold hover:bg-stone-200">Fechar</button>
+        <FinancialModal
+          isOpen={!!selectedInvoice}
+          onClose={() => setSelectedInvoice(null)}
+          title="Detalhes da Fatura"
+        >
+          <div className="space-y-4">
+            <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 space-y-2 text-sm font-medium text-stone-700">
+              <div className="flex justify-between">
+                <span className="text-stone-500">Vencimento:</span>
+                <span className="font-semibold">{new Date(selectedInvoice.vencimento).toLocaleDateString('pt-BR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-500">Valor Total:</span>
+                <span className="font-bold text-stone-900">R$ {selectedInvoice.valor?.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-stone-500">Status:</span>
+                <Badge variant={selectedInvoice.status === 'paid' ? 'success' : 'danger'}>
+                  {selectedInvoice.status === 'paid' ? 'Pago' : 'Pendente'}
+                </Badge>
+              </div>
+            </div>
+
+            <SecondaryButton 
+              onClick={() => setSelectedInvoice(null)} 
+              className="w-full justify-center"
+            >
+              Fechar
+            </SecondaryButton>
           </div>
-        </div>
+        </FinancialModal>
       )}
     </div>
   );

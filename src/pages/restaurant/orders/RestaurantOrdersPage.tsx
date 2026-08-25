@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { X, Loader2 } from 'lucide-react';
+import { X, ShoppingBag } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useSharedClock } from './hooks/useSharedClock';
 import { OrdersHeader } from './components/OrdersHeader';
@@ -15,8 +15,9 @@ import { printThermalOrder } from '../../../components/orders/OrderThermalPrint'
 import { db } from '../../../firebase';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { cacheOrders } from '../../../utils/cacheOrders';
-import { registerClientOrderPaymentMovement } from '../../../utils/financeIntegration';
+import { processOrderPaymentsApi, processOrderRefundApi, normalizePaymentMethodId } from '../../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
+import { EmptyState, IconButton } from '../../../components/ui';
 
 interface RestaurantOrdersPageProps {
   orders: any[];
@@ -70,32 +71,42 @@ export function RestaurantOrdersPage({
     const fetchDetails = async () => {
       setLoadingDetails(true);
       try {
-        if (selectedOrder.cliente_id) {
-          const userDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id));
-          if (userDoc.exists()) {
-            setCustomerData(userDoc.data());
-          } else {
-            setCustomerData(selectedOrder.cliente || null);
+        // First check embedded customer data in order
+        const customer = selectedOrder.cliente || (selectedOrder.cliente_nome ? {
+          nome: selectedOrder.cliente_nome,
+          telefone: selectedOrder.cliente_telefone || selectedOrder.telefone || '',
+          email: selectedOrder.cliente_email || selectedOrder.email || ''
+        } : null);
+
+        const address = selectedOrder.endereco_entrega || selectedOrder.endereco || null;
+
+        setCustomerData(customer || { nome: selectedOrder.cliente_nome || 'Cliente' });
+        setAddressData(address);
+
+        // Fetch from Firestore only if data is not already embedded in the order
+        if (!customer && selectedOrder.cliente_id) {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id));
+            if (userDoc.exists()) {
+              setCustomerData(userDoc.data());
+            }
+          } catch {
+            // Handled gracefully without logging permission errors
           }
-        } else {
-          setCustomerData(selectedOrder.cliente || null);
         }
-        
-        if (selectedOrder.endereco_entrega) {
-          setAddressData(selectedOrder.endereco_entrega);
-        } else if (selectedOrder.cliente_id && selectedOrder.endereco_id) {
-          const addrDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id, 'enderecos', selectedOrder.endereco_id));
-          if (addrDoc.exists()) {
-            setAddressData(addrDoc.data());
-          } else {
-            setAddressData(selectedOrder.endereco || null);
+
+        if (!address && selectedOrder.cliente_id && selectedOrder.endereco_id) {
+          try {
+            const addrDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id, 'enderecos', selectedOrder.endereco_id));
+            if (addrDoc.exists()) {
+              setAddressData(addrDoc.data());
+            }
+          } catch {
+            // Handled gracefully without logging permission errors
           }
-        } else {
-          setAddressData(selectedOrder.endereco || null);
         }
-      } catch (error) {
-        console.error("Error fetching details", error);
-        setCustomerData(selectedOrder.cliente || null);
+      } catch {
+        setCustomerData(selectedOrder.cliente || { nome: selectedOrder.cliente_nome || 'Cliente' });
         setAddressData(selectedOrder.endereco_entrega || selectedOrder.endereco || null);
       } finally {
         setLoadingDetails(false);
@@ -116,27 +127,46 @@ export function RestaurantOrdersPage({
   const handleSavePayment = useCallback(async () => {
     if (!profile?.restaurantId || !selectedOrder || !setOrders) return;
     try {
-      const updateData = {
-        forma_pagamento: editPaymentMethod,
-        troco: editPaymentMethod === 'dinheiro' ? editTroco : null
+      const pmId = normalizePaymentMethodId(editPaymentMethod) || editPaymentMethod || 'dinheiro';
+      const totalCents = Math.round(Number(selectedOrder.valor_total || selectedOrder.total || 0) * 100);
+      const clientActionId = `act_pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+      const res = await processOrderPaymentsApi({
+        restaurantId: profile.restaurantId,
+        orderId: selectedOrder.id,
+        payments: [{
+          paymentMethodId: pmId,
+          amount: totalCents,
+          status: 'PAID'
+        }],
+        operatorName: profile.nome || 'Operador',
+        clientActionId
+      });
+
+      if (!res.ok) {
+        alert(res.error || 'Erro ao salvar alteração de pagamento.');
+        return;
+      }
+
+      const updatedOrder = res.order || {
+        ...selectedOrder,
+        forma_pagamento: pmId,
+        troco: pmId === 'dinheiro' ? editTroco : null
       };
-      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
-      
+
       setOrders((prevOrders: any[]) => {
-        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? { ...o, ...updateData } : o);
+        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? updatedOrder : o);
         cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
         return updatedOrders;
       });
-      
+
       setIsEditingPayment(false);
-      setSelectedOrder((prev: any) => ({
-        ...prev,
-        ...updateData
-      }));
-    } catch (error) {
+      setSelectedOrder(updatedOrder);
+    } catch (error: any) {
       console.error("Error updating payment", error);
+      alert(error?.message || "Erro ao atualizar pagamento.");
     }
-  }, [profile?.restaurantId, selectedOrder, editPaymentMethod, editTroco, setOrders]);
+  }, [profile?.restaurantId, profile?.nome, selectedOrder, editPaymentMethod, editTroco, setOrders]);
 
   // Handle Toggle Paid Status
   const handleTogglePaid = useCallback(async () => {
@@ -149,33 +179,73 @@ export function RestaurantOrdersPage({
     }
 
     try {
-      const novoStatusPago = !selectedOrder.pago;
-      const updateData = { pago: novoStatusPago };
-      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
-      
-      setOrders((prevOrders: any[]) => {
-        const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? { ...o, ...updateData } : o);
-        cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
-        return updatedOrders;
-      });
-      
-      setSelectedOrder((prev: any) => ({
-        ...prev,
-        ...updateData
-      }));
+      if (!selectedOrder.pago) {
+        const totalCents = Math.round(Number(selectedOrder.valor_total || selectedOrder.total || 0) * 100);
+        const pmId = normalizePaymentMethodId(selectedOrder.forma_pagamento) || 'dinheiro';
+        const clientActionId = `act_pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-      if (novoStatusPago) {
-        await registerClientOrderPaymentMovement(
-          profile.restaurantId,
-          selectedOrder.id,
-          { ...selectedOrder, ...updateData },
-          profile.nome || 'Operador'
-        );
+        const res = await processOrderPaymentsApi({
+          restaurantId: profile.restaurantId,
+          orderId: selectedOrder.id,
+          payments: [{
+            paymentMethodId: pmId,
+            amount: totalCents,
+            status: 'PAID'
+          }],
+          operatorName: profile.nome || 'Operador',
+          clientActionId
+        });
+
+        if (!res.ok) {
+          alert(res.error || 'Erro ao marcar pedido como pago.');
+          return;
+        }
+
+        const updatedOrder = res.order || { ...selectedOrder, pago: true };
+        setOrders((prevOrders: any[]) => {
+          const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? updatedOrder : o);
+          cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
+          return updatedOrders;
+        });
+        setSelectedOrder(updatedOrder);
+      } else {
+        const reasonInput = window.prompt("Informe o motivo do estorno para desmarcar o pagamento:");
+        if (reasonInput === null) return;
+
+        let targetPaymentId = 'legacy';
+        if (Array.isArray(selectedOrder.payments) && selectedOrder.payments.length > 0) {
+          const paid = selectedOrder.payments.find((p: any) => p.status === 'PAID');
+          if (paid) targetPaymentId = paid.id;
+        }
+
+        const clientActionId = `act_ref_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const res = await processOrderRefundApi({
+          restaurantId: profile.restaurantId,
+          orderId: selectedOrder.id,
+          paymentId: targetPaymentId,
+          reason: reasonInput,
+          operatorName: profile.nome || 'Operador',
+          clientActionId
+        });
+
+        if (!res.ok) {
+          alert(res.error || 'Erro ao estornar pagamento do pedido.');
+          return;
+        }
+
+        const updatedOrder = res.order || { ...selectedOrder, pago: false };
+        setOrders((prevOrders: any[]) => {
+          const updatedOrders = prevOrders.map(o => o.id === selectedOrder.id ? updatedOrder : o);
+          cacheOrders.set(`orders_${profile.restaurantId}`, updatedOrders);
+          return updatedOrders;
+        });
+        setSelectedOrder(updatedOrder);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error updating payment status", error);
+      alert(error?.message || "Erro ao atualizar status de pagamento.");
     }
-  }, [profile?.restaurantId, selectedOrder, setOrders]);
+  }, [profile?.restaurantId, profile?.nome, selectedOrder, setOrders]);
 
   // Handle Edit Address
   const handleEditAddress = useCallback(() => {
@@ -272,7 +342,7 @@ export function RestaurantOrdersPage({
     operationalOrders.forEach(o => {
       const col = getOrderKanbanColumn(o);
       if (col in counts) {
-        (counts as any)[col] += 1;
+        counts[col as keyof typeof counts] += 1;
       }
 
       const { deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(o);
@@ -325,7 +395,7 @@ export function RestaurantOrdersPage({
       />
 
       {/* Main Operational Area */}
-      <div className="flex-1 overflow-hidden relative flex flex-col">
+      <div className="flex-1 overflow-hidden relative flex flex-col p-1.5 sm:p-3">
         {/* Desktop Kanban View */}
         <div className="hidden md:block h-full w-full overflow-hidden">
           {viewMode === 'kanban' ? (
@@ -340,11 +410,13 @@ export function RestaurantOrdersPage({
             />
           ) : (
             /* Desktop List View Fallback */
-            <div className="p-4 h-full overflow-y-auto space-y-2 custom-scrollbar">
+            <div className="p-3 sm:p-4 h-full overflow-y-auto space-y-2.5 custom-scrollbar">
               {filteredOrders.length === 0 ? (
-                <div className="p-12 text-center text-stone-400 bg-white rounded-2xl border border-stone-200">
-                  Nenhum pedido operacional encontrado.
-                </div>
+                <EmptyState
+                  title="Nenhum pedido operacional encontrado"
+                  description="Aguarde novos pedidos ou ajuste seus filtros de busca."
+                  icon={ShoppingBag}
+                />
               ) : (
                 filteredOrders.map(order => (
                   <RestaurantOrderCard
@@ -364,11 +436,13 @@ export function RestaurantOrdersPage({
         </div>
 
         {/* Mobile View: Vertical list for active tab */}
-        <div className="md:hidden flex-1 overflow-y-auto p-3 space-y-2.5 custom-scrollbar">
+        <div className="md:hidden flex-1 overflow-y-auto p-2 sm:p-3 space-y-2.5 custom-scrollbar">
           {mobileTabOrders.length === 0 ? (
-            <div className="p-8 text-center text-stone-400 bg-white rounded-2xl border border-stone-200">
-              Nenhum pedido na etapa "{activeMobileTab.toUpperCase()}"
-            </div>
+            <EmptyState
+              title={`Nenhum pedido na etapa "${activeMobileTab.toUpperCase()}"`}
+              description="Nenhum pedido nesta coluna no momento."
+              icon={ShoppingBag}
+            />
           ) : (
             mobileTabOrders.map(order => (
               <RestaurantOrderCard
@@ -396,15 +470,16 @@ export function RestaurantOrdersPage({
 
       {/* Order Details Modal when clicked */}
       {selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 backdrop-blur-xs p-3 sm:p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl relative border border-stone-200">
-            <button
-              type="button"
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-stone-900/60 backdrop-blur-xs p-0 sm:p-4 animate-fadeIn">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full sm:max-w-3xl h-[95vh] sm:h-auto sm:max-h-[92vh] flex flex-col overflow-hidden shadow-2xl relative border border-stone-200/80">
+            <IconButton
+              variant="ghost"
+              aria-label="Fechar detalhes"
               onClick={() => setSelectedOrder(null)}
-              className="absolute top-4 right-4 p-2 bg-stone-100 hover:bg-stone-200 rounded-full z-10 transition-colors"
+              className="absolute top-3 right-3 sm:top-4 sm:right-4 z-20 bg-stone-100 hover:bg-stone-200 rounded-full"
             >
               <X className="w-5 h-5 text-stone-600" />
-            </button>
+            </IconButton>
             <OrderDetails
               selectedOrder={selectedOrder}
               setSelectedOrder={setSelectedOrder}

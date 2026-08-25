@@ -629,14 +629,14 @@ export const LancamentosPage: React.FC = () => {
 
                     <p className="text-xs font-semibold text-stone-900">{item.description || 'Sem descrição'}</p>
 
-                    <div className="grid grid-cols-2 gap-1 text-[11px] text-stone-500">
+                    <div className="grid grid-cols-2 gap-1 text-xs text-stone-500">
                       <div><span className="font-medium text-stone-700">Cat:</span> {formatCategory(item.category)}</div>
                       <div><span className="font-medium text-stone-700">Pagto:</span> {formatPaymentMethod(item.paymentMethodId)}</div>
                       <div><span className="font-medium text-stone-700">Origem:</span> {formatOrigin(item.origin)}</div>
                       <div><span className="font-medium text-stone-700">Ref:</span> {getReferenceLabel(item)}</div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-1 text-[10px] text-stone-400 border-t border-stone-100">
+                    <div className="flex items-center justify-between pt-1 text-xs text-stone-400 border-t border-stone-100">
                       <span>{formattedDate}</span>
                       <span>Caixa #{item.cashRegisterId?.slice(-6).toUpperCase()}</span>
                     </div>

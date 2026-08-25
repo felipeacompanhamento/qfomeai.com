@@ -69,8 +69,8 @@ export function getOrderStageTimeInfo(order: any, columnId: string, nowMs: numbe
       displayText: `Há ${displayText}`,
       isDelayed: true,
       delayText: `Atrasado +${delayMins}m`,
-      badgeBg: 'bg-red-50 text-red-700 border-red-200',
-      badgeText: 'text-red-700'
+      badgeBg: 'bg-rose-50 text-rose-700 border-rose-200/80',
+      badgeText: 'text-rose-700'
     };
   }
 

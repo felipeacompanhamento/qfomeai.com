@@ -5,8 +5,39 @@ import { useAuth } from '../../contexts/AuthContext';
 import { restaurantService } from '../../services/restaurantService';
 import { productService, Product } from '../../services/productService';
 import { optionService, OptionGroup } from '../../services/optionService';
-import { Plus, Edit2, Trash2, X, Check, AlertCircle, Loader2, Image as ImageIcon, Search, Filter, Settings2 } from 'lucide-react';
-import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
+import { Plus, Edit2, Trash2, X, Check, AlertCircle, Loader2, Image as ImageIcon, Search, Filter, Settings2, ArrowRightLeft, History, CheckCircle2 } from 'lucide-react';
+import {
+  Button,
+  IconButton,
+  PageHeader,
+  Badge,
+  DataTableContainer,
+  Table,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  DataTableToolbar,
+  DataTableSkeleton,
+  DataTableEmptyState,
+  FormModal,
+  FormSection,
+  FieldGroup,
+  FormField,
+  TextInput,
+  SelectInput,
+  TextareaInput,
+  Switch,
+  Checkbox,
+  PrimaryButton,
+  SecondaryButton,
+  Select,
+  Input,
+  Textarea,
+  InlineFeedback,
+  ConfirmDialog,
+} from '../../components/ui';
 import { 
   normalizeProductSalesChannels, 
   normalizeProductChannelPricing, 
@@ -35,6 +66,95 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
 
+  const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [productForStock, setProductForStock] = useState<Product | null>(null);
+  const [stockFormData, setStockFormData] = useState({
+    tipo: 'entrada' as 'entrada' | 'saida' | 'ajuste',
+    quantidade: 1,
+    motivo: '',
+    observacao: ''
+  });
+  const [stockMovementsHistory, setStockMovementsHistory] = useState<any[]>([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockSuccessMessage, setStockSuccessMessage] = useState<string | null>(null);
+  const [stockErrorMessage, setStockErrorMessage] = useState<string | null>(null);
+
+  const handleOpenStockModal = async (product: Product) => {
+    setProductForStock(product);
+    setStockFormData({
+      tipo: 'entrada',
+      quantidade: 1,
+      motivo: '',
+      observacao: ''
+    });
+    setStockSuccessMessage(null);
+    setStockErrorMessage(null);
+    setStockMovementsHistory([]);
+    setIsStockModalOpen(true);
+
+    if (restaurantId && product.id) {
+      try {
+        const history = await productService.getStockMovements(restaurantId, product.id);
+        setStockMovementsHistory(history);
+      } catch (err: any) {
+        console.error("Error loading stock movements:", err);
+      }
+    }
+  };
+
+  const handleCloseStockModal = () => {
+    setIsStockModalOpen(false);
+    setProductForStock(null);
+    setStockSuccessMessage(null);
+    setStockErrorMessage(null);
+  };
+
+  const handleSubmitStockMovement = async () => {
+    if (!restaurantId || !productForStock?.id) return;
+    if (!stockFormData.motivo.trim()) {
+      setStockErrorMessage("O motivo da movimentação é obrigatório.");
+      return;
+    }
+    const qty = Number(stockFormData.quantidade);
+    if (Number.isNaN(qty) || qty < 0) {
+      setStockErrorMessage("Quantidade inválida.");
+      return;
+    }
+    if (stockFormData.tipo !== 'ajuste' && qty === 0) {
+      setStockErrorMessage("A quantidade deve ser maior que zero.");
+      return;
+    }
+
+    setStockLoading(true);
+    setStockErrorMessage(null);
+    setStockSuccessMessage(null);
+
+    try {
+      const res = await productService.movimentarEstoque(restaurantId, productForStock.id, {
+        tipo: stockFormData.tipo,
+        quantidade: qty,
+        motivo: stockFormData.motivo,
+        observacao: stockFormData.observacao
+      });
+
+      setStockSuccessMessage(`Movimentação realizada com sucesso! Novo saldo: ${res.newStock} ${productForStock.unidadeMedida || 'un'}`);
+      
+      setProducts(prev => prev.map(p => p.id === productForStock.id ? { ...p, estoqueAtual: res.newStock, estoque: res.newStock, stock: res.newStock } : p));
+      setProductForStock(prev => prev ? { ...prev, estoqueAtual: res.newStock, estoque: res.newStock, stock: res.newStock } : null);
+
+      const history = await productService.getStockMovements(restaurantId, productForStock.id);
+      setStockMovementsHistory(history);
+
+      setTimeout(() => {
+        setStockSuccessMessage(null);
+      }, 4000);
+    } catch (err: any) {
+      setStockErrorMessage(err.message || 'Erro ao movimentar estoque.');
+    } finally {
+      setStockLoading(false);
+    }
+  };
+
   const [formData, setFormData] = useState({
     nome: '',
     descricao: '',
@@ -49,7 +169,12 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
     sizes: [] as { nome: string; preco: number; aceita_metade: boolean }[],
     optionGroups: [] as { groupId: string; nome: string; ordem: number; obrigatorio: boolean; min: number; max: number }[],
     salesChannels: { ...DEFAULT_PRODUCT_SALES_CHANNELS } as ProductSalesChannels,
-    channelPricing: {} as ProductChannelPricing
+    channelPricing: {} as ProductChannelPricing,
+    controlarEstoque: false,
+    estoqueAtual: 0,
+    estoqueMinimo: 0,
+    unidadeMedida: 'un',
+    permitirVendaSemEstoque: false
   });
 
   useEffect(() => {
@@ -135,7 +260,12 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
         sizes: product.sizes || [],
         optionGroups: product.optionGroups || [],
         salesChannels: normalizeProductSalesChannels(product),
-        channelPricing: normalizeProductChannelPricing(product)
+        channelPricing: normalizeProductChannelPricing(product),
+        controlarEstoque: product.controlarEstoque ?? product.stockControl ?? false,
+        estoqueAtual: product.estoqueAtual ?? product.estoque ?? product.stock ?? 0,
+        estoqueMinimo: product.estoqueMinimo ?? 0,
+        unidadeMedida: product.unidadeMedida ?? 'un',
+        permitirVendaSemEstoque: product.permitirVendaSemEstoque ?? false
       });
     } else {
       setEditingProduct(null);
@@ -157,7 +287,12 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
           delivery: undefined,
           counter: undefined,
           waiter: undefined
-        }
+        },
+        controlarEstoque: false,
+        estoqueAtual: 0,
+        estoqueMinimo: 0,
+        unidadeMedida: 'un',
+        permitirVendaSemEstoque: false
       });
     }
     setError(null);
@@ -185,7 +320,12 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
         delivery: undefined,
         counter: undefined,
         waiter: undefined
-      }
+      },
+      controlarEstoque: false,
+      estoqueAtual: 0,
+      estoqueMinimo: 0,
+      unidadeMedida: 'un',
+      permitirVendaSemEstoque: false
     });
   };
 
@@ -195,6 +335,18 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
     if (formData.sizes.length === 0 && formData.preco <= 0) return "Preço deve ser maior que zero se nenhum tamanho for selecionado.";
     if (formData.sizes.length > 0 && formData.sizes.some(s => s.preco <= 0)) return "Preço do tamanho deve ser maior que zero.";
     if (formData.min_extras > formData.max_extras) return "Mínimo de adicionais não pode ser maior que o máximo.";
+
+    if (formData.controlarEstoque) {
+      if (formData.estoqueAtual < 0 || Number.isNaN(formData.estoqueAtual)) {
+        return "A quantidade atual em estoque não pode ser negativa.";
+      }
+      if (formData.estoqueMinimo < 0 || Number.isNaN(formData.estoqueMinimo)) {
+        return "O estoque mínimo não pode ser negativo.";
+      }
+      if (!formData.unidadeMedida?.trim()) {
+        return "A unidade de medida é obrigatória quando o controle de estoque está ativado.";
+      }
+    }
 
     // Channel pricing validation
     const channels: ('delivery' | 'counter' | 'waiter')[] = ['delivery', 'counter', 'waiter'];
@@ -245,7 +397,14 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
           counter: !!formData.salesChannels.counter,
           waiter: !!formData.salesChannels.waiter
         },
-        channelPricing
+        channelPricing,
+        controlarEstoque: formData.controlarEstoque,
+        estoqueAtual: formData.controlarEstoque ? Number(formData.estoqueAtual) || 0 : 0,
+        estoqueMinimo: formData.controlarEstoque ? Number(formData.estoqueMinimo) || 0 : 0,
+        unidadeMedida: formData.controlarEstoque ? formData.unidadeMedida : 'un',
+        permitirVendaSemEstoque: formData.controlarEstoque ? formData.permitirVendaSemEstoque : false,
+        estoque: formData.controlarEstoque ? Number(formData.estoqueAtual) || 0 : 0,
+        stock: formData.controlarEstoque ? Number(formData.estoqueAtual) || 0 : 0
       };
 
       if (editingProduct?.id) {
@@ -307,93 +466,86 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-stone-800">Cardápio ({products.length})</h2>
-          <p className="text-stone-500 text-sm">Gerencie os produtos do seu restaurante.</p>
-        </div>
-        <button
-          onClick={() => handleOpenModal()}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
-        >
-          <Plus className="w-5 h-5" />
-          Novo Produto
-        </button>
-      </div>
+      <PageHeader
+        title="Produtos"
+        description="Gerencie os itens, preços e disponibilidade do seu cardápio."
+        action={
+          <Button
+            onClick={() => handleOpenModal()}
+            variant="primary"
+            icon={<Plus className="w-5 h-5" />}
+          >
+            Adicionar produto
+          </Button>
+        }
+      />
 
       {successMessage && (
-        <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-600 text-sm font-bold animate-in fade-in slide-in-from-top-2">
-          <Check className="w-5 h-5 shrink-0" />
-          <p>{successMessage}</p>
-        </div>
+        <InlineFeedback
+          type="success"
+          message={successMessage}
+          className="animate-in fade-in slide-in-from-top-2"
+        />
       )}
 
-      {/* Filters */}
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="flex-1 relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 w-5 h-5" />
-          <input
-            type="text"
-            placeholder="Buscar por nome ou descrição..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-white border border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-          />
-        </div>
-        <div className="w-full md:w-64 relative">
-          <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 w-4 h-4" />
-          <select
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            className="w-full pl-10 pr-4 py-3 bg-white border border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all appearance-none"
-          >
-            <option value="all">Todas as Categorias</option>
-            {categories.map(cat => (
-              <option key={cat.id} value={cat.id}>{cat.nome}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
       {/* Products Table */}
-      <div className="bg-white rounded-3xl border border-stone-200 overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-stone-50 border-b border-stone-100">
-                <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Produto</th>
-                <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Categoria</th>
-                <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Preço</th>
-                <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-4 text-xs font-bold text-stone-400 uppercase tracking-wider text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-stone-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center">
-                    <Loader2 className="w-8 h-8 text-emerald-600 animate-spin mx-auto mb-2" />
-                    <span className="text-stone-400 text-sm font-medium">Carregando produtos...</span>
-                  </td>
-                </tr>
-              ) : filteredProducts.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-stone-400">
-                    Nenhum produto encontrado.
-                  </td>
-                </tr>
+      <DataTableContainer>
+        <DataTableToolbar
+          searchValue={searchTerm}
+          onSearchChange={setSearchTerm}
+          searchPlaceholder="Buscar por nome ou descrição..."
+          filters={
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="w-[200px]">
+                <Select
+                  value={filterCategory}
+                  onChange={(e) => setFilterCategory(e.target.value)}
+                >
+                  <option value="all">Todas as Categorias</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.nome}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          }
+        />
+
+        {loading ? (
+          <DataTableSkeleton columns={5} rows={6} />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Produto</TableHead>
+                <TableHead>Categoria</TableHead>
+                <TableHead>Preço</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredProducts.length === 0 ? (
+                <DataTableEmptyState
+                  icon={ImageIcon}
+                  title="Nenhum produto encontrado"
+                  description="Ajuste os termos de busca ou filtros de categoria."
+                  colSpan={5}
+                />
               ) : (
                 (() => {
                   const groups: { category: any; items: any[] }[] = [];
-                  categories.forEach(cat => {
-                    const items = filteredProducts.filter(p => p.categoria_id === cat.id);
+                  categories.forEach((cat) => {
+                    const items = filteredProducts.filter((p) => p.categoria_id === cat.id);
                     if (items.length > 0) {
                       groups.push({ category: cat, items });
                     }
                   });
 
-                  const uncategorized = filteredProducts.filter(p => 
-                    !p.categoria_id || !categories.find(c => c.id === p.categoria_id)
+                  const uncategorized = filteredProducts.filter(
+                    (p) => !p.categoria_id || !categories.find((c) => c.id === p.categoria_id)
                   );
                   if (uncategorized.length > 0) {
                     groups.push({ category: { id: 'uncategorized', nome: 'Outros' }, items: uncategorized });
@@ -401,101 +553,145 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
 
                   return groups.map((group) => (
                     <React.Fragment key={group.category.id}>
-                      <tr className="bg-stone-50/80 border-y border-stone-100/50">
-                        <td colSpan={5} className="px-6 py-2.5">
+                      <TableRow isGroupHeader>
+                        <TableCell colSpan={5} className="py-2.5">
                           <div className="flex items-center gap-2">
-                            <div className={`w-1 h-3.5 rounded-full ${group.category.id === 'uncategorized' ? 'bg-stone-300' : 'bg-emerald-500'}`} />
-                            <span className="text-[10px] font-black text-stone-600 uppercase tracking-widest">
+                            <div
+                              className={`w-1 h-3.5 rounded-full ${
+                                group.category.id === 'uncategorized' ? 'bg-stone-300' : 'bg-emerald-500'
+                              }`}
+                            />
+                            <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">
                               {group.category.nome} <span className="ml-1 text-stone-400">({group.items.length})</span>
                             </span>
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                       {group.items.map((product) => (
-                        <tr key={product.id} className="hover:bg-stone-50/50 transition-colors group">
-                          <td className="px-6 py-4">
+                        <TableRow key={product.id}>
+                          <TableCell>
                             <div className="flex items-center gap-4">
                               <div className="w-12 h-12 bg-stone-100 rounded-xl overflow-hidden shrink-0 border border-stone-200">
-                                <PlaceholderImage 
-                                  src={product.imagem_url} 
-                                  type="produto" 
-                                  className="w-full h-full object-cover" 
+                                <PlaceholderImage
+                                  src={product.imagem_url}
+                                  type="produto"
+                                  className="w-full h-full object-cover"
                                   alt={product.nome}
-                                />
+                                >
+                                </PlaceholderImage>
                               </div>
                               <div>
                                 <p className="font-bold text-stone-800">{product.nome}</p>
                                 <p className="text-xs text-stone-500 line-clamp-1 mb-1">{product.descricao}</p>
                                 <div className="flex flex-wrap gap-1 mt-1">
                                   {normalizeProductSalesChannels(product).delivery && (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-medium border border-emerald-100">
+                                    <Badge variant="default" size="sm">
                                       Delivery
-                                    </span>
+                                    </Badge>
                                   )}
                                   {normalizeProductSalesChannels(product).counter && (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-medium border border-blue-100">
+                                    <Badge variant="neutral" size="sm">
                                       Balcão
-                                    </span>
+                                    </Badge>
                                   )}
                                   {normalizeProductSalesChannels(product).waiter && (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-[10px] font-medium border border-purple-100">
+                                    <Badge variant="neutral" size="sm">
                                       Garçom
-                                    </span>
+                                    </Badge>
                                   )}
-                                  {!normalizeProductSalesChannels(product).delivery && 
-                                   !normalizeProductSalesChannels(product).counter && 
-                                   !normalizeProductSalesChannels(product).waiter && (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-medium border border-amber-100">
-                                      Nenhum canal
-                                    </span>
-                                  )}
+                                  {!normalizeProductSalesChannels(product).delivery &&
+                                    !normalizeProductSalesChannels(product).counter &&
+                                    !normalizeProductSalesChannels(product).waiter && (
+                                      <Badge variant="warning" size="sm">
+                                        Nenhum canal
+                                      </Badge>
+                                    )}
                                 </div>
                               </div>
                             </div>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="text-sm font-medium text-stone-600 bg-stone-100 px-2.5 py-1 rounded-lg">
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="neutral">
                               {product.categoria_nome}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
                             <span className="font-bold text-stone-800">R$ {product.preco.toFixed(2)}</span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
-                              product.status === 'ativo' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'
-                            }`}>
-                              {product.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-right">
+                            {(product.controlarEstoque || product.stockControl) && (
+                              <div className="text-xs text-stone-500 font-medium mt-0.5">
+                                Estoque:{' '}
+                                <span className="font-bold text-stone-700">
+                                  {product.estoqueAtual ?? product.estoque ?? product.stock ?? 0}{' '}
+                                  {product.unidadeMedida || 'un'}
+                                </span>
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={product.status === 'ativo' ? 'success' : 'danger'}
+                              size="sm"
+                            >
+                              {product.status === 'ativo' ? 'Ativo' : 'Inativo'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell align="right">
                             <div className="flex items-center justify-end gap-2">
-                              <button
+                              {product.controlarEstoque || product.stockControl ? (
+                                <IconButton
+                                  onClick={() => handleOpenStockModal(product)}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-stone-400 hover:text-blue-600 hover:bg-blue-50"
+                                  title="Movimentar Estoque"
+                                  aria-label={`Movimentar estoque de ${product.nome}`}
+                                >
+                                  <ArrowRightLeft className="w-4 h-4" />
+                                </IconButton>
+                              ) : (
+                                <IconButton
+                                  onClick={() => handleOpenModal(product)}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-stone-300 hover:text-stone-500 hover:bg-stone-100"
+                                  title="Ative o controle de estoque nas configurações do produto para movimentar"
+                                  aria-label={`Editar produto ${product.nome}`}
+                                >
+                                  <ArrowRightLeft className="w-4 h-4 opacity-40" />
+                                </IconButton>
+                              )}
+                              <IconButton
                                 onClick={() => handleOpenModal(product)}
-                                className="p-2 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+                                variant="ghost"
+                                size="sm"
+                                className="text-stone-400 hover:text-emerald-600 hover:bg-emerald-50"
                                 title="Editar"
+                                aria-label={`Editar ${product.nome}`}
                               >
                                 <Edit2 className="w-4 h-4" />
-                              </button>
-                              <button
+                              </IconButton>
+                              <IconButton
                                 onClick={() => confirmDelete(product)}
-                                className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                                variant="ghost"
+                                size="sm"
+                                className="text-stone-400 hover:text-rose-600 hover:bg-rose-50"
                                 title="Excluir"
+                                aria-label={`Excluir ${product.nome}`}
                               >
                                 <Trash2 className="w-4 h-4" />
-                              </button>
+                              </IconButton>
                             </div>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       ))}
                     </React.Fragment>
                   ));
                 })()
               )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </TableBody>
+          </Table>
+        )}
+      </DataTableContainer>
 
       {/* Modal Form */}
       <FormModal
@@ -505,325 +701,355 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
         subtitle="Preencha as informações do produto abaixo"
         icon={Settings2}
         maxWidth="3xl"
+        error={error}
         footer={
-          <div className="flex w-full gap-3">
-            <button
-              type="button"
-              onClick={handleCloseModal}
-              className="flex-1 px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-xl transition-all text-sm"
-            >
+          <div className="flex w-full items-center justify-end gap-3">
+            <SecondaryButton type="button" onClick={handleCloseModal}>
               Cancelar
-            </button>
-            <button
+            </SecondaryButton>
+            <PrimaryButton
               type="submit"
               form="product-form"
+              loading={saveLoading}
               disabled={saveLoading}
-              className="flex-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
             >
-              {saveLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-              {editingProduct ? 'Salvar Alterações' : 'Criar Produto'}
-            </button>
+              {editingProduct ? 'Salvar Produto' : 'Criar Produto'}
+            </PrimaryButton>
           </div>
         }
       >
         <form id="product-form" onSubmit={handleSubmit} className="space-y-6">
-          {error && (
-            <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center gap-3 text-rose-600 text-sm font-bold">
-              <AlertCircle className="w-5 h-5 shrink-0" />
-              <p>{error}</p>
-            </div>
-          )}
-
           <div className="space-y-6">
-            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-xs">
-              <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2 text-sm">
-                <span className="w-1.5 h-5 bg-emerald-500 rounded-full"></span>
-                Informações Básicas
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  <FormField label="Nome do Produto" required>
-                    <TextInput
-                      type="text"
-                      required
-                      value={formData.nome}
-                      onChange={e => setFormData({ ...formData, nome: e.target.value })}
-                      placeholder="Ex: Pizza Calabresa G"
-                    />
-                  </FormField>
+            <FormSection title="Informações Básicas">
+              <FieldGroup cols={2}>
+                <FormField label="Nome do Produto" required>
+                  <TextInput
+                    type="text"
+                    required
+                    value={formData.nome}
+                    onChange={(e) => setFormData({ ...formData, nome: e.target.value })}
+                    placeholder="Ex: Pizza Calabresa G"
+                  />
+                </FormField>
 
-                  <FormField label="Categoria" required>
-                    <SelectInput
-                      required
-                      value={formData.categoria_id}
-                      onChange={e => setFormData({ ...formData, categoria_id: e.target.value })}
+                <FormField label="Categoria" required>
+                  <SelectInput
+                    required
+                    value={formData.categoria_id}
+                    onChange={(e) => setFormData({ ...formData, categoria_id: e.target.value })}
+                  >
+                    <option value="">Selecione uma categoria</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.nome}
+                      </option>
+                    ))}
+                  </SelectInput>
+                </FormField>
+
+                <FormField label="Preço (R$)" required>
+                  <TextInput
+                    type="number"
+                    step="0.01"
+                    required
+                    value={Number.isNaN(formData.preco) ? '' : formData.preco}
+                    onChange={(e) => setFormData({ ...formData, preco: parseFloat(e.target.value) })}
+                    placeholder="0,00"
+                  />
+                </FormField>
+
+                <FormField label="Status" required>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, status: 'ativo' })}
+                      variant={formData.status === 'ativo' ? 'success' : 'secondary'}
+                      className="flex-1 text-xs"
                     >
-                      <option value="">Selecione uma categoria</option>
-                      {categories.map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.nome}</option>
-                      ))}
-                    </SelectInput>
-                  </FormField>
-                </div>
-
-                <div className="space-y-4">
-                  <FormField label="Preço (R$)" required>
-                    <TextInput
-                      type="number"
-                      step="0.01"
-                      required
-                      value={Number.isNaN(formData.preco) ? '' : formData.preco}
-                      onChange={e => setFormData({ ...formData, preco: parseFloat(e.target.value) })}
-                    />
-                  </FormField>
-
-                  <div>
-                    <label className="block text-xs font-extrabold text-stone-500 uppercase tracking-wider mb-1.5">Status</label>
-                    <div className="flex gap-4">
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, status: 'ativo' })}
-                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all border ${
-                          formData.status === 'ativo' 
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-600' 
-                            : 'bg-stone-50 border-stone-200 text-stone-400'
-                        }`}
-                      >
-                        Ativo
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, status: 'inativo' })}
-                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all border ${
-                          formData.status === 'inativo' 
-                            ? 'bg-rose-50 border-rose-200 text-rose-600' 
-                            : 'bg-stone-50 border-stone-200 text-stone-400'
-                        }`}
-                      >
-                        Inativo
-                      </button>
-                    </div>
+                      Ativo
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, status: 'inativo' })}
+                      variant={formData.status === 'inativo' ? 'destructive' : 'secondary'}
+                      className="flex-1 text-xs"
+                    >
+                      Inativo
+                    </Button>
                   </div>
+                </FormField>
+              </FieldGroup>
 
-                  <div className="pt-2">
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={formData.exibir_adicionais}
-                        onChange={e => setFormData({ ...formData, exibir_adicionais: e.target.checked })}
-                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <span className="font-bold text-stone-700 text-sm">Exibir adicionais</span>
-                    </label>
-                  </div>
-                </div>
+              <div className="pt-2">
+                <Checkbox
+                  checked={formData.exibir_adicionais}
+                  onChange={(checked) => setFormData({ ...formData, exibir_adicionais: checked })}
+                  label="Exibir adicionais"
+                  description="Permite que o cliente selecione opcionais cadastrados"
+                />
               </div>
-            </div>
+            </FormSection>
 
-            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-              <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
-                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                Canais de Venda
-              </h4>
-              <p className="text-xs text-stone-500 mb-4">Escolha em quais canais de venda este produto estará disponível.</p>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
-                  <input
-                    type="checkbox"
+            <FormSection
+              title="Canais de Venda"
+              description="Escolha em quais canais de venda este produto estará disponível."
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+                  <Checkbox
                     checked={formData.salesChannels.delivery}
-                    onChange={e => setFormData({
-                      ...formData,
-                      salesChannels: {
-                        ...formData.salesChannels,
-                        delivery: e.target.checked
-                      }
-                    })}
-                    className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                    onChange={(checked) =>
+                      setFormData({
+                        ...formData,
+                        salesChannels: { ...formData.salesChannels, delivery: checked },
+                      })
+                    }
+                    label="Delivery no app"
                   />
-                  <div>
-                    <span className="font-bold text-stone-700 text-sm">Delivery no app</span>
-                  </div>
-                </label>
+                </div>
 
-                <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
-                  <input
-                    type="checkbox"
+                <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+                  <Checkbox
                     checked={formData.salesChannels.counter}
-                    onChange={e => setFormData({
-                      ...formData,
-                      salesChannels: {
-                        ...formData.salesChannels,
-                        counter: e.target.checked
-                      }
-                    })}
-                    className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                    onChange={(checked) =>
+                      setFormData({
+                        ...formData,
+                        salesChannels: { ...formData.salesChannels, counter: checked },
+                      })
+                    }
+                    label="Venda no balcão"
                   />
-                  <div>
-                    <span className="font-bold text-stone-700 text-sm">Venda no balcão</span>
-                  </div>
-                </label>
+                </div>
 
-                <label className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100 cursor-pointer">
-                  <input
-                    type="checkbox"
+                <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+                  <Checkbox
                     checked={formData.salesChannels.waiter}
-                    onChange={e => setFormData({
-                      ...formData,
-                      salesChannels: {
-                        ...formData.salesChannels,
-                        waiter: e.target.checked
-                      }
-                    })}
-                    className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                    onChange={(checked) =>
+                      setFormData({
+                        ...formData,
+                        salesChannels: { ...formData.salesChannels, waiter: checked },
+                      })
+                    }
+                    label="Garçom e mesas"
                   />
-                  <div>
-                    <span className="font-bold text-stone-700 text-sm">Garçom e mesas</span>
-                  </div>
-                </label>
+                </div>
               </div>
 
               {!formData.salesChannels.delivery && !formData.salesChannels.counter && !formData.salesChannels.waiter && (
-                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-                  <span>Este produto não ficará disponível em nenhum canal de venda.</span>
-                </div>
+                <InlineFeedback
+                  type="warning"
+                  message="Este produto não ficará disponível em nenhum canal de venda."
+                />
               )}
-            </div>
+            </FormSection>
 
-            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-              <h4 className="font-bold text-stone-800 mb-2 flex items-center gap-2">
-                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                Preços Específicos por Canal
-              </h4>
-              <p className="text-xs text-stone-500 mb-4">Deixe em branco para utilizar o preço padrão do produto (R$ {Number.isNaN(formData.preco) ? '0,00' : formData.preco.toFixed(2)}).</p>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Delivery (R$)</label>
-                  <input
+            <FormSection
+              title="Preços Específicos por Canal"
+              description={`Deixe em branco para utilizar o preço padrão do produto (R$ ${
+                Number.isNaN(formData.preco) ? '0,00' : formData.preco.toFixed(2)
+              }).`}
+            >
+              <FieldGroup cols={3}>
+                <FormField label="Preço no Delivery (R$)">
+                  <TextInput
                     type="number"
                     step="0.01"
                     placeholder="Usar padrão"
                     disabled={!formData.salesChannels.delivery}
-                    value={formData.channelPricing.delivery === undefined || formData.channelPricing.delivery === null || Number.isNaN(formData.channelPricing.delivery) ? '' : formData.channelPricing.delivery}
-                    onChange={e => {
+                    value={
+                      formData.channelPricing.delivery === undefined ||
+                      formData.channelPricing.delivery === null ||
+                      Number.isNaN(formData.channelPricing.delivery)
+                        ? ''
+                        : formData.channelPricing.delivery
+                    }
+                    onChange={(e) => {
                       const val = parseFloat(e.target.value);
                       setFormData({
                         ...formData,
                         channelPricing: {
                           ...formData.channelPricing,
-                          delivery: Number.isNaN(val) ? undefined : val
-                        }
+                          delivery: Number.isNaN(val) ? undefined : val,
+                        },
                       });
                     }}
-                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.delivery ? 'opacity-50' : ''}`}
                   />
-                </div>
+                </FormField>
 
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Balcão (R$)</label>
-                  <input
+                <FormField label="Preço no Balcão (R$)">
+                  <TextInput
                     type="number"
                     step="0.01"
                     placeholder="Usar padrão"
                     disabled={!formData.salesChannels.counter}
-                    value={formData.channelPricing.counter === undefined || formData.channelPricing.counter === null || Number.isNaN(formData.channelPricing.counter) ? '' : formData.channelPricing.counter}
-                    onChange={e => {
+                    value={
+                      formData.channelPricing.counter === undefined ||
+                      formData.channelPricing.counter === null ||
+                      Number.isNaN(formData.channelPricing.counter)
+                        ? ''
+                        : formData.channelPricing.counter
+                    }
+                    onChange={(e) => {
                       const val = parseFloat(e.target.value);
                       setFormData({
                         ...formData,
                         channelPricing: {
                           ...formData.channelPricing,
-                          counter: Number.isNaN(val) ? undefined : val
-                        }
+                          counter: Number.isNaN(val) ? undefined : val,
+                        },
                       });
                     }}
-                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.counter ? 'opacity-50' : ''}`}
                   />
-                </div>
+                </FormField>
 
-                <div>
-                  <label className="block text-xs font-bold text-stone-600 mb-1">Preço no Garçom (R$)</label>
-                  <input
+                <FormField label="Preço no Garçom (R$)">
+                  <TextInput
                     type="number"
                     step="0.01"
                     placeholder="Usar padrão"
                     disabled={!formData.salesChannels.waiter}
-                    value={formData.channelPricing.waiter === undefined || formData.channelPricing.waiter === null || Number.isNaN(formData.channelPricing.waiter) ? '' : formData.channelPricing.waiter}
-                    onChange={e => {
+                    value={
+                      formData.channelPricing.waiter === undefined ||
+                      formData.channelPricing.waiter === null ||
+                      Number.isNaN(formData.channelPricing.waiter)
+                        ? ''
+                        : formData.channelPricing.waiter
+                    }
+                    onChange={(e) => {
                       const val = parseFloat(e.target.value);
                       setFormData({
                         ...formData,
                         channelPricing: {
                           ...formData.channelPricing,
-                          waiter: Number.isNaN(val) ? undefined : val
-                        }
+                          waiter: Number.isNaN(val) ? undefined : val,
+                        },
                       });
                     }}
-                    className={`w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-sm ${!formData.salesChannels.waiter ? 'opacity-50' : ''}`}
+                  />
+                </FormField>
+              </FieldGroup>
+            </FormSection>
+
+            <FormSection
+              title="Controle de Estoque"
+              description="Gerencie a quantidade e alertas de estoque deste produto."
+            >
+              <div className="flex items-center justify-between p-3 bg-stone-50 rounded-xl border border-stone-200/80">
+                <Switch
+                  checked={formData.controlarEstoque}
+                  onChange={(checked) => setFormData({ ...formData, controlarEstoque: checked })}
+                  label="Controlar estoque"
+                  description="Ativa o controle de baixas automáticas de estoque"
+                />
+              </div>
+
+              {formData.controlarEstoque && (
+                <div className="space-y-4 pt-2">
+                  <FieldGroup cols={3}>
+                    <FormField label="Quantidade Atual" required>
+                      <TextInput
+                        type="number"
+                        step="any"
+                        min="0"
+                        required
+                        value={Number.isNaN(formData.estoqueAtual) ? 0 : formData.estoqueAtual}
+                        onChange={(e) =>
+                          setFormData({ ...formData, estoqueAtual: parseFloat(e.target.value) || 0 })
+                        }
+                      />
+                    </FormField>
+
+                    <FormField label="Estoque Mínimo">
+                      <TextInput
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={Number.isNaN(formData.estoqueMinimo) ? 0 : formData.estoqueMinimo}
+                        onChange={(e) =>
+                          setFormData({ ...formData, estoqueMinimo: parseFloat(e.target.value) || 0 })
+                        }
+                      />
+                    </FormField>
+
+                    <FormField label="Unidade de Medida">
+                      <SelectInput
+                        value={formData.unidadeMedida}
+                        onChange={(e) => setFormData({ ...formData, unidadeMedida: e.target.value })}
+                      >
+                        <option value="un">Unidade (un)</option>
+                        <option value="kg">Quilo (kg)</option>
+                        <option value="g">Grama (g)</option>
+                        <option value="l">Litro (l)</option>
+                        <option value="ml">Mililitro (ml)</option>
+                        <option value="porção">Porção</option>
+                        <option value="lata">Lata</option>
+                        <option value="garrafa">Garrafa</option>
+                        <option value="caixa">Caixa</option>
+                      </SelectInput>
+                    </FormField>
+                  </FieldGroup>
+
+                  <Checkbox
+                    checked={formData.permitirVendaSemEstoque}
+                    onChange={(checked) => setFormData({ ...formData, permitirVendaSemEstoque: checked })}
+                    label="Permitir venda sem estoque"
+                    description="Permite registrar pedidos even when the estoque zerar."
                   />
                 </div>
-              </div>
-            </div>
+              )}
+            </FormSection>
 
-            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-              <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                Tamanhos
-              </h4>
+            <FormSection
+              title="Tamanhos"
+              description="Defina os tamanhos e preços correspondentes para o produto."
+            >
               <div className="space-y-2">
                 {sizes.map((size) => {
                   const selectedSize = formData.sizes.find(s => s.nome === size.nome);
                   return (
-                    <div key={size.id} className="flex items-center gap-3 p-3 bg-stone-50 rounded-xl border border-stone-100">
-                      <input
-                        type="checkbox"
+                    <div key={size.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-stone-50 rounded-xl border border-stone-200/60">
+                      <Checkbox
                         checked={!!selectedSize}
-                        onChange={(e) => {
-                          if (e.target.checked) {
+                        onChange={(checked) => {
+                          if (checked) {
                             setFormData({ ...formData, sizes: [...formData.sizes, { nome: size.nome, preco: 0, aceita_metade: false }] });
                           } else {
                             setFormData({ ...formData, sizes: formData.sizes.filter(s => s.nome !== size.nome) });
                           }
                         }}
-                        className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                        label={<span className="font-bold text-stone-700">{size.nome}</span>}
                       />
-                      <span className="flex-1 font-bold text-stone-700">{size.nome}</span>
                       {selectedSize && (
-                        <>
-                          <input
+                        <div className="flex items-center gap-3 pl-6 sm:pl-0">
+                          <Input
                             type="number"
-                            placeholder="Preço"
+                            step="0.01"
+                            placeholder="Preço (R$)"
                             value={Number.isNaN(selectedSize.preco) ? '' : selectedSize.preco}
                             onChange={(e) => setFormData({
                               ...formData,
-                              sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, preco: parseFloat(e.target.value) } : s)
+                              sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, preco: parseFloat(e.target.value) || 0 } : s)
                             })}
-                            className="w-24 px-2 py-1 border border-stone-200 rounded-lg text-sm bg-white"
+                            className="w-28 min-h-[36px] py-1.5 px-3 text-sm"
                           />
-                          <label className="flex items-center gap-1 text-xs font-bold text-stone-600 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={selectedSize.aceita_metade}
-                              onChange={(e) => setFormData({
-                                ...formData,
-                                sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, aceita_metade: e.target.checked } : s)
-                              })}
-                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
-                            />
-                            Metade
-                          </label>
-                        </>
+                          <Checkbox
+                            checked={selectedSize.aceita_metade}
+                            onChange={(checked) => setFormData({
+                              ...formData,
+                              sizes: formData.sizes.map(s => s.nome === size.nome ? { ...s, aceita_metade: checked } : s)
+                            })}
+                            label="Metade"
+                          />
+                        </div>
                       )}
                     </div>
                   );
                 })}
               </div>
-            </div>
+            </FormSection>
 
-            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <FormSection title="Mídia e Descrição">
+              <FieldGroup cols={2}>
                 <ImageUpload
                   label="Imagem do Produto"
                   path={`restaurants/${restaurantId}/products`}
@@ -832,23 +1058,21 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                   processProductImage={true}
                 />
 
-                <div>
-                  <label className="block text-sm font-bold text-stone-700 mb-1">Descrição Breve</label>
-                  <textarea
+                <FormField label="Descrição Breve">
+                  <TextareaInput
+                    rows={4}
                     value={formData.descricao}
-                    onChange={e => setFormData({ ...formData, descricao: e.target.value })}
-                    placeholder="Descreva os ingredientes, tamanho, etc."
-                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-2xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all h-32 resize-none text-sm font-medium"
+                    onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
+                    placeholder="Descreva os ingredientes, tamanho, acompanhamentos, etc."
                   />
-                </div>
-              </div>
-            </div>
+                </FormField>
+              </FieldGroup>
+            </FormSection>
 
-            <div className="bg-white p-4 rounded-2xl border border-stone-100 shadow-sm">
-              <h4 className="font-bold text-stone-800 mb-4 flex items-center gap-2">
-                <span className="w-1.5 h-6 bg-emerald-500 rounded-full"></span>
-                Grupos de Opções
-              </h4>
+            <FormSection
+              title="Grupos de Opções"
+              description="Associe grupos de adicionais ou opcionais a este produto."
+            >
               <div className="space-y-3">
                 {availableGroups.length === 0 ? (
                   <p className="text-sm text-stone-400 italic">Nenhum grupo de opções cadastrado.</p>
@@ -856,13 +1080,12 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                   availableGroups.map(group => {
                     const selectedGroup = formData.optionGroups.find(g => g.groupId === group.id);
                     return (
-                      <div key={group.id} className="p-4 bg-stone-50 rounded-2xl border border-stone-100 space-y-3">
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="checkbox"
+                      <div key={group.id} className="p-4 bg-stone-50 rounded-2xl border border-stone-200/60 space-y-3">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
                             checked={!!selectedGroup}
-                            onChange={(e) => {
-                              if (e.target.checked) {
+                            onChange={(checked) => {
+                              if (checked) {
                                 setFormData({
                                   ...formData,
                                   optionGroups: [...formData.optionGroups, {
@@ -881,31 +1104,28 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                                 });
                               }
                             }}
-                            className="w-5 h-5 rounded text-emerald-600 focus:ring-emerald-500"
+                            label={
+                              <div className="flex flex-col">
+                                <span className="font-bold text-stone-700">{group.nome}</span>
+                                {group.descricao && <span className="text-xs text-stone-500 font-medium">{group.descricao}</span>}
+                              </div>
+                            }
                           />
-                          <div className="flex-1">
-                            <p className="font-bold text-stone-700">{group.nome}</p>
-                            {group.descricao && <p className="text-[10px] text-stone-500">{group.descricao}</p>}
-                          </div>
                         </div>
 
                         {selectedGroup && (
-                          <div className="pl-8 grid grid-cols-1 sm:grid-cols-3 gap-3 animate-in fade-in slide-in-from-left-2">
-                            <label className="flex items-center gap-2 text-xs font-bold text-stone-600 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={selectedGroup.obrigatorio}
-                                onChange={(e) => setFormData({
-                                  ...formData,
-                                  optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, obrigatorio: e.target.checked } : g)
-                                })}
-                                className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
-                              />
-                              Obrigatório
-                            </label>
+                          <div className="pl-6.5 grid grid-cols-1 sm:grid-cols-3 gap-3 animate-in fade-in slide-in-from-left-2">
+                            <Checkbox
+                              checked={selectedGroup.obrigatorio}
+                              onChange={(checked) => setFormData({
+                                ...formData,
+                                optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, obrigatorio: checked } : g)
+                              })}
+                              label="Obrigatório"
+                            />
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-bold text-stone-400 uppercase">Min</span>
-                              <input
+                              <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider">Min</span>
+                              <Input
                                 type="number"
                                 min="0"
                                 value={selectedGroup.min}
@@ -913,12 +1133,12 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                                   ...formData,
                                   optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, min: parseInt(e.target.value) || 0 } : g)
                                 })}
-                                className="w-full px-2 py-1 bg-white border border-stone-200 rounded-lg text-xs"
+                                className="w-full min-h-[36px] py-1.5 px-3 text-xs"
                               />
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-bold text-stone-400 uppercase">Max</span>
-                              <input
+                              <span className="text-[10px] font-extrabold text-stone-400 uppercase tracking-wider">Max</span>
+                              <Input
                                 type="number"
                                 min="1"
                                 value={selectedGroup.max}
@@ -926,7 +1146,7 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                                   ...formData,
                                   optionGroups: formData.optionGroups.map(g => g.groupId === group.id ? { ...g, max: parseInt(e.target.value) || 1 } : g)
                                 })}
-                                className="w-full px-2 py-1 bg-white border border-stone-200 rounded-lg text-xs"
+                                className="w-full min-h-[36px] py-1.5 px-3 text-xs"
                               />
                             </div>
                           </div>
@@ -936,13 +1156,12 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                   })
                 )}
               </div>
-            </div>
+            </FormSection>
 
-            <div className="bg-stone-50 p-6 rounded-2xl border border-stone-100 space-y-4">
-              <h4 className="font-bold text-stone-800 flex items-center gap-2 text-sm">
-                <PlusCircle className="w-5 h-5 text-emerald-600" />
-                Limites de Adicionais
-              </h4>
+            <FormSection
+              title="Limites de Adicionais"
+              description="Defina quantos adicionais o cliente pode/deve escolher para este produto."
+            >
               <div className="grid grid-cols-2 gap-4">
                 <FormField label="Mínimo">
                   <TextInput
@@ -961,63 +1180,206 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
                   />
                 </FormField>
               </div>
-              <p className="text-[10px] text-stone-400 font-medium italic">
-                * Define quantos adicionais o cliente pode/deve escolher para este produto.
-              </p>
-            </div>
+            </FormSection>
           </div>
         </form>
       </FormModal>
-      {/* Modal de Exclusão */}
+      {/* Modal de Movimentação de Estoque */}
       <FormModal
+        isOpen={isStockModalOpen}
+        onClose={handleCloseStockModal}
+        title={`Movimentar Estoque: ${productForStock?.nome || ''}`}
+        subtitle="Registre entradas, saídas ou ajuste o saldo de estoque"
+        icon={ArrowRightLeft}
+        iconBgColor="bg-blue-50"
+        iconTextColor="text-blue-600"
+        maxWidth="2xl"
+        footer={
+          <div className="flex w-full items-center justify-end gap-3">
+            <SecondaryButton type="button" onClick={handleCloseStockModal}>
+              Cancelar
+            </SecondaryButton>
+            <PrimaryButton
+              type="button"
+              disabled={stockLoading}
+              onClick={handleSubmitStockMovement}
+              loading={stockLoading}
+            >
+              Confirmar Movimentação
+            </PrimaryButton>
+          </div>
+        }
+      >
+        <div className="space-y-6 py-2">
+          {stockErrorMessage && (
+            <InlineFeedback
+              type="error"
+              message={stockErrorMessage}
+            />
+          )}
+          {stockSuccessMessage && (
+            <InlineFeedback
+              type="success"
+              message={stockSuccessMessage}
+            />
+          )}
+
+          <div className="bg-stone-50 border border-stone-200/60 p-4 rounded-2xl flex items-center justify-between">
+            <div>
+              <p className="text-xs text-stone-500 font-medium uppercase tracking-wider">Saldo Atual em Estoque</p>
+              <p className="text-2xl font-black text-stone-800 mt-0.5">
+                {productForStock?.estoqueAtual ?? productForStock?.estoque ?? productForStock?.stock ?? 0} <span className="text-sm font-bold text-stone-500">{productForStock?.unidadeMedida || 'un'}</span>
+              </p>
+            </div>
+            {productForStock?.permitirVendaSemEstoque && (
+              <Badge variant="warning">
+                Permite Venda Sem Estoque
+              </Badge>
+            )}
+          </div>
+
+          <FieldGroup cols={2}>
+            <FormField label="Tipo de Movimentação">
+              <SelectInput
+                value={stockFormData.tipo}
+                onChange={e => setStockFormData({ ...stockFormData, tipo: e.target.value as any })}
+              >
+                <option value="entrada">Entrada (+)</option>
+                <option value="saida">Saída (-)</option>
+                <option value="ajuste">Ajuste de Saldo (Definir)</option>
+              </SelectInput>
+            </FormField>
+
+            <FormField label={stockFormData.tipo === 'ajuste' ? 'Novo Saldo (Ajuste)' : 'Quantidade'}>
+              <TextInput
+                type="number"
+                step="any"
+                min="0"
+                value={Number.isNaN(stockFormData.quantidade) ? '' : stockFormData.quantidade}
+                onChange={e => setStockFormData({ ...stockFormData, quantidade: parseFloat(e.target.value) || 0 })}
+                placeholder="Ex: 10"
+              />
+            </FormField>
+          </FieldGroup>
+
+          {(() => {
+            const current = productForStock?.estoqueAtual ?? productForStock?.estoque ?? productForStock?.stock ?? 0;
+            const qty = Number(stockFormData.quantidade) || 0;
+            let resulting = current;
+            if (stockFormData.tipo === 'entrada') resulting = current + qty;
+            else if (stockFormData.tipo === 'saida') resulting = current - qty;
+            else if (stockFormData.tipo === 'ajuste') resulting = qty;
+
+            const isNegative = resulting < 0;
+            const allowWithoutStock = productForStock?.permitirVendaSemEstoque;
+
+            return (
+              <div className={`p-4 rounded-2xl border ${isNegative && !allowWithoutStock ? 'bg-red-50 border-red-200 text-red-900' : 'bg-emerald-50/50 border-emerald-200 text-stone-800'}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-stone-600">Saldo Resultante Previsto:</span>
+                  <span className={`text-xl font-black ${isNegative && !allowWithoutStock ? 'text-red-600' : 'text-emerald-700'}`}>
+                    {resulting} {productForStock?.unidadeMedida || 'un'}
+                  </span>
+                </div>
+                {isNegative && !allowWithoutStock && (
+                  <p className="text-xs text-red-600 mt-1 font-semibold">
+                    ⚠️ Atenção: O saldo resultante não pode ser negativo pois a venda sem estoque está desativada.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
+          <FieldGroup cols={1}>
+            <FormField label="Motivo da Movimentação" required>
+              <SelectInput
+                value={stockFormData.motivo}
+                onChange={e => setStockFormData({ ...stockFormData, motivo: e.target.value })}
+                className="mb-2"
+              >
+                <option value="">Selecione um motivo...</option>
+                <option value="Reposição de Estoque">Reposição de Estoque</option>
+                <option value="Compra / Entrada de Fornecedor">Compra / Entrada de Fornecedor</option>
+                <option value="Perda / Avaria / Descarte">Perda / Avaria / Descarte</option>
+                <option value="Contagem de Inventário (Balanço)">Contagem de Inventário (Balanço)</option>
+                <option value="Ajuste de Saldo Manual">Ajuste de Saldo Manual</option>
+                <option value="Outro">Outro</option>
+              </SelectInput>
+              <TextInput
+                type="text"
+                placeholder="Ou digite outro motivo..."
+                value={stockFormData.motivo}
+                onChange={e => setStockFormData({ ...stockFormData, motivo: e.target.value })}
+              />
+            </FormField>
+          </FieldGroup>
+
+          <FieldGroup cols={1}>
+            <FormField label="Observação (Opcional)">
+              <TextareaInput
+                rows={2}
+                value={stockFormData.observacao}
+                onChange={e => setStockFormData({ ...stockFormData, observacao: e.target.value })}
+                placeholder="Detalhes adicionais sobre a movimentação..."
+              />
+            </FormField>
+          </FieldGroup>
+
+          <div className="pt-4 border-t border-stone-200">
+            <h4 className="font-bold text-stone-800 text-sm mb-3 flex items-center gap-2">
+              <History className="w-4 h-4 text-stone-500" />
+              Histórico Recente de Movimentações
+            </h4>
+            {stockMovementsHistory.length === 0 ? (
+              <p className="text-xs text-stone-400 italic">Nenhuma movimentação registrada ainda.</p>
+            ) : (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {stockMovementsHistory.map((mov: any) => (
+                  <div key={mov.id} className="p-2.5 bg-stone-50 border border-stone-100 rounded-xl text-xs flex items-center justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-1.5 py-0.5 rounded font-bold uppercase text-[9px] ${
+                          mov.tipo === 'entrada' ? 'bg-emerald-100 text-emerald-700' :
+                          mov.tipo === 'saida' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {mov.tipo}
+                        </span>
+                        <span className="font-bold text-stone-800">
+                          {mov.tipo === 'ajuste' ? `Novo saldo: ${mov.quantidade}` : `${mov.tipo === 'entrada' ? '+' : '-'}${mov.quantidade}`}
+                        </span>
+                        <span className="text-stone-500">• {mov.motivo}</span>
+                      </div>
+                      <p className="text-[11px] text-stone-400 mt-0.5">
+                        {mov.usuario} em {new Date(mov.created_at).toLocaleString('pt-BR')} {mov.observacao ? `(${mov.observacao})` : ''}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-[10px] text-stone-400 block">Saldo</span>
+                      <span className="font-bold text-stone-700">{mov.quantidadeAnterior} → {mov.quantidadeNova}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </FormModal>
+
+      {/* Modal de Exclusão */}
+      <ConfirmDialog
         isOpen={isDeleteModalOpen}
         onClose={() => {
           setIsDeleteModalOpen(false);
           setProductToDelete(null);
         }}
+        onConfirm={handleDelete}
         title="Excluir Produto"
-        subtitle="Confirme a exclusão do produto"
-        icon={Trash2}
-        iconBgColor="bg-red-50"
-        iconTextColor="text-red-500"
-        maxWidth="sm"
-        error={error}
-        footer={
-          <div className="flex w-full gap-3">
-            <button
-              onClick={() => {
-                setIsDeleteModalOpen(false);
-                setProductToDelete(null);
-              }}
-              className="flex-1 px-4 py-3 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold rounded-2xl transition-all text-sm"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleDelete}
-              disabled={saveLoading}
-              className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl shadow-lg shadow-red-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
-            >
-              {saveLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Excluir'}
-            </button>
-          </div>
-        }
-      >
-        <div className="text-center py-2">
-          <p className="text-stone-500 text-sm">
-            Tem certeza que deseja excluir o produto <strong>{productToDelete?.nome}</strong>? 
-            Esta ação não pode ser desfeita.
-          </p>
-        </div>
-      </FormModal>
+        description={`Tem certeza que deseja excluir o produto ${productToDelete?.nome || ''}?`}
+        confirmLabel="Excluir"
+        cancelLabel="Cancelar"
+        type="danger"
+        loading={saveLoading}
+      />
     </div>
-  );
-}
-
-function PlusCircle({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/>
-    </svg>
   );
 }

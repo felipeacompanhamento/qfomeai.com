@@ -1,5 +1,6 @@
 import React from 'react';
-import { Search, Filter, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
+import { SearchInput } from '../../../../components/ui';
 
 interface OrdersToolbarProps {
   searchTerm: string;
@@ -22,45 +23,44 @@ export const OrdersToolbar: React.FC<OrdersToolbarProps> = ({
   activeFilterColumn,
   onSelectFilterColumn
 }) => {
+  const totalCount = statusCounts.novo + statusCounts.confirmado + statusCounts.cozinha + statusCounts.entrega;
+
   return (
-    <div className="bg-stone-50 border-b border-stone-200 px-3 py-2 sm:px-4 flex flex-col md:flex-row md:items-center justify-between gap-2 w-full max-w-full min-w-0 overflow-hidden shrink-0">
+    <div className="bg-white border-b border-stone-200/80 p-2.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-3 w-full max-w-full min-w-0 shrink-0">
       {/* Search Input */}
-      <div className="relative w-full md:w-64 shrink-0">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-        <input
-          type="text"
+      <div className="w-full md:w-64 lg:w-72 shrink-0">
+        <SearchInput
           value={searchTerm}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Buscar #pedido, cliente..."
-          className="w-full pl-9 pr-3 py-1.5 bg-white border border-stone-200 rounded-xl text-xs font-medium text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
         />
       </div>
 
-      {/* Quick Metrics / Status Filter Chips */}
-      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full min-w-0">
+      {/* Quick Status Filter Chips */}
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 max-w-full min-w-0 touch-pan-x">
         <button
           type="button"
           onClick={() => onSelectFilterColumn(null)}
-          className={`px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 border ${
+          className={`px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
             activeFilterColumn === null
-              ? 'bg-stone-900 text-white border-stone-900 shadow-xs'
-              : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100'
+              ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
+              : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
           }`}
         >
-          Todos ({statusCounts.novo + statusCounts.confirmado + statusCounts.cozinha + statusCounts.entrega})
+          Todos ({totalCount})
         </button>
 
         <button
           type="button"
           onClick={() => onSelectFilterColumn(activeFilterColumn === 'novo' ? null : 'novo')}
-          className={`px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 border ${
+          className={`px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer border ${
             activeFilterColumn === 'novo'
-              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-              : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+              ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
+              : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
           }`}
         >
           <span>Novos</span>
-          <span className="px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+          <span className={`px-1.5 py-0.5 rounded-full text-xs font-extrabold ${activeFilterColumn === 'novo' ? 'bg-white/20 text-white' : 'bg-stone-200/80 text-stone-700'}`}>
             {statusCounts.novo}
           </span>
         </button>
@@ -68,14 +68,14 @@ export const OrdersToolbar: React.FC<OrdersToolbarProps> = ({
         <button
           type="button"
           onClick={() => onSelectFilterColumn(activeFilterColumn === 'confirmado' ? null : 'confirmado')}
-          className={`px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 border ${
+          className={`px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer border ${
             activeFilterColumn === 'confirmado'
-              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-              : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+              ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
+              : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
           }`}
         >
           <span>Confirmados</span>
-          <span className="px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+          <span className={`px-1.5 py-0.5 rounded-full text-xs font-extrabold ${activeFilterColumn === 'confirmado' ? 'bg-white/20 text-white' : 'bg-stone-200/80 text-stone-700'}`}>
             {statusCounts.confirmado}
           </span>
         </button>
@@ -83,14 +83,14 @@ export const OrdersToolbar: React.FC<OrdersToolbarProps> = ({
         <button
           type="button"
           onClick={() => onSelectFilterColumn(activeFilterColumn === 'cozinha' ? null : 'cozinha')}
-          className={`px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 border ${
+          className={`px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer border ${
             activeFilterColumn === 'cozinha'
-              ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
-              : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+              ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
+              : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
           }`}
         >
           <span>Cozinha</span>
-          <span className="px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+          <span className={`px-1.5 py-0.5 rounded-full text-xs font-extrabold ${activeFilterColumn === 'cozinha' ? 'bg-white/20 text-white' : 'bg-stone-200/80 text-stone-700'}`}>
             {statusCounts.cozinha}
           </span>
         </button>
@@ -98,14 +98,14 @@ export const OrdersToolbar: React.FC<OrdersToolbarProps> = ({
         <button
           type="button"
           onClick={() => onSelectFilterColumn(activeFilterColumn === 'entrega' ? null : 'entrega')}
-          className={`px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 border ${
+          className={`px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer border ${
             activeFilterColumn === 'entrega'
-              ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-              : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+              ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
+              : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
           }`}
         >
           <span>Entrega</span>
-          <span className="px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+          <span className={`px-1.5 py-0.5 rounded-full text-xs font-extrabold ${activeFilterColumn === 'entrega' ? 'bg-white/20 text-white' : 'bg-stone-200/80 text-stone-700'}`}>
             {statusCounts.entrega}
           </span>
         </button>
@@ -114,7 +114,7 @@ export const OrdersToolbar: React.FC<OrdersToolbarProps> = ({
           <button
             type="button"
             onClick={() => onSelectFilterColumn(activeFilterColumn === 'entrega' ? null : 'entrega')}
-            className="px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 bg-amber-500 text-stone-950 border border-amber-600 animate-pulse"
+            className="px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 border border-amber-600 shadow-2xs animate-pulse cursor-pointer"
           >
             <AlertCircle className="w-3.5 h-3.5" />
             <span>Conf. Recebimento ({statusCounts.pendingSettlement})</span>
@@ -124,3 +124,4 @@ export const OrdersToolbar: React.FC<OrdersToolbarProps> = ({
     </div>
   );
 };
+

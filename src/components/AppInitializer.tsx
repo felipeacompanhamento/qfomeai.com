@@ -1,32 +1,23 @@
 import React, { useEffect } from 'react';
 import { useAppLoading } from '../contexts/AppLoadingContext';
 import { restaurantService } from '../services/restaurantService';
-import SplashScreen from './SplashScreen';
 
 export default function AppInitializer({ children }: { children: React.ReactNode }) {
-  const { isAppReady, setAppReady, triggerSplash } = useAppLoading();
+  const { setAppReady } = useAppLoading();
 
   useEffect(() => {
-    async function initializeApp() {
-      try {
-        // Fetch essential data in parallel
-        await Promise.all([
-          restaurantService.getApprovedRestaurants(),
-          restaurantService.getCategories(),
-          restaurantService.getBanners()
-        ]);
-        
-        setAppReady(true);
-        setTimeout(() => triggerSplash(), 100);
-      } catch (error) {
-        console.error('Error initializing app:', error);
-        setAppReady(true);
-        triggerSplash();
-      }
-    }
+    // Libera a inicialização imediatamente para não bloquear Login, Admin, Restaurante ou Garçom
+    setAppReady(true);
 
-    initializeApp();
-  }, [setAppReady, triggerSplash]);
+    // Pré-carregamento em background não-bloqueante
+    Promise.allSettled([
+      restaurantService.getApprovedRestaurants().catch(err => console.warn('Background getApprovedRestaurants error:', err)),
+      restaurantService.getCategories().catch(err => console.warn('Background getCategories error:', err)),
+      restaurantService.getBanners().catch(err => console.warn('Background getBanners error:', err))
+    ]).catch(err => {
+      console.warn('Background prefetch error:', err);
+    });
+  }, [setAppReady]);
 
   return <>{children}</>;
 }

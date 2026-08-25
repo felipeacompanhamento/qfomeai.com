@@ -7,9 +7,11 @@ import {
   doc, 
   getDoc,
   orderBy,
-  limit
+  limit,
+  startAfter
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { staticDataCacheService, TTL } from './staticDataCacheService';
 
 export const invalidateRestaurantCache = (restaurantId: string) => {
   cache.remove(`restaurant_categories_${restaurantId}`);
@@ -18,254 +20,307 @@ export const invalidateRestaurantCache = (restaurantId: string) => {
   cache.remove(`restaurant_sizes_${restaurantId}`);
   cache.remove(`products_${restaurantId}`);
   cache.remove(`categories_${restaurantId}`);
+
+  staticDataCacheService.invalidateRestaurant(restaurantId);
+  staticDataCacheService.invalidateCategories(restaurantId);
+  staticDataCacheService.invalidateDeliveryAreas(restaurantId);
 };
 
 export const restaurantService = {
   async getRestaurantBySlug(slug: string) {
-    const cacheKey = `restaurant_slug_${slug}`;
-    const cached = cache.get(cacheKey);
-    
-    if (cached) {
-      console.log(`[Cache] Restaurante ${slug} carregado do cache.`);
-      return cached;
-    }
-    
-    console.log(`[Firestore] getRestaurantBySlug - Buscando restaurante pelo slug ${slug} - ${new Date().toISOString()}`);
-    const q = query(collection(db, 'restaurants'), where('slug', '==', slug), limit(1));
-    const querySnapshot = await getDocs(q);
-    if (querySnapshot.empty) return null;
-    const docSnap = querySnapshot.docs[0];
-    const restaurant = { id: docSnap.id, ...docSnap.data() };
-    
-    cache.set(cacheKey, restaurant, 300); // 5 minutes
-    return restaurant;
+    if (!slug) return null;
+    return staticDataCacheService.getOrFetch(
+      `restaurant_public_slug_${slug}`,
+      async () => {
+        const q = query(collection(db, 'restaurants'), where('slug', '==', slug), limit(1));
+        const querySnapshot = await getDocs(q);
+        if (querySnapshot.empty) return null;
+        const docSnap = querySnapshot.docs[0];
+        return { id: docSnap.id, ...docSnap.data() };
+      },
+      TTL.RESTAURANT_PUBLIC
+    );
   },
 
   async getRestaurantById(id: string) {
-    const cacheKey = `restaurant_id_${id}`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    console.log("Fetching restaurant by id:", id);
-    try {
-      const docRef = doc(db, 'restaurants', id);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const restaurant = { id: docSnap.id, ...docSnap.data() };
-        cache.set(cacheKey, restaurant, 300); // 5 minutes
-        return restaurant;
-      }
-      return null;
-    } catch (error) {
-      console.error("Error fetching restaurant by id:", error);
-      return null;
-    }
+    if (!id) return null;
+    return staticDataCacheService.getOrFetch(
+      `restaurant_public_id_${id}`,
+      async () => {
+        try {
+          const docRef = doc(db, 'restaurants', id);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            return { id: docSnap.id, ...docSnap.data() };
+          }
+          return null;
+        } catch (error) {
+          console.error("Error fetching restaurant by id:", error);
+          return null;
+        }
+      },
+      TTL.RESTAURANT_PUBLIC
+    );
   },
 
   async getRestaurantByOwnerId(ownerId: string) {
-    const cacheKey = `restaurant_owner_${ownerId}`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    console.log("Fetching restaurant for owner:", ownerId);
-    try {
-      const docRef = doc(db, 'restaurants', ownerId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const restaurant = { id: docSnap.id, ...docSnap.data() };
-        cache.set(cacheKey, restaurant, 300); // 5 minutes
-        return restaurant;
-      }
-      
-      // Fallback to query if not found by ID
-      const q = query(collection(db, 'restaurants'), where('ownerId', '==', ownerId), limit(1));
-      const querySnapshot = await getDocs(q);
-      console.log("Restaurant query result size:", querySnapshot.size);
-      if (querySnapshot.empty) return null;
-      const fallbackDoc = querySnapshot.docs[0];
-      const restaurant = { id: fallbackDoc.id, ...fallbackDoc.data() };
-      cache.set(cacheKey, restaurant, 300); // 5 minutes
-      return restaurant;
-    } catch (error) {
-      console.error("Error fetching restaurant:", error);
-      return null;
-    }
+    if (!ownerId) return null;
+    return staticDataCacheService.getOrFetch(
+      `restaurant_public_owner_${ownerId}`,
+      async () => {
+        try {
+          const docRef = doc(db, 'restaurants', ownerId);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            return { id: docSnap.id, ...docSnap.data() };
+          }
+          
+          const q = query(collection(db, 'restaurants'), where('ownerId', '==', ownerId), limit(1));
+          const querySnapshot = await getDocs(q);
+          if (querySnapshot.empty) return null;
+          const fallbackDoc = querySnapshot.docs[0];
+          return { id: fallbackDoc.id, ...fallbackDoc.data() };
+        } catch (error) {
+          console.error("Error fetching restaurant:", error);
+          return null;
+        }
+      },
+      TTL.RESTAURANT_PUBLIC
+    );
   },
 
   async getRestaurantCategories(restaurantId: string) {
-    const cacheKey = `restaurant_categories_${restaurantId}`;
-    const cached = cache.get(cacheKey);
-    
-    if (cached) {
-      console.log(`[Cache] Categorias do restaurante ${restaurantId} carregadas do cache.`);
-      return cached;
-    }
-
-    console.log(`[Firestore] getRestaurantCategories - Buscando categorias para o restaurante ${restaurantId} - ${new Date().toISOString()}`);
-    
-    // Try subcollection first
-    let q = query(collection(db, 'restaurants', restaurantId, 'categories'));
-    let querySnapshot = await getDocs(q);
-    let categories = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    
-    if (categories.length === 0) {
-      console.log(`[Firestore] Nenhuma categoria na subcoleção, tentando coleção raiz para o restaurante ${restaurantId}`);
-      q = query(
-        collection(db, 'categories'),
-        where('restaurant_id', '==', doc(db, 'restaurants', restaurantId))
-      );
-      querySnapshot = await getDocs(q);
-      categories = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    }
-    
-    console.log(`[Firestore] Categorias encontradas para ${restaurantId}:`, categories.length);
-    cache.set(cacheKey, categories, 600); // 10 minutes
-    return categories;
+    if (!restaurantId) return [];
+    return staticDataCacheService.getRestaurantCategories(restaurantId);
   },
 
   async getRestaurantProducts(restaurantId: string) {
-    const cacheKey = `restaurant_products_${restaurantId}`;
-    const cached = cache.get(cacheKey);
-
-    if (cached) {
-      console.log(`[Cache] Produtos do restaurante ${restaurantId} carregados do cache.`);
-      return cached;
-    }
-
-    console.log(`[Firestore] getRestaurantProducts - Buscando produtos para o restaurante ${restaurantId} - ${new Date().toISOString()}`);
-    const q = query(
-      collection(db, 'restaurants', restaurantId, 'products'),
-      where('status', '==', 'ativo')
+    if (!restaurantId) return [];
+    return staticDataCacheService.getOrFetch(
+      `restaurant_products_${restaurantId}`,
+      async () => {
+        const q = query(
+          collection(db, 'restaurants', restaurantId, 'products'),
+          where('status', '==', 'ativo')
+        );
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      },
+      TTL.CATEGORIES
     );
-    const querySnapshot = await getDocs(q);
-    const products = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    
-    console.log(`[Firestore] Produtos encontrados para ${restaurantId}:`, products.length);
-    cache.set(cacheKey, products, 300); // 5 minutes
-    return products;
   },
 
   async getRestaurantExtras(restaurantId: string) {
-    const cacheKey = `restaurant_extras_${restaurantId}`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    const q = query(
-      collection(db, 'restaurants', restaurantId, 'extras'),
-      where('status', '==', 'ativo')
+    if (!restaurantId) return [];
+    return staticDataCacheService.getOrFetch(
+      `restaurant_extras_${restaurantId}`,
+      async () => {
+        const q = query(
+          collection(db, 'restaurants', restaurantId, 'extras'),
+          where('status', '==', 'ativo')
+        );
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      },
+      TTL.CATEGORIES
     );
-    const querySnapshot = await getDocs(q);
-    const extras = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, extras, 300); // 5 minutes
-    return extras;
   },
 
   async getRestaurantSizes(restaurantId: string) {
-    const cacheKey = `restaurant_sizes_${restaurantId}`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    const q = query(
-      collection(db, 'restaurants', restaurantId, 'sizes'),
-      orderBy('ordem', 'asc')
+    if (!restaurantId) return [];
+    return staticDataCacheService.getOrFetch(
+      `restaurant_sizes_${restaurantId}`,
+      async () => {
+        const q = query(
+          collection(db, 'restaurants', restaurantId, 'sizes'),
+          orderBy('ordem', 'asc')
+        );
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      },
+      TTL.CATEGORIES
     );
-    const querySnapshot = await getDocs(q);
-    const sizes = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, sizes, 300); // 5 minutes
-    return sizes;
   },
 
   async getRestaurantDeliveryAreas(restaurantId: string) {
-    const cacheKey = `restaurant_delivery_areas_${restaurantId}`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    const q = query(collection(db, 'restaurants', restaurantId, 'delivery_areas'));
-    const querySnapshot = await getDocs(q);
-    const deliveryAreas = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, deliveryAreas, 300); // 5 minutes
-    return deliveryAreas;
+    if (!restaurantId) return [];
+    return staticDataCacheService.getDeliveryAreas(restaurantId);
   },
 
   async getAllRestaurants() {
-    const cacheKey = `all_restaurants`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    const q = query(
-      collection(db, 'restaurants'), 
-      where('status', '==', 'ativo'),
-      limit(50)
+    return staticDataCacheService.getOrFetch(
+      'all_restaurants',
+      async () => {
+        const q = query(
+          collection(db, 'restaurants'), 
+          where('status', '==', 'ativo'),
+          limit(50)
+        );
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      },
+      TTL.RESTAURANT_PUBLIC
     );
-    const querySnapshot = await getDocs(q);
-    const restaurants = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, restaurants, 300); // 5 minutes
-    return restaurants;
   },
 
   async getApprovedRestaurants() {
-    const cacheKey = `approved_restaurants`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    const q = query(
-      collection(db, 'restaurants'), 
-      where('status_aprovacao', '==', 'aprovado'),
-      limit(250)
+    return staticDataCacheService.getOrFetch(
+      'approved_restaurants',
+      async () => {
+        const q = query(
+          collection(db, 'restaurants'), 
+          where('status_aprovacao', '==', 'aprovado'),
+          limit(250)
+        );
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      },
+      TTL.RESTAURANT_PUBLIC
     );
-    const querySnapshot = await getDocs(q);
-    const restaurants = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, restaurants, 300); // 5 minutes
-    return restaurants;
   },
 
   async getApprovedRestaurantsByLocation(estado: string, cidade: string) {
-    const cacheKey = `approved_restaurants_${estado || 'any'}_${cidade}`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
+    const key = `approved_restaurants_${estado || 'any'}_${cidade}`;
+    return staticDataCacheService.getOrFetch(
+      key,
+      async () => {
+        const constraints: any[] = [
+          where('status_aprovacao', '==', 'aprovado'),
+          where('endereco.cidade', '==', cidade),
+          limit(50)
+        ];
 
-    console.log(`[Firestore] getApprovedRestaurantsByLocation - Buscando restaurantes em ${cidade}/${estado || 'Qualquer Estado'}`);
-    
-    const constraints: any[] = [
-      where('status_aprovacao', '==', 'aprovado'),
-      where('endereco.cidade', '==', cidade),
-      limit(50)
-    ];
+        if (estado) {
+          constraints.push(where('endereco.estado', '==', estado));
+        }
 
-    if (estado) {
-      constraints.push(where('endereco.estado', '==', estado));
-    }
-
-    const q = query(
-      collection(db, 'restaurants'), 
-      ...constraints
+        const q = query(
+          collection(db, 'restaurants'), 
+          ...constraints
+        );
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      },
+      TTL.RESTAURANT_PUBLIC
     );
-    const querySnapshot = await getDocs(q);
-    console.log(`[Firestore] Restaurantes encontrados: ${querySnapshot.size}`);
-    const restaurants = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, restaurants, 300); // 5 minutes
-    return restaurants;
   },
 
   async getCategories() {
-    const cacheKey = `global_categories`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
-
-    const querySnapshot = await getDocs(collection(db, 'categories'));
-    const categories = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, categories, 3600); // 1 hour
-    return categories;
+    return staticDataCacheService.getGlobalCategories();
   },
 
   async getBanners() {
-    const cacheKey = `global_banners`;
-    const cached = cache.get(cacheKey);
-    if (cached) return cached;
+    return staticDataCacheService.getOrFetch(
+      'global_banners',
+      async () => {
+        const querySnapshot = await getDocs(collection(db, 'banners'));
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      },
+      TTL.CATEGORIES
+    );
+  },
 
-    const querySnapshot = await getDocs(collection(db, 'banners'));
-    const banners = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    cache.set(cacheKey, banners, 3600); // 1 hour
-    return banners;
+  async getRestaurantClients(restaurantId: string) {
+    if (!restaurantId) return [];
+    try {
+      const q = query(
+        collection(db, 'restaurants', restaurantId, 'orders'),
+        orderBy('data_criacao', 'desc'),
+        limit(200)
+      );
+      const snapshot = await getDocs(q);
+      const clientsMap: Record<string, any> = {};
+
+      snapshot.docs.forEach(docSnap => {
+        const order = docSnap.data();
+        const clientId = order.cliente_id || order.cliente_telefone || order.cliente_nome || docSnap.id;
+        
+        if (!clientsMap[clientId]) {
+          clientsMap[clientId] = {
+            id: clientId,
+            nome: order.cliente_nome || 'Cliente',
+            telefone: order.cliente_telefone || order.telefone || '',
+            totalPedidos: 1,
+            valorTotal: Number(order.valor_total || 0),
+            ultimoPedido: order.data_criacao
+          };
+        } else {
+          clientsMap[clientId].totalPedidos += 1;
+          clientsMap[clientId].valorTotal += Number(order.valor_total || 0);
+        }
+      });
+
+      return Object.values(clientsMap).sort((a, b) => b.totalPedidos - a.totalPedidos);
+    } catch (error) {
+      console.error("Error in getRestaurantClients:", error);
+      return [];
+    }
+  },
+
+  async getRestaurantClientsPaginated(restaurantId: string, page: number = 1, pageSize: number = 30) {
+    if (!restaurantId) return { clients: [], hasMore: false, totalClients: 0, totalPages: 0, currentPage: 1 };
+    try {
+      const allClients = await staticDataCacheService.getOrFetch(
+        `clients_aggregated_${restaurantId}`,
+        async () => {
+          const q = query(
+            collection(db, 'restaurants', restaurantId, 'orders'),
+            orderBy('data_criacao', 'desc'),
+            limit(1000)
+          );
+          const snapshot = await getDocs(q);
+          const clientsMap: Record<string, any> = {};
+
+          snapshot.docs.forEach(docSnap => {
+            const order = docSnap.data();
+            const clientId = order.cliente_id || order.cliente_telefone || order.cliente_nome || docSnap.id;
+            
+            if (!clientsMap[clientId]) {
+              clientsMap[clientId] = {
+                id: clientId,
+                nome: order.cliente_nome || 'Cliente',
+                telefone: order.cliente_telefone || order.telefone || '',
+                totalPedidos: 1,
+                valorTotal: Number(order.valor_total || 0),
+                ultimoPedido: order.data_criacao
+              };
+            } else {
+              clientsMap[clientId].totalPedidos += 1;
+              clientsMap[clientId].valorTotal += Number(order.valor_total || 0);
+              if (order.data_criacao && new Date(order.data_criacao) > new Date(clientsMap[clientId].ultimoPedido || 0)) {
+                clientsMap[clientId].ultimoPedido = order.data_criacao;
+              }
+            }
+          });
+
+          return Object.values(clientsMap).sort((a, b) => {
+            const timeA = a.ultimoPedido ? new Date(a.ultimoPedido).getTime() : 0;
+            const timeB = b.ultimoPedido ? new Date(b.ultimoPedido).getTime() : 0;
+            return timeB - timeA;
+          });
+        },
+        3 * 60 * 1000 // 3 min cache TTL
+      );
+
+      const totalClients = allClients.length;
+      const totalPages = Math.max(1, Math.ceil(totalClients / pageSize));
+      const currentPage = Math.min(Math.max(1, page), totalPages);
+      const startIndex = (currentPage - 1) * pageSize;
+      const paginatedClients = allClients.slice(startIndex, startIndex + pageSize);
+      const hasMore = currentPage < totalPages;
+
+      return {
+        clients: paginatedClients,
+        hasMore,
+        totalClients,
+        totalPages,
+        currentPage,
+        totalLoaded: paginatedClients.length
+      };
+    } catch (error) {
+      console.error("Error in getRestaurantClientsPaginated:", error);
+      return { clients: [], hasMore: false, totalClients: 0, totalPages: 1, currentPage: 1, totalLoaded: 0 };
+    }
   }
 };
+

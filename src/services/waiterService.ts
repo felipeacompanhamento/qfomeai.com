@@ -22,9 +22,21 @@ async function getIdToken(): Promise<string> {
   return await currentUser.getIdToken();
 }
 
+let waitersCache: { restaurantId: string; timestamp: number; data: Waiter[] } | null = null;
+const CACHE_TTL_MS = 60000; // 1 minuto de cache
+
 export const waiterService = {
-  async getWaiters(restaurantId: string): Promise<Waiter[]> {
+  clearCache(): void {
+    waitersCache = null;
+  },
+
+  async getWaiters(restaurantId: string, forceRefresh = false): Promise<Waiter[]> {
     try {
+      const now = Date.now();
+      if (!forceRefresh && waitersCache && waitersCache.restaurantId === restaurantId && (now - waitersCache.timestamp) < CACHE_TTL_MS) {
+        return waitersCache.data;
+      }
+
       const token = await getIdToken();
       const response = await fetch('/api/restaurant/waiters', {
         headers: {
@@ -32,7 +44,7 @@ export const waiterService = {
         }
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || 'Erro ao buscar garçons.');
       }
@@ -42,7 +54,15 @@ export const waiterService = {
       );
 
       // Sort by name alphabetically
-      return list.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      const sorted = list.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      
+      waitersCache = {
+        restaurantId,
+        timestamp: now,
+        data: sorted
+      };
+
+      return sorted;
     } catch (error) {
       console.error("Error getting waiters:", error);
       throw error;
@@ -58,6 +78,7 @@ export const waiterService = {
     permissions?: Partial<WaiterPermissions>;
     status?: WaiterStatus;
   }): Promise<Waiter> {
+    waitersCache = null;
     const token = await getIdToken();
     const response = await fetch('/api/restaurant/waiters', {
       method: 'POST',
@@ -68,7 +89,7 @@ export const waiterService = {
       body: JSON.stringify(input)
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data.error || 'Erro ao cadastrar garçom.');
     }
@@ -88,6 +109,7 @@ export const waiterService = {
       status?: WaiterStatus;
     }
   ): Promise<void> {
+    waitersCache = null;
     const token = await getIdToken();
     const response = await fetch(`/api/restaurant/waiters/${waiterId}`, {
       method: 'PUT',
@@ -98,13 +120,14 @@ export const waiterService = {
       body: JSON.stringify(input)
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data.error || 'Erro ao atualizar garçom.');
     }
   },
 
   async updateWaiterStatus(waiterId: string, status: WaiterStatus): Promise<void> {
+    waitersCache = null;
     const token = await getIdToken();
     const response = await fetch(`/api/restaurant/waiters/${waiterId}/status`, {
       method: 'PATCH',
@@ -115,7 +138,7 @@ export const waiterService = {
       body: JSON.stringify({ status })
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data.error || 'Erro ao alterar status do garçom.');
     }
@@ -132,7 +155,7 @@ export const waiterService = {
       body: JSON.stringify({ password })
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data.error || 'Erro ao redefinir senha do garçom.');
     }

@@ -1,5 +1,6 @@
 {
   "name": "Qfomeai",
   "description": "Plataforma completa de marketplace de delivery para restaurantes locais.",
-  "requestFramePermissions": ["notifications"]
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

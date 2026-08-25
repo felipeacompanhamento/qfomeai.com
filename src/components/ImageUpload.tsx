@@ -14,9 +14,10 @@ interface ImageUploadProps {
   isBanner?: boolean;
   isLogo?: boolean;
   isCover?: boolean;
+  disabled?: boolean;
 }
 
-export default function ImageUpload({ onUploadComplete, path, label, currentImageUrl, aspectRatio = 'square', processProductImage = false, isBanner = false, isLogo = false, isCover = false }: ImageUploadProps) {
+export default function ImageUpload({ onUploadComplete, path, label, currentImageUrl, aspectRatio = 'square', processProductImage = false, isBanner = false, isLogo = false, isCover = false, disabled = false }: ImageUploadProps) {
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -311,18 +312,19 @@ export default function ImageUpload({ onUploadComplete, path, label, currentImag
         className={`relative group rounded-2xl border-2 border-dashed transition-all overflow-hidden bg-stone-50 ${
           error ? 'border-red-200 bg-red-50' : 
           uploading ? 'border-emerald-200' : 
+          disabled ? 'border-stone-200 opacity-60 cursor-not-allowed' :
           'border-stone-200 hover:border-emerald-400'
         } ${aspectClasses[aspectRatio]}`}
       >
         {preview ? (
-          <div className="relative w-full h-full group cursor-pointer" onClick={() => !uploading && fileInputRef.current?.click()}>
+          <div className={`relative w-full h-full group ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`} onClick={() => !uploading && !disabled && fileInputRef.current?.click()}>
             <img 
               src={preview} 
               alt="Preview" 
               className={`w-full h-full object-cover transition-opacity ${uploading ? 'opacity-50' : 'opacity-100 group-hover:opacity-75'}`}
               referrerPolicy="no-referrer"
             />
-            {!uploading && (
+            {!uploading && !disabled && (
               <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
                 <div className="bg-white/90 text-stone-800 px-3 py-1.5 rounded-full text-xs font-bold shadow-sm flex items-center gap-1">
                   <Upload className="w-3 h-3" />
@@ -330,7 +332,7 @@ export default function ImageUpload({ onUploadComplete, path, label, currentImag
                 </div>
               </div>
             )}
-            {!uploading && (
+            {!uploading && !disabled && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -348,8 +350,9 @@ export default function ImageUpload({ onUploadComplete, path, label, currentImag
         ) : (
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full h-full flex flex-col items-center justify-center gap-2 text-stone-400 hover:text-emerald-600 transition-colors"
+            disabled={disabled}
+            onClick={() => !disabled && fileInputRef.current?.click()}
+            className={`w-full h-full flex flex-col items-center justify-center gap-2 text-stone-400 transition-colors ${disabled ? 'cursor-not-allowed' : 'hover:text-emerald-600'}`}
           >
             <Upload className="w-8 h-8" />
             <span className="text-xs font-bold">Clique para upload</span>

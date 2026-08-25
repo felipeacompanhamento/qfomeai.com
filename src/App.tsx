@@ -1,39 +1,48 @@
 import React from 'react';
+import { resolveUserDestination } from './utils/authResolution';
+import { AccountType, UserRole } from './types';
+import { auth } from './firebase';
+
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { CartProvider } from './contexts/CartContext';
 import { AppLoadingProvider, useAppLoading } from './contexts/AppLoadingContext';
+import { ConnectivityProvider } from './contexts/ConnectivityContext';
 import AppInitializer from './components/AppInitializer';
 import NavigationSplash from './components/NavigationSplash';
 import SplashScreen from './components/SplashScreen';
 import ErrorBoundary from './components/ErrorBoundary';
-import Home from './pages/client/Home';
-import Login from './pages/auth/Login';
-import Register from './pages/auth/Register';
-import RegisterRestaurant from './pages/auth/RegisterRestaurant';
-import RestaurantPage from './pages/client/RestaurantPage';
-import Cart from './pages/client/Cart';
-import Checkout from './pages/client/Checkout';
-import RestaurantDashboard from './pages/restaurant/Dashboard';
-import AdminDashboard from './pages/admin/Dashboard';
-import Profile from './pages/client/Profile';
-import Orders from './pages/client/Orders';
-import Favorites from './pages/client/Favorites';
-import Services from './pages/client/Services';
-import ServiceRequests from './pages/client/ServiceRequests';
-import Onboarding from './pages/client/Onboarding';
-import Termos from './pages/Termos';
-import Privacidade from './pages/Privacidade';
-import About from './pages/About';
-import CitiesServed from './pages/CitiesServed';
-import Support from './pages/Support';
-import Consent from './pages/Consent';
-import PartnerPage from './pages/PartnerPage';
 import Footer from './components/Footer';
 import { registerPushNotifications, setupForegroundNotificationListener } from './firebaseMessaging';
 import NotificationGuideModal from './components/NotificationGuideModal';
-import DriverDashboard from './pages/driver/DriverDashboard';
-import { WaiterLoginPage, WaiterDashboardPage } from './pages/waiter/WaiterArea';
+import { lazyWithRetry } from './utils/lazyWithRetry';
+import IOSInstallBanner from './components/IOSInstallBanner';
+
+const Home = lazyWithRetry(() => import('./pages/client/Home'), 'Home');
+const Login = lazyWithRetry(() => import('./pages/auth/Login'), 'Login');
+const Register = lazyWithRetry(() => import('./pages/auth/Register'), 'Register');
+const RegisterRestaurant = lazyWithRetry(() => import('./pages/auth/RegisterRestaurant'), 'RegisterRestaurant');
+const RestaurantPage = lazyWithRetry(() => import('./pages/client/RestaurantPage'), 'RestaurantPage');
+const Cart = lazyWithRetry(() => import('./pages/client/Cart'), 'Cart');
+const Checkout = lazyWithRetry(() => import('./pages/client/Checkout'), 'Checkout');
+const RestaurantDashboard = lazyWithRetry(() => import('./pages/restaurant/Dashboard'), 'RestaurantDashboard');
+const AdminDashboard = lazyWithRetry(() => import('./pages/admin/Dashboard'), 'AdminDashboard');
+const Profile = lazyWithRetry(() => import('./pages/client/Profile'), 'Profile');
+const Orders = lazyWithRetry(() => import('./pages/client/Orders'), 'Orders');
+const Favorites = lazyWithRetry(() => import('./pages/client/Favorites'), 'Favorites');
+const Services = lazyWithRetry(() => import('./pages/client/Services'), 'Services');
+const ServiceRequests = lazyWithRetry(() => import('./pages/client/ServiceRequests'), 'ServiceRequests');
+const Onboarding = lazyWithRetry(() => import('./pages/client/Onboarding'), 'Onboarding');
+const Termos = lazyWithRetry(() => import('./pages/Termos'), 'Termos');
+const Privacidade = lazyWithRetry(() => import('./pages/Privacidade'), 'Privacidade');
+const About = lazyWithRetry(() => import('./pages/About'), 'About');
+const CitiesServed = lazyWithRetry(() => import('./pages/CitiesServed'), 'CitiesServed');
+const Support = lazyWithRetry(() => import('./pages/Support'), 'Support');
+const Consent = lazyWithRetry(() => import('./pages/Consent'), 'Consent');
+const PartnerPage = lazyWithRetry(() => import('./pages/PartnerPage'), 'PartnerPage');
+const DriverDashboard = lazyWithRetry(() => import('./pages/driver/DriverDashboard'), 'DriverDashboard');
+const WaiterLoginPage = lazyWithRetry(() => import('./pages/waiter/WaiterLoginPage'), 'WaiterLoginPage');
+const WaiterDashboardPage = lazyWithRetry(() => import('./pages/waiter/WaiterDashboardPage'), 'WaiterDashboardPage');
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -46,89 +55,82 @@ function ScrollToTop() {
 }
 
 const ProtectedRoute = ({ children, role }: { children: React.ReactNode, role?: 'admin' | 'restaurant' | 'driver' | 'waiter' }) => {
-  const { user, profile, isAdmin, isRestaurant, isDriver, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
+  const location = useLocation();
 
-  if (loading) return <div className="flex items-center justify-center h-screen font-sans">Carregando...</div>;
-
-  if (role === 'waiter') {
-    if (loading) return <div className="flex items-center justify-center h-screen font-sans">Carregando...</div>;
-    if (!user) return <Navigate to="/garcom/login" replace />;
-
-    const isWaiter = profile?.tipo_usuario === 'waiter' || profile?.role === 'WAITER' || profile?.role === 'waiter';
-    if (!isWaiter) return <Navigate to="/garcom/login?error=not_waiter" replace />;
-
-    const status = String(profile?.status || '').toUpperCase();
-    const hasRestaurant = typeof profile?.restaurantId === 'string' && profile.restaurantId.trim().length > 0;
-    const waiterId = typeof profile?.waiterId === 'string' ? profile.waiterId : '';
-    const hasValidWaiterId = waiterId.length > 0 && waiterId === user.uid;
-
-    if (status === 'BLOCKED') {
-      return <Navigate to="/garcom/login?error=blocked" replace />;
-    }
-
-    if (status === 'INACTIVE' || profile?.active === false) {
-      return <Navigate to="/garcom/login?error=inactive" replace />;
-    }
-
-    if (!hasRestaurant || !hasValidWaiterId) {
-      return <Navigate to="/garcom/login?error=unconfigured" replace />;
-    }
-
-    if (status !== 'ACTIVE') {
-      return <Navigate to="/garcom/login?error=unconfigured" replace />;
-    }
-
-    return <>{children}</>;
+  if (loading) {
+    return (
+      <div className="min-h-[50vh] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
   }
 
-  if (!user) return <Navigate to="/login" replace />;
+  const isWaiterRoute = location.pathname.startsWith('/garcom');
 
-  const isWaiter = profile?.tipo_usuario === 'waiter' || profile?.role === 'WAITER';
-
-  if (isDriver) {
-    if (role === 'driver') {
-      return <>{children}</>;
-    }
-    return <Navigate to="/entregador" replace />;
+  if (!user || !profile) {
+    const redirectPath = isWaiterRoute ? "/garcom/login" : "/login";
+    return <Navigate to={redirectPath} state={{ from: location }} replace />;
   }
 
-  if (isWaiter) {
-    return <Navigate to="/garcom" replace />;
-  }
+  const resolution = resolveUserDestination(profile);
   
-  // Check if onboarding is complete for clients
-  if (!profile?.onboarding_completo && !isAdmin && !isRestaurant) {
-    return <Navigate to="/onboarding" replace />;
+  if (!resolution.isValid) {
+     setTimeout(() => auth.signOut(), 0);
+     if (isWaiterRoute || role === 'waiter') {
+       let errorType = 'invalid';
+       const status = String(profile?.status || '').toUpperCase();
+       const isWaiter = profile?.role === 'WAITER';
+       const hasRestaurant = typeof profile?.restaurantId === 'string' && profile.restaurantId.trim().length > 0;
+
+       if (!isWaiter) {
+         errorType = 'not_waiter';
+       } else if (status === 'BLOCKED') {
+         errorType = 'blocked';
+       } else if (status === 'INACTIVE' || profile?.active === false) {
+         errorType = 'inactive';
+       } else if (!hasRestaurant) {
+         errorType = 'unconfigured';
+       }
+       return <Navigate to={`/garcom/login?error=${errorType}`} replace />;
+     }
+     return <Navigate to={`/login?error=invalid`} replace />;
   }
 
-  // Check email verification for restaurants
-  if (role === 'restaurant' && !user.emailVerified) {
-    return <Navigate to="/profile" replace />;
-  }
-
-  if (role === 'admin' && !isAdmin) return <Navigate to="/" replace />;
-  if (role === 'restaurant' && !isRestaurant) return <Navigate to="/" replace />;
+  if (role === 'admin' && resolution.destination !== '/admin-dashboard') return <Navigate to="/" replace />;
+  if (role === 'driver' && resolution.destination !== '/entregador') return <Navigate to="/" replace />;
+  if (role === 'waiter' && resolution.destination !== '/garcom') return <Navigate to="/" replace />;
+  
+  // Para 'restaurant', ele pode ter vários destinos dentro de /restaurant, então checamos se começa com /restaurant
+  if (role === 'restaurant' && !resolution.destination?.startsWith('/restaurant')) return <Navigate to="/" replace />;
 
   return <>{children}</>;
 };
 
 const ClientRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAdmin, isRestaurant, isDriver } = useAuth();
+  const { profile, loading } = useAuth();
   
-  if (isDriver) {
-    return <Navigate to="/entregador" />;
+  if (loading) {
+    return (
+      <div className="min-h-[50vh] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
   }
-
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  if (!isMobile && !isAdmin && !isRestaurant) {
-    return <Navigate to="/seja-parceiro" />;
+  if (profile) {
+    const resolution = resolveUserDestination(profile);
+    if (!resolution.isValid) {
+       setTimeout(() => auth.signOut(), 0);
+       return <Navigate to="/login?error=invalid" replace />;
+    }
+    if (resolution.isValid && resolution.destination && resolution.destination !== '/') {
+       return <Navigate to={resolution.destination} replace />;
+    }
   }
   
   return <>{children}</>;
 };
-
-import IOSInstallBanner from './components/IOSInstallBanner';
 
 function AppRoutes() {
   const { user, profile, isAdmin, isRestaurant, isDriver, loading } = useAuth();
@@ -139,16 +141,31 @@ function AppRoutes() {
   const registrationAttempted = React.useRef(false);
 
   React.useEffect(() => {
-    if (loading || !user) return;
+    if (loading || !user || !profile) return;
 
-    if (location.pathname === '/' || location.pathname === '/login' || location.pathname === '/register' || location.pathname === '/onboarding') {
-      if (isRestaurant) {
-        navigate('/restaurant', { replace: true });
-      } else if (isDriver) {
-        navigate('/entregador', { replace: true });
+    if (location.pathname === '/' || location.pathname === '/login' || location.pathname === '/register' || location.pathname === '/profile') {
+      const resolution = resolveUserDestination(profile);
+      
+      if (!resolution.isValid) {
+         setTimeout(() => auth.signOut(), 0);
+         if (location.pathname !== '/login') navigate(`/login?error=invalid`, { replace: true });
+         return;
+      }
+      
+      if (resolution.isValid && resolution.destination) {
+        // Preservar rotas permitidas e evitar loop
+        // Para /profile, só redireciona se for um funcionário/entregador (onde /profile não faz sentido)
+        // ou se o destino for diferente da raiz '/' para clientes.
+        if (location.pathname === '/profile' && resolution.destination === '/') {
+           return; // Cliente acessando profile
+        }
+        
+        if (location.pathname !== resolution.destination && resolution.destination !== '/') {
+           navigate(resolution.destination, { replace: true });
+        }
       }
     }
-  }, [loading, user, isAdmin, isRestaurant, isDriver, location.pathname, navigate]);
+  }, [loading, user, profile, location.pathname, navigate]);
 
   React.useEffect(() => {
     if (user && (profile?.onboarding_completo || isAdmin || isRestaurant) && !registrationAttempted.current) {
@@ -219,83 +236,86 @@ function AppRoutes() {
     };
   }, [navigate, location.pathname, isRestaurant]);
 
-  if (loading) {
-    return <SplashScreen isVisible={true} />;
-  }
-
   return (
     <>
       <IOSInstallBanner />
       {showGuide && <NotificationGuideModal onClose={() => setShowGuide(false)} />}
       <div className="flex-grow">
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
-          <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
-          <Route path="/register-restaurant" element={<RegisterRestaurant />} />
-          <Route path="/termos" element={<Termos />} />
-          <Route path="/privacidade" element={<Privacidade />} />
-          <Route path="/sobre" element={<About />} />
-          <Route path="/cidades-atendidas" element={<CitiesServed />} />
-          <Route path="/suporte" element={<Support />} />
-          <Route path="/consent" element={user ? <Consent /> : <Navigate to="/login" />} />
-          <Route path="/seja-parceiro" element={<PartnerPage />} />
-          <Route path="/onboarding" element={user ? (profile?.onboarding_completo ? <Navigate to="/" /> : <Onboarding />) : <Navigate to="/login" />} />
-          
-          {/* Restaurant Routes */}
-          <Route path="/restaurant/*" element={
-            <ProtectedRoute role="restaurant">
-              <RestaurantDashboard />
-            </ProtectedRoute>
-          } />
+        <React.Suspense fallback={
+          <div className="min-h-[60vh] flex flex-col items-center justify-center gap-3">
+            <div className="w-8 h-8 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs text-stone-400 font-medium">Carregando...</span>
+          </div>
+        }>
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/login" element={user ? <Navigate to="/" /> : <Login />} />
+            <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
+            <Route path="/register-restaurant" element={<RegisterRestaurant />} />
+            <Route path="/termos" element={<Termos />} />
+            <Route path="/privacidade" element={<Privacidade />} />
+            <Route path="/sobre" element={<About />} />
+            <Route path="/cidades-atendidas" element={<CitiesServed />} />
+            <Route path="/suporte" element={<Support />} />
+            <Route path="/consent" element={user ? <Consent /> : <Navigate to="/login" />} />
+            <Route path="/seja-parceiro" element={<PartnerPage />} />
+            <Route path="/onboarding" element={user ? (profile?.onboarding_completo ? <Navigate to="/" /> : <Onboarding />) : <Navigate to="/login" />} />
+            
+            {/* Restaurant Routes */}
+            <Route path="/restaurant/*" element={
+              <ProtectedRoute role="restaurant">
+                <RestaurantDashboard />
+              </ProtectedRoute>
+            } />
 
-          {/* Entregador / Driver Routes */}
-          <Route path="/entregador/*" element={
-            <ProtectedRoute role="driver">
-              <DriverDashboard />
-            </ProtectedRoute>
-          } />
+            {/* Entregador / Driver Routes */}
+            <Route path="/entregador/*" element={
+              <ProtectedRoute role="driver">
+                <DriverDashboard />
+              </ProtectedRoute>
+            } />
 
-          {/* Garçom / Waiter Routes */}
-          <Route path="/garcom/login" element={<WaiterLoginPage />} />
-          <Route path="/garcom/*" element={
-            <ProtectedRoute role="waiter">
-              <WaiterDashboardPage />
-            </ProtectedRoute>
-          } />
+            {/* Garçom / Waiter Routes */}
+            <Route path="/garcom/login" element={<WaiterLoginPage />} />
+            <Route path="/garcom/*" element={
+              <ProtectedRoute role="waiter">
+                <WaiterDashboardPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Client Routes */}
-          <Route path="/" element={
-            <ClientRoute>
-              {user && !profile?.onboarding_completo && !isAdmin && !isRestaurant 
+            {/* Client Routes */}
+            <Route path="/" element={
+              <ClientRoute>
+                {user && !profile?.onboarding_completo && !isAdmin && !isRestaurant 
+                  ? <Navigate to="/onboarding" /> 
+                  : <Home />}
+              </ClientRoute>
+            } />
+            <Route path="/restaurantes" element={<Home />} />
+            <Route path="/:slug" element={<RestaurantPage />} />
+            <Route path="/:slug/cardapio" element={<RestaurantPage />} />
+            <Route path="/:slug/checkout" element={<ProtectedRoute><Checkout /></ProtectedRoute>} />
+            
+            <Route path="/cart" element={
+              user && !profile?.onboarding_completo && !isAdmin && !isRestaurant 
                 ? <Navigate to="/onboarding" /> 
-                : <Home />}
-            </ClientRoute>
-          } />
-          <Route path="/restaurantes" element={<Home />} />
-          <Route path="/:slug" element={<RestaurantPage />} />
-          <Route path="/:slug/cardapio" element={<RestaurantPage />} />
-          <Route path="/:slug/checkout" element={<ProtectedRoute><Checkout /></ProtectedRoute>} />
-          
-          <Route path="/cart" element={
-            user && !profile?.onboarding_completo && !isAdmin && !isRestaurant 
-              ? <Navigate to="/onboarding" /> 
-              : <Cart />
-          } />
-          <Route path="/checkout" element={<ProtectedRoute><Checkout /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-          <Route path="/orders" element={<ProtectedRoute><Orders /></ProtectedRoute>} />
-          <Route path="/favorites" element={<ProtectedRoute><Favorites /></ProtectedRoute>} />
-          <Route path="/servicos" element={<Services />} />
-          <Route path="/servicos/solicitacoes" element={<ServiceRequests />} />
+                : <Cart />
+            } />
+            <Route path="/checkout" element={<ProtectedRoute><Checkout /></ProtectedRoute>} />
+            <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+            <Route path="/orders" element={<ProtectedRoute><Orders /></ProtectedRoute>} />
+            <Route path="/favorites" element={<ProtectedRoute><Favorites /></ProtectedRoute>} />
+            <Route path="/servicos" element={<Services />} />
+            <Route path="/servicos/solicitacoes" element={<ServiceRequests />} />
 
-          {/* Admin Routes */}
-          <Route path="/admin-dashboard/*" element={
-            <ProtectedRoute role="admin">
-              <AdminDashboard />
-            </ProtectedRoute>
-          } />
-        </Routes>
+            {/* Admin Routes */}
+            <Route path="/admin-dashboard/*" element={
+              <ProtectedRoute role="admin">
+                <AdminDashboard />
+              </ProtectedRoute>
+            } />
+          </Routes>
+        </React.Suspense>
       </div>
       {/* Footer is hidden on the main home page per user request */}
     </>
@@ -326,7 +346,9 @@ export default function App() {
       <AuthProvider>
         <CartProvider>
           <AppLoadingProvider>
-            <AppContent />
+            <ConnectivityProvider>
+              <AppContent />
+            </ConnectivityProvider>
           </AppLoadingProvider>
         </CartProvider>
       </AuthProvider>

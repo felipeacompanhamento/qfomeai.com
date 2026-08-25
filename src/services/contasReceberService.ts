@@ -28,9 +28,9 @@ export const createContaReceber = async (
     })
   });
 
-  const resData = await response.json();
+  const resData = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(resData.error || 'Erro ao criar conta a receber.');
+    const error = new Error(resData.error || `Erro (${response.status}) ao criar conta a receber.`);
     (error as any).code = resData.code || 'HTTP_ERROR';
     throw error;
   }
@@ -66,9 +66,9 @@ export const registrarRecebimento = async (
     })
   });
 
-  const resData = await response.json();
+  const resData = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(resData.error || 'Erro ao registrar recebimento.');
+    const error = new Error(resData.error || `Erro (${response.status}) ao registrar recebimento.`);
     (error as any).code = resData.code || 'HTTP_ERROR';
     throw error;
   }

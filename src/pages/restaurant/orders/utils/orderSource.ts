@@ -3,9 +3,10 @@
  * Preparado para futuras expansões do Qfomeai
  */
 
-import { OrderSource } from '../../../../domain/order/orderSource';
+import { OrderSource, OrderOrigem, normalizeOrderOrigem } from '../../../../domain/order/orderSource';
 
-export type { OrderSource };
+export type { OrderSource, OrderOrigem };
+export { normalizeOrderOrigem };
 
 export interface OrderSourceDetails {
   source: OrderSource;
@@ -22,17 +23,31 @@ export interface OrderSourceDetails {
  */
 export function getOrderSourceDetails(order: any): OrderSourceDetails {
   const orig = String(
-    order.source || 
     order.origem || 
+    order.origin || 
+    order.source || 
     order.tipo_pedido || 
     order.orderType || 
     ''
   ).toLowerCase().trim();
 
+  const isTotem = orig.includes('totem') || orig.includes('kiosk') || orig.includes('autoatendimento');
   const isTable = Boolean(order.mesa || order.tableNumber || order.num_mesa);
   const isCounter = orig.includes('balcao') || orig.includes('counter') || orig === 'balcão';
   const isWaiter = orig.includes('garcom') || orig.includes('waiter') || orig === 'garçom';
   const isTakeaway = orig.includes('retirada') || orig.includes('takeaway') || orig.includes('pickup');
+
+  if (isTotem) {
+    return {
+      source: 'TOTEM',
+      label: 'Totem',
+      shortLabel: 'Totem',
+      badgeBg: 'bg-purple-50',
+      badgeText: 'text-purple-700',
+      badgeBorder: 'border-purple-200',
+      iconName: 'Tablet'
+    };
+  }
 
   if (isTable || orig.includes('mesa')) {
     const tableNum = order.mesa || order.tableNumber || order.num_mesa || '';
@@ -40,9 +55,9 @@ export function getOrderSourceDetails(order: any): OrderSourceDetails {
       source: 'TABLE',
       label: tableNum ? `Mesa ${tableNum}` : 'Mesa',
       shortLabel: tableNum ? `Mesa ${tableNum}` : 'Mesa',
-      badgeBg: 'bg-purple-50',
-      badgeText: 'text-purple-700',
-      badgeBorder: 'border-purple-200',
+      badgeBg: 'bg-stone-100',
+      badgeText: 'text-stone-700',
+      badgeBorder: 'border-stone-200',
       iconName: 'UtensilsCrossed'
     };
   }
@@ -52,9 +67,9 @@ export function getOrderSourceDetails(order: any): OrderSourceDetails {
       source: 'WAITER',
       label: 'Garçom',
       shortLabel: 'Garçom',
-      badgeBg: 'bg-indigo-50',
-      badgeText: 'text-indigo-700',
-      badgeBorder: 'border-indigo-200',
+      badgeBg: 'bg-stone-100',
+      badgeText: 'text-stone-700',
+      badgeBorder: 'border-stone-200',
       iconName: 'UserCheck'
     };
   }
@@ -64,9 +79,9 @@ export function getOrderSourceDetails(order: any): OrderSourceDetails {
       source: 'COUNTER',
       label: 'Balcão',
       shortLabel: 'Balcão',
-      badgeBg: 'bg-amber-50',
-      badgeText: 'text-amber-800',
-      badgeBorder: 'border-amber-200',
+      badgeBg: 'bg-stone-100',
+      badgeText: 'text-stone-700',
+      badgeBorder: 'border-stone-200',
       iconName: 'Store'
     };
   }

@@ -69,8 +69,8 @@ export const DriverConfirmDeliveryModal: React.FC<DriverConfirmDeliveryModalProp
             const userData = userDoc.data();
             setCustomerName(userData.nome || userData.displayName || 'Cliente');
           }
-        } catch (error) {
-          console.error("Error fetching client name:", error);
+        } catch {
+          // Handled gracefully
         }
       };
       fetchClientName();

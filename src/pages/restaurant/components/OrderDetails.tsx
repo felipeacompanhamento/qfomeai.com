@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { getRestaurantStatusText, getStatusColor } from './OrderListItem';
 import { db } from '../../../firebase';
-import { collection, query, where, getDocs, doc, updateDoc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc } from 'firebase/firestore';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getPaymentStatusInfo } from '../../../utils/paymentStatus';
 import {
@@ -17,7 +17,7 @@ import {
   getDriverCashAccountability
 } from '../../../domain/order/orderLifecycle';
 import { PaymentsManager, PaymentItem } from './PaymentsManager';
-import { registerClientOrderPaymentMovement, registerClientOrderRefundMovement } from '../../../utils/financeIntegration';
+import { processOrderPaymentsApi, processOrderRefundApi } from '../../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
 import { FormField, TextInput, SelectInput, FormModal } from '../../../components/ui/FormComponents';
 
@@ -35,7 +35,7 @@ interface OrderDetailsProps {
   setEditAddress: (addr: any) => void;
   onUpdate: (orderId: string, status: string, motivo?: string) => void;
   handleTogglePaid: () => void;
-  onRefund?: (orderId: string, amount?: number) => void;
+  onRefund?: (orderId: string, amount?: number, reason?: string) => void;
   isUpdating?: boolean;
   restaurantProfile?: any;
 }
@@ -60,6 +60,7 @@ const OrderDetails = ({
 }: OrderDetailsProps) => {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
   const [isRefunding, setIsRefunding] = useState(false);
 
   // Settlement modal state
@@ -79,32 +80,35 @@ const OrderDetails = ({
         throw new Error("Pedidos pagos via Mercado Pago não podem ter o pagamento alterado manualmente.");
       }
 
-      // Check which payments became PAID just now to trigger movement creation
       const oldPayments = Array.isArray(selectedOrder.payments) ? selectedOrder.payments : [];
       const newPaidPayments = newPayments.filter(p => p.status === 'PAID' && !oldPayments.find((op: any) => op.id === p.id && op.status === 'PAID'));
 
-      const updateData: any = {
-        payments: newPayments,
-        pago: pago
-      };
-
-      // Se todas as parcelas antigas sumiram ou foram pagas, talvez a forma principal seja a que tem maior valor
-      if (newPayments.length > 0) {
-        const principal = newPayments.reduce((prev, current) => (prev.amount > current.amount) ? prev : current);
-        updateData.forma_pagamento = principal.paymentMethodId;
+      if (newPaidPayments.length === 0) {
+        return;
       }
 
-      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
+      const clientActionId = `act_pay_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-      const updatedOrder = { ...selectedOrder, ...updateData };
-      setSelectedOrder(updatedOrder);
+      const res = await processOrderPaymentsApi({
+        restaurantId: profile.restaurantId,
+        orderId: selectedOrder.id,
+        payments: newPaidPayments.map(p => ({
+          id: p.id,
+          paymentMethodId: p.paymentMethodId,
+          amount: p.amount,
+          status: 'PAID'
+        })),
+        operatorName: profile.nome || 'Operador',
+        clientActionId
+      });
 
-      // We only register the new PAID movements for idempotency
-      if (newPaidPayments.length > 0) {
-        // We pass the whole order, the financeIntegration function will iterate and skip already registered due to idempotency
-        await registerClientOrderPaymentMovement(profile.restaurantId, selectedOrder.id, updatedOrder, profile.nome || 'Operador');
+      if (!res.ok) {
+        throw new Error(res.error || 'Erro ao atualizar pagamentos.');
       }
 
+      if (res.order) {
+        setSelectedOrder(res.order);
+      }
     } catch (err: any) {
       console.error(err);
       throw new Error(err?.message || 'Erro ao atualizar pagamentos.');
@@ -114,24 +118,32 @@ const OrderDetails = ({
   const handleRefundPaymentItem = async (paymentToRefund: PaymentItem) => {
     if (!profile?.restaurantId || !selectedOrder) return;
     try {
-      const newPayments = (selectedOrder.payments || []).map((p: PaymentItem) => 
-        p.id === paymentToRefund.id ? { ...p, status: 'REFUNDED' } : p
-      );
-      
-      const isFullyPaid = newPayments.filter((p: PaymentItem) => p.status !== 'REFUNDED').reduce((acc: number, p: PaymentItem) => acc + p.amount, 0) === Math.round(Number(selectedOrder.valor_total) * 100) && newPayments.filter((p: PaymentItem) => p.status !== 'REFUNDED').every((p: PaymentItem) => p.status === 'PAID');
+      const reasonInput = window.prompt("Informe o motivo do estorno:");
+      if (reasonInput === null) return;
 
-      const updateData = { payments: newPayments, pago: isFullyPaid };
-      await updateDoc(doc(db, 'restaurants', profile.restaurantId, 'orders', selectedOrder.id), updateData);
-      
-      const updatedOrder = { ...selectedOrder, ...updateData };
-      setSelectedOrder(updatedOrder);
+      const clientActionId = `act_ref_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-      // Refund this specific payment
-      await registerClientOrderRefundMovement(profile.restaurantId, selectedOrder.id, updatedOrder, profile.nome || 'Operador', paymentToRefund.id);
+      const res = await processOrderRefundApi({
+        restaurantId: profile.restaurantId,
+        orderId: selectedOrder.id,
+        paymentId: paymentToRefund.id || 'legacy',
+        reason: reasonInput,
+        operatorName: profile.nome || 'Operador',
+        clientActionId
+      });
 
-    } catch (err) {
+      if (!res.ok) {
+        alert(res.error || 'Erro ao estornar pagamento.');
+        return;
+      }
+
+      if (res.order) {
+        setSelectedOrder(res.order);
+        alert('Estorno realizado com sucesso!');
+      }
+    } catch (err: any) {
       console.error(err);
-      alert('Erro ao estornar pagamento.');
+      alert(err?.message || 'Erro ao estornar pagamento.');
     }
   };
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -210,14 +222,22 @@ const OrderDetails = ({
     setLoadingDrivers(true);
     setAssignError(null);
     try {
-      const driversRef = collection(db, 'restaurants', selectedOrder.restaurant_id, 'drivers');
-      const q = query(driversRef, where('status', '==', 'ACTIVE'));
-      const snapshot = await getDocs(q);
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const idToken = await user?.getIdToken();
+      if (!idToken) throw new Error('Autenticação expirada.');
+      const response = await fetch('/api/restaurant/drivers', {
+        headers: {
+          'Authorization': `Bearer ${idToken}`
+        }
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao carregar entregadores');
+      }
+      const list = (data.drivers || []).filter((d: any) => d.status === 'ACTIVE');
       setRestaurantDrivers(list);
     } catch (error: any) {
       console.error("Erro ao carregar entregadores:", error);
-      setAssignError("Erro de acesso ao banco. Verifique suas regras ou permissões de leitura.");
+      setAssignError("Não foi possível buscar a lista de entregadores.");
     } finally {
       setLoadingDrivers(false);
     }
@@ -268,16 +288,41 @@ const OrderDetails = ({
   };
 
   const handleRefundSubmit = async () => {
-    if (!onRefund) return;
+    if (!selectedOrder) return;
     setIsRefunding(true);
     try {
       const amount = refundAmount ? parseFloat(refundAmount.replace(',', '.')) : undefined;
-      await onRefund(selectedOrder.id, amount);
+      if (onRefund) {
+        await onRefund(selectedOrder.id, amount, refundReason);
+      } else if (profile?.restaurantId) {
+        let targetPaymentId = 'legacy';
+        if (Array.isArray(selectedOrder.payments) && selectedOrder.payments.length > 0) {
+          const paid = selectedOrder.payments.find((p: any) => p.status === 'PAID');
+          if (paid) targetPaymentId = paid.id;
+        }
+        const clientActionId = `act_ref_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const res = await processOrderRefundApi({
+          restaurantId: profile.restaurantId,
+          orderId: selectedOrder.id,
+          paymentId: targetPaymentId,
+          reason: refundReason,
+          operatorName: profile.nome || 'Operador',
+          clientActionId
+        });
+        if (!res.ok) {
+          throw new Error(res.error || 'Erro ao realizar estorno.');
+        }
+        if (res.order) {
+          setSelectedOrder(res.order);
+          alert('Estorno realizado com sucesso!');
+        }
+      }
       setShowRefundModal(false);
       setRefundAmount('');
-    } catch (error) {
+      setRefundReason('');
+    } catch (error: any) {
       console.error("Erro ao estornar:", error);
-      alert("Erro ao realizar estorno. Tente novamente.");
+      alert(error?.message || "Erro ao realizar estorno. Tente novamente.");
     } finally {
       setIsRefunding(false);
     }
@@ -299,32 +344,33 @@ const OrderDetails = ({
   return (
     <div className="flex flex-col w-full flex-1 min-h-0 overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 p-6 border-b border-stone-100 bg-stone-50 flex flex-col gap-4">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-3">
+      <div className="shrink-0 p-3.5 sm:p-6 border-b border-stone-100 bg-stone-50 flex flex-col gap-3 sm:gap-4">
+        <div className="flex flex-wrap sm:flex-nowrap justify-between items-start sm:items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 pr-8 sm:pr-0">
             <button 
               onClick={() => setSelectedOrder(null)}
-              className="lg:hidden p-2 -ml-2 text-stone-500 hover:text-stone-800 hover:bg-stone-200 rounded-xl transition-colors"
+              className="lg:hidden p-1.5 -ml-1 text-stone-500 hover:text-stone-800 hover:bg-stone-200 rounded-xl transition-colors shrink-0"
+              aria-label="Voltar"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div>
-              <h2 className="text-xl font-bold text-stone-800">Pedido #{selectedOrder.id.slice(-6).toUpperCase()}</h2>
-              <p className="text-sm text-stone-500">Feito em {new Date(selectedOrder.data_criacao).toLocaleString()}</p>
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-stone-800 truncate">Pedido #{selectedOrder.id.slice(-6).toUpperCase()}</h2>
+              <p className="text-xs sm:text-sm text-stone-500 truncate">Feito em {new Date(selectedOrder.data_criacao).toLocaleString('pt-BR')}</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
             <div className="relative group">
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-sm font-bold transition-colors" onClick={() => handlePrint(selectedOrder)}>
-                <Printer className="w-4 h-4" /> Imprimir
+              <button className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs sm:text-sm font-bold transition-colors min-h-[34px]" onClick={() => handlePrint(selectedOrder)}>
+                <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span>Imprimir</span>
               </button>
               <div className="absolute right-0 top-full mt-2 bg-white border border-stone-200 rounded-xl shadow-lg overflow-hidden hidden group-hover:block z-10 w-32">
-                <button onClick={() => handlePrint(selectedOrder, '48mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">48mm</button>
-                <button onClick={() => handlePrint(selectedOrder, '72mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">72mm</button>
-                <button onClick={() => handlePrint(selectedOrder, '112mm')} className="w-full text-left px-4 py-2 text-sm hover:bg-stone-50 font-bold text-stone-700">112mm</button>
+                <button onClick={() => handlePrint(selectedOrder, '48mm')} className="w-full text-left px-4 py-2 text-xs sm:text-sm hover:bg-stone-50 font-bold text-stone-700">48mm</button>
+                <button onClick={() => handlePrint(selectedOrder, '72mm')} className="w-full text-left px-4 py-2 text-xs sm:text-sm hover:bg-stone-50 font-bold text-stone-700">72mm</button>
+                <button onClick={() => handlePrint(selectedOrder, '112mm')} className="w-full text-left px-4 py-2 text-xs sm:text-sm hover:bg-stone-50 font-bold text-stone-700">112mm</button>
               </div>
             </div>
-            <span className={`text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider ${getStatusColor(selectedOrder.status)}`}>
+            <span className={`text-[10px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 rounded-xl uppercase tracking-wider ${getStatusColor(selectedOrder.status)}`}>
               {getRestaurantStatusText(selectedOrder.status)}
             </span>
           </div>
@@ -338,12 +384,12 @@ const OrderDetails = ({
           return (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-1 border-t border-stone-200/60">
-                <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+                <div className="bg-white p-2 sm:p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
                   <span className="text-stone-400 font-bold uppercase text-[10px]">Status Pedido:</span>
                   <span className="font-extrabold text-stone-800 uppercase">{getOrderStatusLabel(selectedOrder)}</span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+                <div className="bg-white p-2 sm:p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
                   <span className="text-stone-400 font-bold uppercase text-[10px]">Entrega:</span>
                   <span className={`font-extrabold uppercase ${
                     canonicalState.deliveryStatus === 'DELIVERED' ? 'text-emerald-700' :
@@ -355,7 +401,7 @@ const OrderDetails = ({
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
+                <div className="bg-white p-2 sm:p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
                   <span className="text-stone-400 font-bold uppercase text-[10px]">Financeiro:</span>
                   <span className={`font-extrabold uppercase px-2 py-0.5 rounded-md text-[10px] ${
                     canonicalState.financialSettlementStatus === 'SETTLED' ? 'bg-emerald-100 text-emerald-800' :
@@ -369,14 +415,14 @@ const OrderDetails = ({
 
               {/* Banner de Aguardando Conferência Financeira */}
               {pendingSettlement && (
-                <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-4 text-amber-900 flex items-center justify-between gap-3 shadow-xs">
-                  <div className="flex items-start gap-3">
+                <div className="bg-amber-500/10 border-2 border-amber-500/40 rounded-2xl p-3 sm:p-4 text-amber-900 flex items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-start gap-2.5 sm:gap-3">
                     <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 mt-0.5">
-                      <DollarSign className="w-5 h-5 stroke-[2.5]" />
+                      <DollarSign className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
                     </div>
                     <div>
-                      <h4 className="font-extrabold text-sm text-amber-950">Entregue — Aguardando Conferência Financeira</h4>
-                      <p className="text-xs text-amber-800 font-medium leading-relaxed mt-0.5">
+                      <h4 className="font-extrabold text-xs sm:text-sm text-amber-950">Entregue — Aguardando Conferência Financeira</h4>
+                      <p className="text-[11px] sm:text-xs text-amber-800 font-medium leading-relaxed mt-0.5">
                         O entregador <strong>{selectedOrder.deliveredByDriverName || selectedOrder.assignedDriverName || selectedOrder.driverName || 'designado'}</strong> confirmou a entrega. Use o botão no rodapé para conferir e dar baixa.
                       </p>
                     </div>
@@ -389,7 +435,7 @@ const OrderDetails = ({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-6 pr-2 space-y-8 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto min-h-0 p-3.5 sm:p-6 pr-2 space-y-6 sm:space-y-8 custom-scrollbar">
         {/* Delivery Info */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="space-y-2">
@@ -716,7 +762,7 @@ const OrderDetails = ({
             <ShoppingBag className="w-4 h-4" /> Itens do Pedido
           </h3>
           <div className="bg-stone-50 rounded-2xl border border-stone-100 overflow-hidden">
-            {selectedOrder.itens?.map((item: any, idx: number) => {
+            {(selectedOrder.items || selectedOrder.itens)?.map((item: any, idx: number) => {
               const extrasTotal = (item.adicionais || []).reduce((sum: number, extra: any) => sum + (extra.preco * extra.quantidade), 0);
               const itemTotal = (item.preco + extrasTotal) * item.quantidade;
 
@@ -948,6 +994,15 @@ const OrderDetails = ({
             <p className="text-xs text-stone-500 mt-1">
               Deixe em branco para estornar o valor total. Use ponto ou vírgula para centavos.
             </p>
+          </FormField>
+
+          <FormField label="Motivo do Estorno">
+            <TextInput
+              placeholder="Informe o motivo do estorno (obrigatório)"
+              value={refundReason}
+              onChange={(e) => setRefundReason(e.target.value)}
+              disabled={isRefunding}
+            />
           </FormField>
         </div>
       </FormModal>

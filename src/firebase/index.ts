@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getMessaging, isSupported } from 'firebase/messaging';
 
@@ -15,7 +15,9 @@ setPersistence(auth, browserLocalPersistence).catch((error) => {
 
 // Use the named database if provided in the config, otherwise default to '(default)'
 const firestoreDatabaseId = firebaseConfig.firestoreDatabaseId || '(default)';
-export const db = getFirestore(app, firestoreDatabaseId);
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, firestoreDatabaseId);
 
 export const storage = getStorage(app);
 

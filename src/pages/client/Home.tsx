@@ -3,6 +3,7 @@ import { collection, query, where, getDocs, collectionGroup, doc, getDoc } from 
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { restaurantService } from '../../services/restaurantService';
 import { scheduleService } from '../../services/scheduleService';
+import { staticDataCacheService } from '../../services/staticDataCacheService';
 import { Link, useNavigate } from 'react-router-dom';
 import { Search, MapPin, ShoppingBag, User, Star, Clock, AlertCircle, ChevronRight, Store, Home as HomeIcon, Receipt, ShoppingCart, SlidersHorizontal, ChevronDown, Bell, Locate } from 'lucide-react';
 import PlaceholderImage from '../../components/PlaceholderImage';
@@ -328,9 +329,8 @@ export default function Home() {
   useEffect(() => {
     const fetchEstados = async () => {
       try {
-        const q = query(collection(db, 'estados'), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setEstados(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getStates();
+        setEstados(list);
       } catch (error) {
         console.error("Error fetching estados:", error);
       }
@@ -345,9 +345,8 @@ export default function Home() {
     }
     const fetchCidades = async () => {
       try {
-        const q = query(collection(db, 'cidades'), where('estado_id', '==', selectedEstado), where('ativo', '==', true));
-        const snap = await getDocs(q);
-        setCidades(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const list = await staticDataCacheService.getCidades(selectedEstado);
+        setCidades(list);
       } catch (error) {
         console.error("Error fetching cidades:", error);
       }
@@ -395,7 +394,7 @@ export default function Home() {
       setBanners(bannerDocs);
 
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'home-data');
+      console.warn("[Home] Controlled error loading data:", error);
     } finally {
       setIsSplashVisible(false);
     }

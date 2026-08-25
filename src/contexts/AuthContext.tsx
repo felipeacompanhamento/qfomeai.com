@@ -3,6 +3,9 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { cache } from '../utils/cache';
+import { canonicalUserService } from '../services/canonicalUserService';
+import { resolveUserDestination } from '../utils/authResolution';
+import { AccountType, UserRole } from '../types';
 
 interface AuthContextType {
   user: User | null;
@@ -37,20 +40,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchProfile = useCallback(async (uid: string) => {
     try {
-      const docSnap = await getDoc(doc(db, 'users', uid));
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setProfile(data);
-        if (data.lgpdAccepted) {
+      const canonicalUser = await canonicalUserService.getUserByUid(uid, 3500);
+      if (canonicalUser) {
+        setProfile(canonicalUser);
+        if (canonicalUser.lgpdAccepted) {
           localStorage.setItem('lgpdAccepted', 'true');
         }
-        return data;
+        return canonicalUser;
       } else {
         setProfile(null);
         return null;
       }
     } catch (error) {
-      console.error("Error fetching profile:", error);
+      console.warn("[AuthContext] Erro controlado ao buscar perfil:", error);
       setProfile(null);
       return null;
     }
@@ -61,21 +63,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+
+    // Watchdog: se onAuthStateChanged não responder em até 5 segundos, libera loading
+    const watchdogTimer = setTimeout(() => {
+      if (isMounted) {
+        setLoading(false);
+      }
+    }, 5000);
+
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      clearTimeout(watchdogTimer);
+      if (!isMounted) return;
       setUser(firebaseUser);
       
-      if (firebaseUser) {
-        // Fetch profile once on auth state change
-        await fetchProfile(firebaseUser.uid);
-      } else {
-        cache.clearUserCache('');
-        localStorage.removeItem('lgpdAccepted');
-        setProfile(null);
+      try {
+        if (firebaseUser) {
+          // Fetch profile once on auth state change (com timeout e fallback controlado)
+          await fetchProfile(firebaseUser.uid);
+        } else {
+          cache.clearUserCache('');
+          localStorage.removeItem('lgpdAccepted');
+          setProfile(null);
+        }
+      } catch (err) {
+        console.warn('[AuthContext] Erro ao processar perfil na mudança de auth:', err);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
-      setLoading(false);
     });
 
     return () => {
+      isMounted = false;
+      clearTimeout(watchdogTimer);
       unsubscribeAuth();
     };
   }, [fetchProfile]);
@@ -97,9 +119,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     profile,
     loading,
-    isAdmin: profile?.tipo_usuario === 'admin' || user?.email === 'felipeacompanhamento@gmail.com',
-    isRestaurant: profile?.tipo_usuario === 'restaurant' || profile?.tipo_usuario === 'restaurante',
-    isDriver: profile?.tipo_usuario === 'delivery_driver' || profile?.tipo_usuario === 'entregador' || profile?.role === 'delivery_driver' || profile?.role === 'entregador',
+    isAdmin: profile?.accountType === AccountType.ADMIN || profile?.role === UserRole.ADMIN || user?.email === 'felipeacompanhamento@gmail.com',
+    isRestaurant: profile?.accountType === AccountType.RESTAURANT,
+    isDriver: profile?.accountType === AccountType.DRIVER || profile?.role === UserRole.DRIVER,
     refreshUser,
     refreshProfile,
     updateProfile,
@@ -107,13 +129,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <AuthContext.Provider value={value}>
-      {loading ? (
-        <div className="flex items-center justify-center h-screen font-sans text-emerald-600">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
-        </div>
-      ) : (
-        children
-      )}
+      {children}
     </AuthContext.Provider>
   );
 };

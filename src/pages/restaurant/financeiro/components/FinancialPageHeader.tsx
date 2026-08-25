@@ -1,6 +1,7 @@
 import React from 'react';
 import { LucideIcon, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { Button, IconButton } from '../../../../components/ui/Button';
 
 interface FinancialPageHeaderProps {
   title: string;
@@ -35,30 +36,27 @@ export const FinancialPageHeader: React.FC<FinancialPageHeaderProps> = ({
     }
   };
 
-  const getActionClass = () => {
-    if (!actionButton) return '';
-    const variant = actionButton.variant || 'emerald';
-    if (variant === 'rose') {
-      return 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/10';
-    }
-    if (variant === 'stone') {
-      return 'bg-stone-800 hover:bg-stone-900 text-white shadow-stone-800/10';
-    }
-    return 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/10';
-  };
-
   const ActionIcon = actionButton?.icon;
+
+  const getButtonVariant = (): 'primary' | 'secondary' | 'destructive' => {
+    if (!actionButton) return 'primary';
+    if (actionButton.variant === 'rose') return 'destructive';
+    if (actionButton.variant === 'stone') return 'secondary';
+    return 'primary';
+  };
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-stone-200/60">
       <div className="flex items-start gap-3">
-        <button
+        <IconButton
           onClick={handleBack}
           aria-label="Voltar"
-          className="mt-0.5 p-2 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 text-stone-600 transition-all shadow-sm active:scale-95 flex-shrink-0"
+          variant="secondary"
+          size="sm"
+          className="mt-0.5"
         >
           <ArrowLeft className="w-4 h-4" />
-        </button>
+        </IconButton>
         <div>
           <div className="flex items-center gap-2">
             {Icon && <Icon className="w-5 h-5 text-stone-700" />}
@@ -69,15 +67,16 @@ export const FinancialPageHeader: React.FC<FinancialPageHeaderProps> = ({
       </div>
 
       {actionButton && (
-        <button
+        <Button
           onClick={actionButton.onClick}
           disabled={actionButton.disabled}
-          className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed ${getActionClass()}`}
+          variant={getButtonVariant()}
+          icon={ActionIcon ? <ActionIcon className="w-4 h-4" /> : undefined}
         >
-          {ActionIcon && <ActionIcon className="w-4 h-4" />}
-          <span>{actionButton.label}</span>
-        </button>
+          {actionButton.label}
+        </Button>
       )}
     </div>
   );
 };
+

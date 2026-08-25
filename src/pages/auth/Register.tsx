@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../../firebase';
 import { useNavigate, Link } from 'react-router-dom';
 import { UserPlus, Mail, Lock, User, Phone, Eye, EyeOff } from 'lucide-react';
 import ConsentCheckbox from '../../components/ConsentCheckbox';
+import { staticDataCacheService } from '../../services/staticDataCacheService';
 
 export default function Register() {
   const [name, setName] = useState('');
@@ -33,8 +34,8 @@ export default function Register() {
   useEffect(() => {
     const fetchEstados = async () => {
       try {
-        const snap = await getDocs(collection(db, 'estados'));
-        setEstados(snap.docs.map(d => ({ id: d.id, ...d.data() as any })).filter(e => e.ativo));
+        const list = await staticDataCacheService.getStates();
+        setEstados(list);
       } catch (error) {
         handleFirestoreError(error, OperationType.GET, 'estados');
       }
@@ -49,9 +50,8 @@ export default function Register() {
         return;
       }
       try {
-        const q = query(collection(db, 'cidades'), where('estado_id', '==', selectedEstadoId));
-        const snap = await getDocs(q);
-        setCidades(snap.docs.map(d => ({ id: d.id, ...d.data() as any })).filter(c => c.ativo));
+        const list = await staticDataCacheService.getCidades(selectedEstadoId);
+        setCidades(list);
       } catch (error) {
         handleFirestoreError(error, OperationType.GET, 'cidades');
       }
@@ -66,9 +66,8 @@ export default function Register() {
         return;
       }
       try {
-        const q = query(collection(db, 'bairros'), where('cidade_id', '==', selectedCidadeId));
-        const snap = await getDocs(q);
-        setBairros(snap.docs.map(d => ({ id: d.id, ...d.data() as any })).filter(b => b.ativo));
+        const list = await staticDataCacheService.getNeighborhoods(selectedCidadeId);
+        setBairros(list);
       } catch (error) {
         handleFirestoreError(error, OperationType.GET, 'bairros');
       }
@@ -119,12 +118,21 @@ export default function Register() {
         await setDoc(doc(db, 'users', user.uid), {
           uid: user.uid,
           nome: name,
+          name: name,
           email: email,
           telefone: phone,
+          phone: phone,
+          accountType: 'CLIENT',
+          role: 'CLIENT',
+          status: 'ACTIVE',
+          permissions: [],
+          _migratedAt: new Date().toISOString(),
+          _migrationVersion: '1.0.0',
           tipo_usuario: 'cliente',
           status_conta: 'ativo',
           onboarding_completo: true,
           data_criacao: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
           lgpdAccepted: true,
           acceptedAt: serverTimestamp(),
           termsVersion: "1.0"

@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, getAggregateFromServer, count, sum, average } from 'firebase/firestore';
 import { db } from '../firebase';
 import { cache } from '../utils/cache';
 
@@ -31,6 +31,38 @@ export const dashboardService = {
     } catch (error) {
       console.error("Error fetching orders:", error);
       return [];
+    }
+  },
+
+  async getAggregateOrderStats(restaurantId: string, startDate: Date, endDate: Date) {
+    const cacheKey = `orders_agg_${restaurantId}_${startDate.getTime()}_${endDate.getTime()}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const q = query(
+        collection(db, 'restaurants', restaurantId, 'orders'),
+        where('data_criacao', '>=', startDate.toISOString()),
+        where('data_criacao', '<=', endDate.toISOString())
+      );
+
+      const aggSnap = await getAggregateFromServer(q, {
+        totalOrders: count(),
+        totalFaturamento: sum('valor_total'),
+        ticketMedio: average('valor_total')
+      });
+
+      const res = {
+        totalOrders: aggSnap.data().totalOrders || 0,
+        totalFaturamento: aggSnap.data().totalFaturamento || 0,
+        ticketMedio: aggSnap.data().ticketMedio || 0
+      };
+
+      cache.set(cacheKey, res, 60);
+      return res;
+    } catch (error) {
+      console.error("Error fetching aggregate order stats:", error);
+      return { totalOrders: 0, totalFaturamento: 0, ticketMedio: 0 };
     }
   },
 

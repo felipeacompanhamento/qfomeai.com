@@ -90,3 +90,104 @@ export interface TransferenciaMesaHistorico {
   transferidoEm: any;
   motivo?: string;
 }
+
+// FASE 4 - ESTRUTURA CANÔNICA
+
+export enum TableStatus {
+  AVAILABLE = 'AVAILABLE',
+  OCCUPIED = 'OCCUPIED',
+  RESERVED = 'RESERVED',
+  WAITING_PAYMENT = 'WAITING_PAYMENT',
+  CLEANING = 'CLEANING',
+  DISABLED = 'DISABLED'
+}
+
+export enum TabStatus {
+  OPEN = 'OPEN',
+  WAITING_ITEMS = 'WAITING_ITEMS',
+  WAITING_PAYMENT = 'WAITING_PAYMENT',
+  PARTIALLY_PAID = 'PARTIALLY_PAID',
+  PAID = 'PAID',
+  CLOSED = 'CLOSED',
+  CANCELLED = 'CANCELLED'
+}
+
+export enum ServiceOrigin {
+  TABLE = 'TABLE',
+  WAITER = 'WAITER',
+  COUNTER = 'COUNTER',
+  DELIVERY = 'DELIVERY',
+  TAKEAWAY = 'TAKEAWAY'
+}
+
+export interface Hall {
+  id: string;
+  restaurantId: string;
+  name: string;
+  description?: string;
+  sortOrder: number;
+  active: boolean;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface Table {
+  id: string;
+  restaurantId: string;
+  hallId: string;
+  name: string;
+  number?: number;
+  capacity: number;
+  status: TableStatus;
+  sortOrder: number;
+  active: boolean;
+  qrToken?: string;
+  createdAt: any;
+  updatedAt: any;
+}
+
+export interface TabItem {
+  id: string;
+  orderId?: string;
+  produtoId?: string;
+  produtoNome?: string;
+  productName?: string;
+  quantidade: number;
+  precoUnitario?: number;
+  unitPriceCents?: number;
+  total?: number;
+  totalPriceCents?: number;
+  status?: string;
+  observacoes?: string;
+  pedidosAdicionais?: {
+    size?: { id: string; nome: string; precoCents?: number } | null;
+    options?: Array<{ groupId?: string; groupNome?: string; itemId?: string; itemNome?: string; precoCents?: number }>;
+  };
+  sentAt?: string;
+}
+
+export interface Tab {
+  id: string;
+  restaurantId: string;
+  tableId?: string;
+  hallId?: string;
+  waiterId?: string;
+  waiterName?: string;
+  customerName?: string;
+  observation?: string;
+  peopleCount: number;
+  status: TabStatus;
+  origin: ServiceOrigin;
+  openedAt: any;
+  closedAt?: any;
+  openedBy: string; // User ID or waiter ID/name who opened
+  items?: TabItem[];
+  subtotal?: number;
+  total?: number;
+  totalInCents: number;
+  paidInCents: number;
+  remainingInCents: number;
+  mergedTables?: any[];
+  createdAt: any;
+  updatedAt: any;
+}

@@ -16,21 +16,35 @@ service cloud.firestore {
       return isAuthenticated() && (
         (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN')
       );
     }
+
+    // -- CANONICAL USER MODEL HELPERS --
+    function getAuthUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isClient(data) {
+      return data.accountType == 'CLIENT' || data.tipo_usuario == 'cliente' || data.role == 'CLIENT';
+    }
+
+    function hasProtectedFieldChanges() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'tipo_usuario', 'accountType', 'permissions', 'status', 'active', 'restaurantId']);
+    }
+    // ----------------------------------
 
     function isRestaurantAdmin(restaurantId) {
       return isAuthenticated() && (
         (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN') ||
         request.auth.uid == restaurantId ||
         (
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId == restaurantId &&
           (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario in ['restaurant', 'restaurante', 'admin', 'owner'] ||
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['RESTAURANT', 'ADMIN', 'OWNER']) &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['RESTAURANT', 'RESTAURANT_ADMIN', 'MANAGER', 'ADMIN', 'OWNER']) &&
           !(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario == 'waiter' ||
             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAITER')
         )
@@ -57,7 +71,7 @@ service cloud.firestore {
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tipo_usuario in ['restaurant', 'restaurante']) ||
         (request.auth.token.email == "felipeacompanhamento@gmail.com" && request.auth.token.email_verified == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN')
       );
     }
 
@@ -72,22 +86,43 @@ service cloud.firestore {
 
     // Users
     match /users/{userId} {
-      // Restrict user reading to self, admin, or employees/waiters of the authenticated restaurant
-      allow read: if request.auth.uid == userId || 
-                    isAdmin() || 
-                    (resource != null && resource.data.restaurantId != null && isRestaurantAdmin(resource.data.restaurantId));
-      allow create: if isAuthenticated() && isOwner(userId);
-      allow update: if isAdmin() ||
+      // PROMPT 4.8.13 - RULES
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId || 
+        isAdmin() || 
         (
-          isOwner(userId) &&
-          !isWaiterProfile(resource.data) &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'tipo_usuario', 'restaurantId', 'waiterId', 'status', 'active', 'permissions', 'createdBy'])
+          resource != null && 
+          !isClient(getAuthUserData()) && 
+          resource.data.restaurantId == getAuthUserData().restaurantId
+        )
+      );
+
+      // Creation should be handled exclusively by the backend using Admin SDK. 
+      // Only CLIENTS can self-create from frontend.
+      allow create: if isAuthenticated() && 
+                    request.auth.uid == userId && 
+                    isClient(request.resource.data);
+
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (
+          // Self update: prevent changing protected fields
+          request.auth.uid == userId && !hasProtectedFieldChanges()
         ) ||
         (
-          isOwner(userId) &&
-          isWaiterProfile(resource.data) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt'])
-        );
+          // Administering team members in same restaurant
+          resource.data.restaurantId == getAuthUserData().restaurantId &&
+          request.resource.data.restaurantId == resource.data.restaurantId &&
+          !hasProtectedFieldChanges() && // Administering must be done through backend to change protected fields
+          (
+            (getAuthUserData().role == 'OWNER') ||
+            (getAuthUserData().role == 'RESTAURANT_ADMIN' && resource.data.role != 'OWNER') ||
+            (getAuthUserData().role == 'MANAGER' && resource.data.role != 'OWNER' && resource.data.role != 'RESTAURANT_ADMIN')
+          )
+        )
+      );
+      
+      allow delete: if isAdmin();
       
       match /enderecos/{enderecoId} {
         allow read: if request.auth != null && (
@@ -118,7 +153,7 @@ service cloud.firestore {
     // Restaurants
     match /restaurants/{restaurantId} {
       allow read: if true;
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated() && (request.auth.uid == restaurantId || isAdmin());
       allow update: if isRestaurantOwner(restaurantId) || isAdmin() || 
                     (isAuthenticated() && 
                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['media_avaliacao', 'total_avaliacoes']) &&
@@ -133,15 +168,7 @@ service cloud.firestore {
 
       match /drivers/{driverId} {
         allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (isAuthenticated() && request.auth.uid == driverId);
-        allow create: if isRestaurantOwner(restaurantId) || isAdmin();
-        allow update: if isRestaurantOwner(restaurantId) || isAdmin() || (
-          isAuthenticated() && 
-          request.auth.uid == driverId && 
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'availabilityStatus', 'lastLocation', 'currentOrderId', 'totalDeliveries', 'updatedAt'
-          ])
-        );
-        allow delete: if isRestaurantOwner(restaurantId) || isAdmin();
+        allow write: if false; // Block all legacy writes!
       }
 
       match /waiters/{waiterId} {
@@ -155,15 +182,56 @@ service cloud.firestore {
             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'WAITER'
           )
         );
-        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+        allow write: if false; // Block all legacy writes!
+      }
+
+      // PROMPT 4.8.22 - Consolidated Staff Profiles
+      match /staffProfiles/{profileId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (isAuthenticated() && request.auth.uid == profileId);
+        allow create, delete: if isRestaurantOwner(restaurantId) || isAdmin();
+        allow update: if isRestaurantOwner(restaurantId) || isAdmin() || (
+          // Allow operational updates to their own role-specific or updated timestamp data
+          isAuthenticated() &&
+          request.auth.uid == profileId &&
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['roleSpecificData', 'updatedAt']) ||
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+          )
+        );
+
+        match /processedActions/{actionId} {
+          allow read: if isRestaurantOwner(restaurantId) || isAdmin() || (isAuthenticated() && request.auth.uid == profileId);
+          allow write: if isAuthenticated() && request.auth.uid == profileId;
+        }
+      }
+
+      match /dataCleanupRequests/{requestId} {
+        allow read, write: if isRestaurantOwner(restaurantId) || isAdmin();
       }
 
       match /mesas/{mesaId} {
-        allow read, write: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+        allow create, update, delete: if isRestaurantOwner(restaurantId) || isAdmin();
       }
 
       match /comandas/{comandaId} {
-        allow read, write: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+        allow read, create, update: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+        allow delete: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /halls/{hallId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /tables/{tableId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+        allow write: if isRestaurantOwner(restaurantId) || isAdmin();
+      }
+
+      match /tabs/{tabId} {
+        allow read: if isRestaurantOwner(restaurantId) || isAdmin() || isRestaurantWaiter(restaurantId);
+        allow create, update, delete: if isRestaurantOwner(restaurantId) || isAdmin();
       }
 
       match /extras/{extraId} {
@@ -422,6 +490,20 @@ service cloud.firestore {
       allow create, update: if false;
     }
 
+    // Audit Logs (Top-level)
+    match /audit_logs/{logId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        (
+          resource != null && 
+          !isClient(getAuthUserData()) && 
+          resource.data.restaurantId == getAuthUserData().restaurantId
+        )
+      );
+      // Frontend cannot edit audit logs
+      allow write: if false;
+    }
+
     // processedActions (Collection Group)
     match /{path=**}/processedActions/{actionId} {
       allow read, write: if false;
@@ -456,8 +538,7 @@ service cloud.firestore {
     // Public Stats
     match /public_stats/{statId} {
       allow read: if true;
-      allow create, update: if isAuthenticated();
-      allow delete: if isAdmin();
+      allow write: if isAdmin();
     }
 
     // Global Collections
@@ -500,6 +581,61 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Halls (Salões) - Top-level
+    match /halls/{hallId} {
+      allow read: if isAuthenticated() && (
+        isRestaurantAdmin(resource.data.restaurantId) ||
+        isAdmin() ||
+        isRestaurantWaiter(resource.data.restaurantId)
+      );
+      allow create: if isAuthenticated() && (
+        isRestaurantAdmin(request.resource.data.restaurantId) ||
+        isAdmin()
+      );
+      allow update, delete: if isAuthenticated() && (
+        isRestaurantAdmin(resource.data.restaurantId) ||
+        isAdmin()
+      );
+    }
+
+    // Tables (Mesas) - Top-level
+    match /tables/{tableId} {
+      allow read: if isAuthenticated() && (
+        isRestaurantAdmin(resource.data.restaurantId) ||
+        isAdmin() ||
+        isRestaurantWaiter(resource.data.restaurantId)
+      );
+      allow create: if isAuthenticated() && (
+        isRestaurantAdmin(request.resource.data.restaurantId) ||
+        isAdmin()
+      );
+      allow update, delete: if isAuthenticated() && (
+        isRestaurantAdmin(resource.data.restaurantId) ||
+        isAdmin()
+      );
+    }
+
+    // Tabs (Comandas) - Top-level
+    match /tabs/{tabId} {
+      allow read: if isAuthenticated() && (
+        isRestaurantAdmin(resource.data.restaurantId) ||
+        isAdmin() ||
+        isRestaurantWaiter(resource.data.restaurantId)
+      );
+      allow create: if isAuthenticated() && (
+        isRestaurantAdmin(request.resource.data.restaurantId) ||
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && (
+        isRestaurantAdmin(resource.data.restaurantId) ||
+        isAdmin()
+      );
+      allow delete: if isAuthenticated() && (
+        isRestaurantAdmin(resource.data.restaurantId) ||
+        isAdmin()
+      );
     }
   }
 }

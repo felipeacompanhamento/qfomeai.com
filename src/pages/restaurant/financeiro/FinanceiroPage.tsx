@@ -40,7 +40,7 @@ export function FinanceiroPage() {
       description: 'Fluxo de caixa consolidado, extrato de movimentações e conciliação bancária.',
       path: '/restaurant/financeiro/lancamentos',
       enabled: true,
-      accentColor: 'indigo' as const
+      accentColor: 'stone' as const
     }
   ];
 

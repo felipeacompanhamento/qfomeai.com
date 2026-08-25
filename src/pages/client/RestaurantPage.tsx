@@ -90,7 +90,7 @@ export default function RestaurantPage() {
             setPromotions(promotionsData);
             console.log(`[RestaurantPage] Promoções carregadas:`, promotionsData);
             setRestaurant({ ...rest, schedules: schedulesData });
-            console.log(`[RestaurantPage] Dados carregados com sucesso para ${rest.nome}`);
+            console.log(`[RestaurantPage] Dados carregados com sucesso para ${(rest as any).nome}`);
           }
         } else if (isMounted) {
           console.warn(`[RestaurantPage] Restaurante não encontrado para o slug: ${slug}`);

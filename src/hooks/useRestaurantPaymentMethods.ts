@@ -99,8 +99,9 @@ export function useRestaurantPaymentMethods(
 
               if (process.env.NODE_ENV !== 'production') {
                 const parsed = getAvailablePaymentMethods(methodsConfig, channel);
+                const maskedTarget = targetId ? `${targetId.slice(0, 4)}***` : 'none';
                 console.log(
-                  `[useRestaurantPaymentMethods] Loaded ${parsed.length} payment methods for restaurant '${targetId}' (channel: '${channel}') in ${loadDuration}ms`
+                  `[useRestaurantPaymentMethods] Loaded ${parsed.length} payment methods for restaurant '${maskedTarget}' (channel: '${channel}') in ${loadDuration}ms`
                 );
                 if (parsed.length === 0) {
                   console.log(`[useRestaurantPaymentMethods] Reason for empty list: No active payment methods configured for channel '${channel}'`);
@@ -109,7 +110,8 @@ export function useRestaurantPaymentMethods(
             } else {
               setConfiguredData(null);
               if (process.env.NODE_ENV !== 'production') {
-                console.log(`[useRestaurantPaymentMethods] Reason for empty list: Restaurant document '${targetId}' does not exist.`);
+                const maskedTarget = targetId ? `${targetId.slice(0, 4)}***` : 'none';
+                console.log(`[useRestaurantPaymentMethods] Reason for empty list: Restaurant document '${maskedTarget}' does not exist.`);
               }
             }
             setLoading(false);

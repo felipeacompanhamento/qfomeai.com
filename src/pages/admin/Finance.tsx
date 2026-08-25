@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, where } from 'firebase/firestore';
+import { collection, query, getDocs, doc, getDoc, setDoc, updateDoc, deleteDoc, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { DollarSign, Edit3, Trash2, CheckCircle, XCircle, Clock } from 'lucide-react';
 
@@ -14,7 +14,8 @@ export default function FinancePage() {
     const fetchInvoices = async () => {
       setLoading(true);
       try {
-        const snap = await getDocs(collection(db, 'invoices'));
+        const q = query(collection(db, 'invoices'), orderBy('vencimento', 'desc'), limit(100));
+        const snap = await getDocs(q);
         setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (error) {
         console.error('Error fetching invoices:', error);

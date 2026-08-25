@@ -3,12 +3,9 @@
  * Formats values with 2 decimal places in pt-BR locale.
  */
 
-const formatterBRL = new Intl.NumberFormat('pt-BR', {
-  style: 'currency',
-  currency: 'BRL',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+import { formatCurrency } from '../lib/utils';
+
+export { formatCurrency };
 
 const numberFormatterBRL = new Intl.NumberFormat('pt-BR', {
   minimumFractionDigits: 2,
@@ -17,17 +14,6 @@ const numberFormatterBRL = new Intl.NumberFormat('pt-BR', {
 
 export function roundMoney(value: number): number {
   return Math.round((Number(value) || 0) * 100) / 100;
-}
-
-/**
- * Formats a numeric value (in Reais or Cents) to BRL currency string "R$ 1.250,50".
- */
-export function formatCurrency(value: number, isCents = false): string {
-  if (value === undefined || value === null || isNaN(value) || !isFinite(value)) {
-    return 'R$ 0,00';
-  }
-  const realValue = isCents ? value / 100 : value;
-  return formatterBRL.format(realValue);
 }
 
 export function formatCentsToBRL(cents: number): string {

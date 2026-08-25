@@ -17,12 +17,31 @@ import {
   ExternalLink,
   Coins,
   QrCode,
-  Wallet
+  Wallet,
+  Search,
+  Eye,
+  History
 } from 'lucide-react';
 import { CashOpeningReceipt, CashClosingReceipt } from '../../../components/receipts/CashReceipts';
 import { PrintableCashReceipt } from '../../../components/receipts/PrintableCashReceipt';
 import { useAuth } from '../../../contexts/AuthContext';
-import { FormModal, FormField, TextInput, SelectInput, TextareaInput, PrimaryButton, SecondaryButton, DangerButton, CurrencyInput } from '../../../components/ui/FormComponents';
+import { FormModal, FormField, TextInput, SelectInput, TextareaInput, PrimaryButton, SecondaryButton, DangerButton, CurrencyInput, RadioGroup } from '../../../components/ui/FormComponents';
+import {
+  DataTableContainer,
+  Table,
+  TableHeader,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  DataTableEmptyState,
+  Badge,
+  LoadingState,
+  IconButton,
+  SearchInput,
+  EmptyState,
+  Tabs,
+} from '../../../components/ui';
 import { formatCurrency, formatNumberBRL } from '../../../utils/currencyUtils';
 import { useRestaurantPaymentMethods, isCashPaymentMethod, getPaymentMethodLabel } from '../../../services/paymentMethodsService';
 import { Link } from 'react-router-dom';
@@ -141,6 +160,16 @@ export function CaixaPage() {
   // Data states
   const [movements, setMovements] = useState<Movimentacao[]>([]);
 
+  // History list and Detail modal state
+  const [historyCaixas, setHistoryCaixas] = useState<Caixa[]>([]);
+  const [openCaixaDoc, setOpenCaixaDoc] = useState<Caixa | null>(null);
+  const [selectedHistoryCaixa, setSelectedHistoryCaixa] = useState<Caixa | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+
+  // Filter & Search states for history
+  const [historyFilter, setHistoryFilter] = useState<'ALL' | 'OPEN' | 'CLOSED'>('ALL');
+  const [historySearch, setHistorySearch] = useState('');
+
   // Real-time payment methods hook
   const {
     loading: loadingPayments,
@@ -196,6 +225,8 @@ export function CaixaPage() {
     };
     fetchRestaurant();
   }, [restaurantId]);
+
+  // Dual listener for caixas: Listener 1 for OPEN caixas, Listener 2 for History
   useEffect(() => {
     if (!restaurantId) {
       setLoading(false);
@@ -203,38 +234,79 @@ export function CaixaPage() {
     }
 
     setLoading(true);
-    const q = query(
+
+    // 1. Explicit listener for ANY open caixa in Firestore
+    const openQ = query(
       collection(db, `restaurants/${restaurantId}/caixas`),
-      orderBy("openedAt", "desc"),
-      limit(5)
+      where("status", "==", "OPEN")
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubOpen = onSnapshot(openQ, (snapshot) => {
       if (!snapshot.empty) {
-        const list = snapshot.docs.map(d => ({
-          id: d.id,
-          ...d.data()
-        } as Caixa));
-        
-        // Find if there is an active OPEN caixa
-        const openCaixa = list.find(c => c.status === 'OPEN');
-        if (openCaixa) {
-          setActiveCaixa(openCaixa);
-        } else {
-          // Fallback to the latest closed caixa to show its summary
-          setActiveCaixa(list[0]);
-        }
+        const docData = {
+          id: snapshot.docs[0].id,
+          ...snapshot.docs[0].data()
+        } as Caixa;
+        setOpenCaixaDoc(docData);
       } else {
-        setActiveCaixa(null);
+        setOpenCaixaDoc(null);
       }
+    }, (error) => {
+      console.error("Erro ao monitorar caixas abertos:", error);
+    });
+
+    // 2. Listener for recent history of caixas (up to 50 records)
+    const historyQ = query(
+      collection(db, `restaurants/${restaurantId}/caixas`),
+      orderBy("openedAt", "desc"),
+      limit(50)
+    );
+
+    const unsubHistory = onSnapshot(historyQ, (snapshot) => {
+      const list = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      } as Caixa));
+      setHistoryCaixas(list);
       setLoading(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, `restaurants/${restaurantId}/caixas`);
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubOpen();
+      unsubHistory();
+    };
   }, [restaurantId]);
+
+  // Synchronize activeCaixa: ONLY explicit OPEN caixa is activeCaixa
+  useEffect(() => {
+    if (openCaixaDoc) {
+      setActiveCaixa(openCaixaDoc);
+    } else {
+      setActiveCaixa(null);
+    }
+  }, [openCaixaDoc]);
+
+  // Filtered caixas for the history list report
+  const filteredHistory = useMemo(() => {
+    return historyCaixas.filter((c) => {
+      if (historyFilter === 'OPEN' && c.status !== 'OPEN') return false;
+      if (historyFilter === 'CLOSED' && c.status !== 'CLOSED') return false;
+
+      if (historySearch.trim()) {
+        const term = historySearch.toLowerCase().trim();
+        const openedBy = (c.openedBy || '').toLowerCase();
+        const closedBy = (c.closedBy || '').toLowerCase();
+        const obs = (c.observation || '').toLowerCase();
+        const id = (c.id || '').toLowerCase();
+        return openedBy.includes(term) || closedBy.includes(term) || obs.includes(term) || id.includes(term);
+      }
+
+      return true;
+    });
+  }, [historyCaixas, historyFilter, historySearch]);
 
   // Real-time listener for current Caixa movements
   useEffect(() => {
@@ -504,7 +576,20 @@ export function CaixaPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        setErrorMsg(data.error || "Erro ao abrir caixa. Por favor, tente novamente.");
+        if (data.code === 'CASH_REGISTER_ALREADY_OPEN' || data.error?.includes('caixa aberto')) {
+          if (data.caixa) {
+            setActiveCaixa(data.caixa);
+            setErrorMsg("Já havia um caixa aberto. As informações foram sincronizadas.");
+            setTimeout(() => {
+              setIsOpeningModalOpen(false);
+              setErrorMsg(null);
+            }, 1500);
+          } else {
+            setErrorMsg(data.error || "Já existe um caixa aberto para este restaurante.");
+          }
+        } else {
+          setErrorMsg(data.error || "Erro ao abrir caixa. Por favor, tente novamente.");
+        }
         setIsSubmitting(false);
         return;
       }
@@ -662,17 +747,17 @@ export function CaixaPage() {
       case 'EXPENSE':
         return {
           label: 'Saída',
-          className: 'bg-red-50 text-red-700 border-red-100',
+          className: 'bg-rose-50 text-rose-700 border-rose-100',
         };
       case 'SUPPLY':
         return {
           label: 'Suprimento',
-          className: 'bg-blue-50 text-blue-700 border-blue-100',
+          className: 'bg-emerald-50 text-emerald-700 border-emerald-100',
         };
       case 'WITHDRAWAL':
         return {
           label: 'Sangria',
-          className: 'bg-orange-50 text-orange-700 border-orange-100',
+          className: 'bg-amber-50 text-amber-700 border-amber-100',
         };
       default:
         return {
@@ -683,12 +768,7 @@ export function CaixaPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px]">
-        <Loader2 className="w-8 h-8 text-emerald-600 animate-spin mb-2" />
-        <p className="text-stone-500 text-sm">Carregando informações do caixa...</p>
-      </div>
-    );
+    return <LoadingState message="Carregando informações do caixa..." className="min-h-[400px]" />;
   }
 
   return (
@@ -700,29 +780,28 @@ export function CaixaPage() {
           <p className="text-stone-500 text-sm">Controle de abertura, fechamento e conferência do caixa.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
+          <SecondaryButton
             onClick={() => navigate('/restaurant/financeiro')}
-            className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-stone-200 text-stone-600 font-bold text-sm rounded-xl hover:bg-stone-50 transition-all shadow-sm active:scale-[0.98]"
+            className="flex items-center gap-2"
           >
             <ArrowLeft className="w-4 h-4" />
             Voltar ao Financeiro
-          </button>
+          </SecondaryButton>
         </div>
       </div>
 
       {/* Caixa Status / Action Bar */}
       <div className="p-6 bg-white border border-stone-200 rounded-3xl shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-6">
         <div className="flex items-start gap-4">
-          <div className={`p-4 rounded-2xl flex items-center justify-center ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+          <div className={`p-4 rounded-2xl flex items-center justify-center ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
             <Clock className="w-8 h-8" />
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-bold text-lg text-stone-800">Status do Caixa</h3>
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1 ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-600 animate-ping' : 'bg-red-600'}`}></span>
+              <Badge variant={activeCaixa && activeCaixa.status === 'OPEN' ? 'success' : 'neutral'}>
                 {activeCaixa && activeCaixa.status === 'OPEN' ? 'Caixa Aberto' : 'Caixa Fechado'}
-              </span>
+              </Badge>
             </div>
             <p className="text-stone-500 text-sm mt-1 max-w-xl">
               {activeCaixa && activeCaixa.status === 'OPEN' 
@@ -736,56 +815,56 @@ export function CaixaPage() {
         <div className="self-end md:self-auto">
           {activeCaixa && activeCaixa.status === 'OPEN' ? (
             <div className="flex flex-wrap gap-3">
-              <button
+              <SecondaryButton
                 onClick={() => setPrintData({ type: 'opening', data: activeCaixa })}
-                className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold rounded-xl transition-all shadow-sm"
+                className="flex items-center gap-2"
               >
-                <Printer className="w-5 h-5" />
+                <Printer className="w-4 h-4" />
                 Reimprimir Abertura
-              </button>
-              <button
+              </SecondaryButton>
+              <SecondaryButton
                 onClick={() => {
                   setMovementError(null);
                   setIsMovementModalOpen(true);
                 }}
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold rounded-xl transition-all shadow-sm active:scale-[0.98]"
+                className="flex items-center gap-2"
               >
-                <Plus className="w-5 h-5 text-emerald-600" />
+                <Plus className="w-4 h-4 text-emerald-600" />
                 Nova Movimentação
-              </button>
-              <button
+              </SecondaryButton>
+              <DangerButton
                 onClick={() => {
                   initClosingConference();
                   setIsClosingModalOpen(true);
                 }}
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all shadow-sm active:scale-[0.98]"
+                className="flex items-center gap-2"
               >
-                <XCircle className="w-5 h-5" />
+                <XCircle className="w-4 h-4" />
                 Fechar Caixa
-              </button>
+              </DangerButton>
             </div>
           ) : (
             <div className="flex flex-wrap gap-3">
               {activeCaixa && activeCaixa.status === 'CLOSED' && (
-                <button
+                <SecondaryButton
                   onClick={() => setPrintData({ type: 'closing', data: activeCaixa })}
-                  className="flex items-center justify-center gap-2 px-4 py-3 bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 font-bold rounded-xl transition-all shadow-sm"
+                  className="flex items-center gap-2"
                 >
-                  <Printer className="w-5 h-5" />
+                  <Printer className="w-4 h-4" />
                   Reimprimir Fechamento
-                </button>
+                </SecondaryButton>
               )}
-              <button
+              <PrimaryButton
                 onClick={() => {
                   setOpeningBalance(0);
                   setObservation('');
                   setIsOpeningModalOpen(true);
                 }}
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-sm active:scale-[0.98]"
+                className="flex items-center gap-2"
               >
-                <Play className="w-5 h-5" />
+                <Play className="w-4 h-4" />
                 Abrir Caixa
-              </button>
+              </PrimaryButton>
             </div>
           )}
         </div>
@@ -797,7 +876,9 @@ export function CaixaPage() {
           <div className="bg-white rounded-lg p-4 max-w-sm w-full">
             <div className="flex justify-between items-center mb-4 no-print">
               <h3 className="font-bold text-lg">Impressão</h3>
-              <button onClick={() => setPrintData({ type: null, data: null })}><X /></button>
+              <IconButton variant="ghost" size="sm" onClick={() => setPrintData({ type: null, data: null })} aria-label="Fechar">
+                <X className="w-4 h-4" />
+              </IconButton>
             </div>
             <PrintableCashReceipt>
               {printData.type === 'opening' ? (
@@ -847,16 +928,16 @@ export function CaixaPage() {
         <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-4">
-              <span className="text-xs font-bold text-stone-400 uppercase tracking-wider">Informações</span>
+              <span className="text-xs font-bold text-stone-400 tracking-wider">Informações</span>
               <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-50 text-emerald-600' : 'bg-stone-100 text-stone-400'}`}>
                 <Clock className="w-4 h-4" />
               </div>
             </div>
             {activeCaixa ? (
               <div className="space-y-1">
-                <p className="text-stone-400 text-[10px] uppercase font-bold tracking-wider">Operador</p>
+                <p className="text-stone-400 text-xs font-bold tracking-wider">Operador</p>
                 <p className="text-stone-800 font-bold text-sm truncate">{activeCaixa.status === 'OPEN' ? activeCaixa.openedBy : activeCaixa.closedBy}</p>
-                <p className="text-stone-400 text-[10px] uppercase font-bold tracking-wider pt-1">Abertura</p>
+                <p className="text-stone-400 text-xs font-bold tracking-wider pt-1">Abertura</p>
                 <p className="text-stone-800 font-semibold text-xs truncate">
                   {new Date(activeCaixa.openedAt).toLocaleString('pt-BR')}
                 </p>
@@ -873,7 +954,7 @@ export function CaixaPage() {
         <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold text-stone-400 uppercase tracking-wider">Resumo do Turno</span>
+              <span className="text-xs font-bold text-stone-400 tracking-wider">Resumo do Turno</span>
               <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-50 text-emerald-600' : 'bg-stone-100 text-stone-400'}`}>
                 <TrendingUp className="w-4 h-4" />
               </div>
@@ -896,15 +977,15 @@ export function CaixaPage() {
                   </div>
                   <div className="flex justify-between font-semibold text-stone-500">
                     <span>(-) Saídas:</span>
-                    <span className="text-red-500 font-medium">-{formatCurrency(totals.exits, true)}</span>
+                    <span className="text-rose-600 font-medium">-{formatCurrency(totals.exits, true)}</span>
                   </div>
                   <div className="flex justify-between font-semibold text-stone-500">
                     <span>(-) Sangrias:</span>
-                    <span className="text-red-500 font-medium">-{formatCurrency(totals.withdrawals, true)}</span>
+                    <span className="text-rose-600 font-medium">-{formatCurrency(totals.withdrawals, true)}</span>
                   </div>
                   <div className="pt-1.5 border-t border-stone-100 flex justify-between font-bold">
                     <span className="text-stone-600">Calculado:</span>
-                    <span className={totals.balance >= 0 ? 'text-emerald-700' : 'text-red-600'}>
+                    <span className={totals.balance >= 0 ? 'text-emerald-700' : 'text-rose-600'}>
                       {formatCurrency(totals.balance, true)}
                     </span>
                   </div>
@@ -931,13 +1012,13 @@ export function CaixaPage() {
                         ? 'text-stone-500' 
                         : (activeCaixa.totalDifference || 0) > 0 
                           ? 'text-emerald-700' 
-                          : 'text-red-600'
+                          : 'text-rose-600'
                     }>
                       {(activeCaixa.totalDifference || 0) > 0 ? '+' : ''}
                       {formatCaixaAmount(activeCaixa.totalDifference)}
                     </span>
                   </div>
-                  <div className="pt-2 text-[10px] text-stone-400 space-y-0.5 border-t border-dashed border-stone-100">
+                  <div className="pt-2 text-xs text-stone-400 space-y-0.5 border-t border-dashed border-stone-100">
                     <div>
                       <span className="font-bold">Status:</span> Fechado
                     </div>
@@ -962,7 +1043,7 @@ export function CaixaPage() {
         <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-4">
-              <span className="text-xs font-bold text-stone-400 uppercase tracking-wider">Formas de Pagamento</span>
+              <span className="text-xs font-bold text-stone-400 tracking-wider">Formas de Pagamento</span>
               <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-50 text-emerald-600' : 'bg-stone-100 text-stone-400'}`}>
                 <CreditCard className="w-4 h-4" />
               </div>
@@ -982,8 +1063,8 @@ export function CaixaPage() {
                 </div>
               ) : (
                 /* When closed, show full recorded conference: expected, counted, difference */
-                <div className="space-y-2 text-[10px]">
-                  <div className="grid grid-cols-4 gap-1 font-bold text-stone-400 uppercase text-[8px] pb-1 border-b border-stone-100">
+                <div className="space-y-2 text-xs">
+                  <div className="grid grid-cols-4 gap-1 font-bold text-stone-400 text-xs pb-1 border-b border-stone-100">
                     <div>Forma</div>
                     <div className="text-right">Esp.</div>
                     <div className="text-right">Inf.</div>
@@ -1006,7 +1087,7 @@ export function CaixaPage() {
                         <div className="text-right font-medium text-stone-800">
                           {formatNumberBRL(countedBrl)}
                         </div>
-                        <div className={`text-right font-bold ${isDiffZero ? 'text-stone-400' : isDiffPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                        <div className={`text-right font-bold ${isDiffZero ? 'text-stone-400' : isDiffPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {isDiffPositive ? '+' : ''}{formatNumberBRL(differenceBrl)}
                         </div>
                       </div>
@@ -1026,7 +1107,7 @@ export function CaixaPage() {
         <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-4">
-              <span className="text-xs font-bold text-stone-400 uppercase tracking-wider">Métricas</span>
+              <span className="text-xs font-bold text-stone-400 tracking-wider">Métricas</span>
               <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${activeCaixa && activeCaixa.status === 'OPEN' ? 'bg-emerald-50 text-emerald-600' : 'bg-stone-100 text-stone-400'}`}>
                 <FileText className="w-4 h-4" />
               </div>
@@ -1038,14 +1119,14 @@ export function CaixaPage() {
                   <span className="text-stone-700 font-bold">{movements.length}</span>
                 </div>
                 <div>
-                  <p className="text-[10px] text-stone-400 uppercase font-bold tracking-wider pt-1">Obs. de Abertura</p>
+                  <p className="text-xs text-stone-400 font-bold tracking-wider pt-1">Obs. de Abertura</p>
                   <p className="text-stone-600 italic line-clamp-2 mt-0.5 leading-relaxed">
                     {activeCaixa.observation?.split('---')[0]?.replace(/Fechamento: .*/g, '') || 'Nenhuma observação informada.'}
                   </p>
                 </div>
                 {activeCaixa.status === 'CLOSED' && (
                   <div>
-                    <p className="text-[10px] text-stone-400 uppercase font-bold tracking-wider pt-1">Obs. de Fechamento</p>
+                    <p className="text-xs text-stone-400 font-bold tracking-wider pt-1">Obs. de Fechamento</p>
                     <p className="text-stone-600 italic line-clamp-2 mt-0.5 leading-relaxed">
                       {activeCaixa.observation?.includes('---') 
                         ? activeCaixa.observation.split('---').pop()?.replace(/Fechamento: /, '').trim() 
@@ -1077,7 +1158,7 @@ export function CaixaPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-stone-100 bg-stone-50/50 text-[10px] font-bold text-stone-400 uppercase tracking-wider">
+                <tr className="border-b border-stone-100 bg-stone-50/50 text-xs font-bold text-stone-400 tracking-wider">
                   <th className="py-3 px-6">Data e Hora</th>
                   <th className="py-3 px-6">Tipo</th>
                   <th className="py-3 px-6">Categoria</th>
@@ -1098,7 +1179,7 @@ export function CaixaPage() {
                         {new Date(movement.createdAt).toLocaleString('pt-BR')}
                       </td>
                       <td className="py-4 px-6 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${typeBadge.className}`}>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold tracking-wider border ${typeBadge.className}`}>
                           {typeBadge.label}
                         </span>
                       </td>
@@ -1109,7 +1190,7 @@ export function CaixaPage() {
                         <div className="flex items-center gap-2">
                           <span className="truncate">{movement.description}</span>
                           {movement.automatic && (
-                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 text-[9px] font-bold border border-blue-100 uppercase tracking-wider">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 text-xs font-bold border border-stone-200 tracking-wider">
                               Automático
                             </span>
                           )}
@@ -1118,7 +1199,7 @@ export function CaixaPage() {
                       <td className="py-4 px-6 font-medium whitespace-nowrap">
                         {getMethodLabel(movement.paymentMethodId)}
                       </td>
-                      <td className={`py-4 px-6 text-right font-bold whitespace-nowrap ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <td className={`py-4 px-6 text-right font-bold whitespace-nowrap ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {isPositive ? '+' : '-'} {formatCurrency(displayAmount, true)}
                       </td>
                       <td className="py-4 px-6 font-medium text-stone-500 whitespace-nowrap">
@@ -1131,16 +1212,149 @@ export function CaixaPage() {
             </table>
           </div>
         ) : (
-          /* Empty Table Placeholder */
-          <div className="p-12 text-center flex flex-col items-center justify-center bg-stone-50/50">
-            <div className="w-12 h-12 bg-stone-100 text-stone-400 rounded-2xl flex items-center justify-center mb-4">
-              <DollarSign className="w-6 h-6" />
+          <EmptyState
+            title="Nenhuma movimentação."
+            description="As movimentações de entrada e saída aparecerão aqui quando o caixa estiver aberto e operando."
+          />
+        )}
+      </div>
+
+      {/* Relatório / Histórico de Caixas e Turnos Section */}
+      <div className="bg-white rounded-3xl border border-stone-200 shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-stone-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <History className="w-5 h-5 text-emerald-600" />
+              <h3 className="text-lg font-bold text-stone-800">Relatório e Histórico de Caixas e Turnos</h3>
             </div>
-            <p className="text-stone-500 font-bold text-sm mb-1">Nenhuma movimentação.</p>
-            <p className="text-stone-400 text-xs max-w-xs">
-              As movimentações de entrada e saída aparecerão aqui quando o caixa estiver aberto e operando.
+            <p className="text-stone-400 text-xs mt-0.5">
+              Histórico de sessões de caixa abertas e fechadas no restaurante.
             </p>
           </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            {/* Search Input */}
+            <div className="w-full sm:w-64">
+              <SearchInput
+                placeholder="Buscar por operador..."
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+              />
+            </div>
+
+            {/* Filter Tabs */}
+            <Tabs
+              tabs={[
+                { id: 'ALL', label: `Todos (${historyCaixas.length})` },
+                { id: 'OPEN', label: `Abertos (${historyCaixas.filter(c => c.status === 'OPEN').length})` },
+                { id: 'CLOSED', label: `Fechados (${historyCaixas.filter(c => c.status === 'CLOSED').length})` },
+              ]}
+              activeTab={historyFilter}
+              onChange={(tabId) => setHistoryFilter(tabId as 'ALL' | 'OPEN' | 'CLOSED')}
+              variant="emerald"
+              className="w-full sm:w-auto"
+            />
+          </div>
+        </div>
+
+        {filteredHistory.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Status</TableHead>
+                <TableHead>Abertura</TableHead>
+                <TableHead>Fechamento</TableHead>
+                <TableHead align="right">Saldo Inicial</TableHead>
+                <TableHead align="right">Informado / Final</TableHead>
+                <TableHead align="right">Diferença</TableHead>
+                <TableHead align="center">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredHistory.map((cx) => {
+                const isOpen = cx.status === 'OPEN';
+                const diff = cx.totalDifference || 0;
+                const isDiffZero = diff === 0;
+                const isDiffPositive = diff > 0;
+
+                return (
+                  <TableRow key={cx.id}>
+                    <TableCell className="whitespace-nowrap">
+                      <Badge variant={isOpen ? 'success' : 'neutral'} size="sm">
+                        {isOpen ? 'Em Aberto' : 'Fechado'}
+                      </Badge>
+                    </TableCell>
+
+                    <TableCell className="whitespace-nowrap">
+                      <div className="font-bold text-stone-800">{new Date(cx.openedAt).toLocaleString('pt-BR')}</div>
+                      <div className="text-xs text-stone-400">Op: {cx.openedBy}</div>
+                    </TableCell>
+
+                    <TableCell className="whitespace-nowrap">
+                      {cx.closedAt ? (
+                        <>
+                          <div className="font-medium text-stone-700">{new Date(cx.closedAt).toLocaleString('pt-BR')}</div>
+                          <div className="text-xs text-stone-400">Op: {cx.closedBy}</div>
+                        </>
+                      ) : (
+                        <span className="text-stone-400 italic text-xs">Turno em andamento</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell align="right" className="font-semibold text-stone-700 whitespace-nowrap">
+                      {formatCaixaAmount(cx.openingBalance)}
+                    </TableCell>
+
+                    <TableCell align="right" className="font-bold text-stone-800 whitespace-nowrap">
+                      {isOpen ? '-' : formatCaixaAmount(cx.countedTotal || cx.closingBalance)}
+                    </TableCell>
+
+                    <TableCell
+                      align="right"
+                      className={`font-bold whitespace-nowrap ${
+                        isOpen ? 'text-stone-400' : isDiffZero ? 'text-stone-400' : isDiffPositive ? 'text-emerald-600' : 'text-rose-600'
+                      }`}
+                    >
+                      {isOpen ? '-' : `${isDiffPositive ? '+' : ''}${formatCaixaAmount(diff)}`}
+                    </TableCell>
+
+                    <TableCell align="center" className="whitespace-nowrap">
+                      <div className="flex items-center justify-center gap-2">
+                        {isOpen ? (
+                          <DangerButton
+                            size="sm"
+                            onClick={() => {
+                              setActiveCaixa(cx);
+                              initClosingConference();
+                              setIsClosingModalOpen(true);
+                            }}
+                          >
+                            Fechar Caixa
+                          </DangerButton>
+                        ) : (
+                          <SecondaryButton
+                            size="sm"
+                            onClick={() => {
+                              setSelectedHistoryCaixa(cx);
+                              setIsDetailModalOpen(true);
+                            }}
+                          >
+                            <Eye className="w-3.5 h-3.5 mr-1 inline" />
+                            Relatório
+                          </SecondaryButton>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        ) : (
+          <EmptyState
+            title="Nenhum caixa encontrado no histórico."
+            description="Os turnos de caixa abertos e fechados registrados no sistema serão listados aqui para auditoria e conferência."
+          />
         )}
       </div>
 
@@ -1175,57 +1389,21 @@ export function CaixaPage() {
           )}
 
           {/* Movement Type */}
-          <div>
-            <label className="block text-xs font-extrabold text-stone-500 uppercase tracking-wider mb-2">
-              Tipo da Movimentação
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setMovementType('INCOME')}
-                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                  movementType === 'INCOME' 
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 ring-2 ring-emerald-100' 
-                    : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
-                }`}
-              >
-                Entrada
-              </button>
-              <button
-                type="button"
-                onClick={() => setMovementType('EXPENSE')}
-                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                  movementType === 'EXPENSE' 
-                    ? 'bg-red-50 text-red-700 border-red-300 ring-2 ring-red-100' 
-                    : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
-                }`}
-              >
-                Saída
-              </button>
-              <button
-                type="button"
-                onClick={() => setMovementType('SUPPLY')}
-                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                  movementType === 'SUPPLY' 
-                    ? 'bg-blue-50 text-blue-700 border-blue-300 ring-2 ring-blue-100' 
-                    : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
-                }`}
-              >
-                Suprimento
-              </button>
-              <button
-                type="button"
-                onClick={() => setMovementType('WITHDRAWAL')}
-                className={`py-2 px-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                  movementType === 'WITHDRAWAL' 
-                    ? 'bg-orange-50 text-orange-700 border-orange-300 ring-2 ring-orange-100' 
-                    : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-50'
-                }`}
-              >
-                Sangria
-              </button>
-            </div>
-          </div>
+          <FormField label="Tipo da Movimentação" required>
+            <RadioGroup
+              name="movementType"
+              value={movementType}
+              onChange={(val) => setMovementType(val as 'INCOME' | 'EXPENSE' | 'SUPPLY' | 'WITHDRAWAL')}
+              options={[
+                { value: 'INCOME', label: 'Entrada' },
+                { value: 'EXPENSE', label: 'Saída' },
+                { value: 'SUPPLY', label: 'Suprimento' },
+                { value: 'WITHDRAWAL', label: 'Sangria' },
+              ]}
+              layout="horizontal"
+              disabled={isSubmitting}
+            />
+          </FormField>
 
           {/* Category */}
           <FormField label="Categoria" required>
@@ -1249,7 +1427,7 @@ export function CaixaPage() {
 
           {/* Payment Method Selector Grid */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-stone-500 uppercase tracking-wider block">
+            <label className="text-xs font-bold text-stone-500 tracking-wider block">
               Forma de Pagamento <span className="text-rose-500">*</span>
             </label>
             
@@ -1275,7 +1453,7 @@ export function CaixaPage() {
                       type="button"
                       onClick={() => setMovementPaymentMethodId(method.id)}
                       disabled={isSubmitting}
-                      className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all active:scale-98 ${
+                      className={`flex items-center gap-3 p-3 min-h-[44px] rounded-xl border text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 cursor-pointer active:scale-98 ${
                         isSelected
                           ? 'bg-emerald-50/80 border-emerald-500 text-emerald-950 ring-2 ring-emerald-500/20 shadow-xs'
                           : 'bg-white border-stone-200 hover:bg-stone-50 text-stone-700'
@@ -1295,12 +1473,12 @@ export function CaixaPage() {
               </div>
             )}
             {paymentMethodsError && (
-              <p className="text-rose-500 text-[10px] font-semibold mt-1">
+              <p className="text-rose-500 text-xs font-semibold mt-1">
                 Nota: Erro ao carregar formas do servidor. Usando opções padrão.
               </p>
             )}
             {(movementType === 'SUPPLY' || movementType === 'WITHDRAWAL') && availablePaymentMethods.find(p => p.id === 'dinheiro') && (
-              <p className="text-[10px] text-emerald-600 font-semibold mt-1">
+              <p className="text-xs text-emerald-600 font-semibold mt-1">
                 * Dinheiro foi selecionado por padrão para este tipo de lançamento.
               </p>
             )}
@@ -1312,7 +1490,7 @@ export function CaixaPage() {
               valueCents={movementAmount}
               onChangeCents={setMovementAmount}
               disabled={isSubmitting}
-              inputClassName="w-full px-4 py-3 bg-stone-50 border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded-xl text-stone-800 font-extrabold text-lg focus:outline-none transition-all"
+              inputClassName="w-full px-4 py-3 bg-stone-50 border border-stone-200 focus:border-emerald-500 rounded-xl text-stone-800 font-extrabold text-lg focus:outline-none transition-all"
             />
           </FormField>
 
@@ -1359,9 +1537,9 @@ export function CaixaPage() {
               valueCents={openingBalance}
               onChangeCents={setOpeningBalance}
               disabled={isSubmitting}
-              inputClassName="w-full px-4 py-3 bg-stone-50 border border-stone-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 rounded-xl text-stone-800 font-extrabold text-lg focus:outline-none transition-all"
+              inputClassName="w-full px-4 py-3 bg-stone-50 border border-stone-200 focus:border-emerald-500 rounded-xl text-stone-800 font-extrabold text-lg focus:outline-none transition-all"
             />
-            <p className="text-[10px] text-stone-400 mt-1">
+            <p className="text-xs text-stone-400 mt-1">
               Insira o valor em dinheiro disponível para troco na abertura deste caixa.
             </p>
           </FormField>
@@ -1408,24 +1586,24 @@ export function CaixaPage() {
             <div className="flex justify-between">
               <span className="text-stone-500 font-medium">Saldo Inicial de Abertura:</span>
               <span className="text-stone-800 font-bold">
-                {formatCaixaAmount(activeCaixa.openingBalance)}
+                {activeCaixa ? formatCaixaAmount(activeCaixa.openingBalance) : 'R$ 0,00'}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-stone-500 font-medium">Data/Hora da Abertura:</span>
               <span className="text-stone-800 font-semibold">
-                {new Date(activeCaixa.openedAt).toLocaleString('pt-BR')}
+                {activeCaixa ? new Date(activeCaixa.openedAt).toLocaleString('pt-BR') : '-'}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-stone-500 font-medium">Operador de Turno:</span>
-              <span className="text-stone-800 font-semibold">{activeCaixa.openedBy}</span>
+              <span className="text-stone-800 font-semibold">{activeCaixa?.openedBy || '-'}</span>
             </div>
           </div>
 
           {/* Conferência por Forma de Pagamento */}
           <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
-            <p className="text-xs font-bold text-stone-500 uppercase tracking-wider">
+            <p className="text-xs font-bold text-stone-500 tracking-wider">
               Conferência por Forma de Pagamento
             </p>
             
@@ -1449,14 +1627,14 @@ export function CaixaPage() {
                         valueCents={countedValues[item.paymentMethodId] ?? 0}
                         onChangeCents={(cents) => handleCountedValueChange(item.paymentMethodId, cents)}
                         disabled={isSubmitting}
-                        inputClassName="w-full px-3 py-2 bg-white border border-stone-200 focus:border-red-500 focus:ring-1 focus:ring-red-200 rounded-lg text-stone-800 font-bold text-sm focus:outline-none transition-all text-right"
+                        inputClassName="w-full px-3 py-2 bg-white border border-stone-200 focus:border-rose-500 focus:ring-1 focus:ring-rose-200 rounded-lg text-stone-800 font-bold text-sm focus:outline-none transition-all text-right"
                       />
                     </div>
 
                     {/* Difference Badge/Indicator */}
                     <div className="w-[100px] text-right">
-                      <p className="text-[9px] text-stone-400 font-bold uppercase">Diferença</p>
-                      <p className={`font-extrabold text-xs truncate ${isDiffZero ? 'text-stone-400' : isDiffPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <p className="text-xs text-stone-400 font-bold">Diferença</p>
+                      <p className={`font-extrabold text-xs truncate ${isDiffZero ? 'text-stone-400' : isDiffPositive ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {isDiffPositive ? '+' : ''}{formatNumberBRL(item.differenceCents / 100)}
                       </p>
                     </div>
@@ -1482,7 +1660,7 @@ export function CaixaPage() {
             </div>
             <div className="pt-2 border-t border-stone-200 flex justify-between font-extrabold text-sm">
               <span className="text-stone-700">Diferença Total:</span>
-              <span className={modalSummary.totalDifferenceCents === 0 ? 'text-stone-600' : modalSummary.totalDifferenceCents > 0 ? 'text-emerald-700' : 'text-red-600'}>
+              <span className={modalSummary.totalDifferenceCents === 0 ? 'text-stone-600' : modalSummary.totalDifferenceCents > 0 ? 'text-emerald-700' : 'text-rose-600'}>
                 {modalSummary.totalDifferenceCents > 0 ? '+' : ''}
                 {formatCurrency(modalSummary.totalDifferenceCents, true)}
               </span>
@@ -1512,6 +1690,169 @@ export function CaixaPage() {
           </div>
         </form>
       </FormModal>
+
+      {/* MODAL: DETALHES E RELATÓRIO COMPLETO DO CAIXA / TURNO */}
+      {isDetailModalOpen && selectedHistoryCaixa && (
+        <FormModal
+          isOpen={isDetailModalOpen}
+          onClose={() => {
+            setIsDetailModalOpen(false);
+            setSelectedHistoryCaixa(null);
+          }}
+          title={`Relatório de Caixa #${selectedHistoryCaixa.id.slice(0, 8)}`}
+          subtitle={`Aberto em ${new Date(selectedHistoryCaixa.openedAt).toLocaleString('pt-BR')} por ${selectedHistoryCaixa.openedBy}`}
+          icon={FileText}
+          iconBgColor="bg-stone-100"
+          iconTextColor="text-stone-700"
+        >
+          <div className="space-y-4 text-left">
+            {/* Informações Gerais */}
+            <div className="p-4 bg-stone-50 border border-stone-200/80 rounded-2xl space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-stone-500 font-semibold">Status do Turno:</span>
+                <span className={`font-bold px-2.5 py-0.5 rounded-full text-xs ${
+                  selectedHistoryCaixa.status === 'OPEN' ? 'bg-emerald-100 text-emerald-800' : 'bg-stone-200 text-stone-800'
+                }`}>
+                  {selectedHistoryCaixa.status === 'OPEN' ? 'Em Aberto' : 'Fechado'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-500 font-semibold">Operador de Abertura:</span>
+                <span className="text-stone-800 font-bold">{selectedHistoryCaixa.openedBy}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-500 font-semibold">Data/Hora de Abertura:</span>
+                <span className="text-stone-800 font-medium">{new Date(selectedHistoryCaixa.openedAt).toLocaleString('pt-BR')}</span>
+              </div>
+              {selectedHistoryCaixa.closedAt && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-stone-500 font-semibold">Operador de Fechamento:</span>
+                    <span className="text-stone-800 font-bold">{selectedHistoryCaixa.closedBy || '-'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-500 font-semibold">Data/Hora de Fechamento:</span>
+                    <span className="text-stone-800 font-medium">{new Date(selectedHistoryCaixa.closedAt).toLocaleString('pt-BR')}</span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Resumo Financeiro */}
+            <div className="p-4 bg-stone-50 border border-stone-200/80 rounded-2xl text-xs space-y-1.5">
+              <div className="flex justify-between font-semibold">
+                <span className="text-stone-500">Saldo Inicial (Troco):</span>
+                <span className="text-stone-800">{formatCaixaAmount(selectedHistoryCaixa.openingBalance)}</span>
+              </div>
+              <div className="flex justify-between font-semibold">
+                <span className="text-stone-500">(+) Entradas:</span>
+                <span className="text-emerald-600">+{formatCaixaAmount(selectedHistoryCaixa.totalEntries || 0)}</span>
+              </div>
+              <div className="flex justify-between font-semibold">
+                <span className="text-stone-500">(+) Suprimentos:</span>
+                <span className="text-emerald-600">+{formatCaixaAmount(selectedHistoryCaixa.totalSupplies || 0)}</span>
+              </div>
+              <div className="flex justify-between font-semibold">
+                <span className="text-stone-500">(-) Saídas:</span>
+                <span className="text-rose-600">-{formatCaixaAmount(selectedHistoryCaixa.totalExits || 0)}</span>
+              </div>
+              <div className="flex justify-between font-semibold">
+                <span className="text-stone-500">(-) Sangrias:</span>
+                <span className="text-rose-600">-{formatCaixaAmount(selectedHistoryCaixa.totalWithdrawals || 0)}</span>
+              </div>
+              <div className="pt-2 border-t border-stone-200 flex justify-between font-bold text-sm">
+                <span className="text-stone-700">Total Calculado/Esperado:</span>
+                <span className="text-stone-900">{formatCaixaAmount(selectedHistoryCaixa.expectedTotal)}</span>
+              </div>
+              {selectedHistoryCaixa.status === 'CLOSED' && (
+                <>
+                  <div className="flex justify-between font-bold text-sm">
+                    <span className="text-stone-700">Total Informado/Encontrado:</span>
+                    <span className="text-stone-900">{formatCaixaAmount(selectedHistoryCaixa.countedTotal)}</span>
+                  </div>
+                  <div className="flex justify-between font-extrabold text-sm pt-1.5 border-t border-dashed border-stone-200">
+                    <span className="text-stone-700">Diferença Total:</span>
+                    <span className={(selectedHistoryCaixa.totalDifference || 0) === 0 ? 'text-stone-500' : (selectedHistoryCaixa.totalDifference || 0) > 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                      {(selectedHistoryCaixa.totalDifference || 0) > 0 ? '+' : ''}{formatCaixaAmount(selectedHistoryCaixa.totalDifference)}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Resumo por Forma de Pagamento */}
+            {selectedHistoryCaixa.paymentSummary && selectedHistoryCaixa.paymentSummary.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-stone-500 tracking-wider">Conferência por Forma de Pagamento</p>
+                <div className="border border-stone-200 rounded-xl overflow-hidden text-xs">
+                  <div className="grid grid-cols-4 gap-2 bg-stone-100 p-2.5 font-bold text-stone-600 text-xs">
+                    <div>Forma</div>
+                    <div className="text-right">Esperado</div>
+                    <div className="text-right">Informado</div>
+                    <div className="text-right">Diferença</div>
+                  </div>
+                  <div className="divide-y divide-stone-100">
+                    {selectedHistoryCaixa.paymentSummary.map((item) => {
+                      const exp = Number.isInteger(item.expectedAmount) ? item.expectedAmount / 100 : item.expectedAmount;
+                      const cnt = Number.isInteger(item.countedAmount) ? item.countedAmount / 100 : item.countedAmount;
+                      const diff = Number.isInteger(item.differenceAmount) ? item.differenceAmount / 100 : item.differenceAmount;
+                      return (
+                        <div key={item.paymentMethodId} className="grid grid-cols-4 gap-2 p-2.5 items-center text-stone-700 font-medium">
+                          <div className="truncate font-semibold text-stone-800">{item.paymentMethodName}</div>
+                          <div className="text-right">{formatNumberBRL(exp)}</div>
+                          <div className="text-right font-bold text-stone-900">{formatNumberBRL(cnt)}</div>
+                          <div className={`text-right font-bold ${diff === 0 ? 'text-stone-400' : diff > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {diff > 0 ? '+' : ''}{formatNumberBRL(diff)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Observações */}
+            {selectedHistoryCaixa.observation && (
+              <div className="p-3.5 bg-amber-50/60 border border-amber-200/80 rounded-xl text-xs space-y-1">
+                <p className="font-bold text-amber-900">Observações:</p>
+                <p className="text-amber-800 italic leading-relaxed">{selectedHistoryCaixa.observation}</p>
+              </div>
+            )}
+
+            {/* Ações / Impressão */}
+            <div className="flex gap-2 pt-2">
+              <SecondaryButton
+                type="button"
+                onClick={() => {
+                  setPrintData({ 
+                    type: selectedHistoryCaixa.status === 'OPEN' ? 'opening' : 'closing', 
+                    data: selectedHistoryCaixa 
+                  });
+                }}
+                className="flex-1 py-3 flex items-center justify-center gap-2 font-bold"
+              >
+                <Printer className="w-4 h-4" />
+                Imprimir Comprovante
+              </SecondaryButton>
+              {selectedHistoryCaixa.status === 'OPEN' && (
+                <DangerButton
+                  type="button"
+                  onClick={() => {
+                    setIsDetailModalOpen(false);
+                    setActiveCaixa(selectedHistoryCaixa);
+                    initClosingConference();
+                    setIsClosingModalOpen(true);
+                  }}
+                  className="flex-1 py-3 font-bold"
+                >
+                  Fechar Este Caixa
+                </DangerButton>
+              )}
+            </div>
+          </div>
+        </FormModal>
+      )}
     </div>
   );
 }

@@ -77,6 +77,9 @@ export interface Waiter {
   photoUrl?: string;
   status: WaiterStatus;
   permissions: WaiterPermissions;
+  environments?: string[];
+  assignedTables?: string[];
+  shift?: string;
   createdAt?: string;
   updatedAt?: string;
   createdBy: {
@@ -111,6 +114,9 @@ export function normalizeWaiter(rawDoc: any, docId: string, restaurantId: string
     photoUrl: rawDoc.photoUrl || '',
     status,
     permissions: normalizeWaiterPermissions(rawDoc.permissions || rawDoc.permissoes),
+    environments: rawDoc.environments || [],
+    assignedTables: rawDoc.assignedTables || [],
+    shift: rawDoc.shift || '',
     createdAt: rawDoc.createdAt || rawDoc.data_criacao || new Date().toISOString(),
     updatedAt: rawDoc.updatedAt || new Date().toISOString(),
     createdBy: rawDoc.createdBy || { userId: '', name: 'Cadastro legado' },

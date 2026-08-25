@@ -1,9 +1,11 @@
-import React, { useEffect, useState, lazy, Suspense } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Bike, Clock, MapPin, Navigation, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Button } from '../ui';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
-const DeliveryTrackingMap = lazy(() => import('./DeliveryTrackingMap'));
+const DeliveryTrackingMap = lazyWithRetry(() => import('./DeliveryTrackingMap'), 'DeliveryTrackingMap');
 
 interface CustomerDeliveryTrackingBlockProps {
   restaurantId: string;
@@ -70,17 +72,19 @@ export default function CustomerDeliveryTrackingBlock({
             <Bike className="w-5 h-5 stroke-[2.5]" />
           </div>
           <div>
-            <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">ENTREGA EM ANDAMENTO</span>
-            <h4 className="text-sm font-extrabold text-stone-100">Acompanhar Entregador</h4>
+            <span className="text-xs font-black text-emerald-400">Entrega em andamento</span>
+            <h4 className="text-sm font-extrabold text-stone-100">Acompanhar entregador</h4>
           </div>
         </div>
 
-        <button
+        <Button
           onClick={() => setIsMapExpanded(!isMapExpanded)}
-          className="text-xs font-bold text-emerald-400 hover:underline px-2.5 py-1 bg-white/5 rounded-lg border border-white/10"
+          variant="ghost"
+          size="sm"
+          className="text-emerald-400 hover:text-emerald-350 border border-white/10 hover:bg-white/5"
         >
-          {isMapExpanded ? 'Ocultar Mapa' : 'Ver Mapa'}
-        </button>
+          {isMapExpanded ? 'Ocultar mapa' : 'Ver mapa'}
+        </Button>
       </div>
 
       <div className="space-y-2 text-xs">
@@ -108,12 +112,12 @@ export default function CustomerDeliveryTrackingBlock({
         {isOutdated ? (
           <div className="bg-amber-500/15 border border-amber-500/30 text-amber-200 p-3 rounded-2xl flex items-start gap-2.5 mt-2">
             <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-            <p className="text-[11px] leading-relaxed">
+            <p className="text-xs leading-relaxed">
               Localização temporariamente indisponível. O entregador continua com seu pedido.
             </p>
           </div>
         ) : (
-          <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px]">
+          <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-xs">
             <span className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
             <span>Rastreamento ao vivo ativo</span>
           </div>

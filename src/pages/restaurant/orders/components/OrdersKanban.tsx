@@ -24,9 +24,9 @@ const KANBAN_COLUMNS: ColumnConfig[] = [
   {
     id: 'confirmado',
     title: 'Confirmado',
-    accentColor: 'bg-indigo-500',
-    badgeBg: 'bg-indigo-100',
-    badgeText: 'text-indigo-800',
+    accentColor: 'bg-stone-600',
+    badgeBg: 'bg-stone-100',
+    badgeText: 'text-stone-800',
     description: 'Aceitos, aguardando início do preparo'
   },
   {

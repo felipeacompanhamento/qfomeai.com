@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, Store, Users, ShoppingBag, Tag, Map, 
-  Flag, LogOut, Bell, Image as ImageIcon, BarChart3, Menu, X, ChevronRight, ChevronLeft, Home, DollarSign
+  Flag, LogOut, Bell, Image as ImageIcon, BarChart3, Menu, X, ChevronRight, ChevronLeft, Home, DollarSign, Shield
 } from 'lucide-react';
 import { auth } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,6 +30,7 @@ export default function AdminLayout({ children, pendingRestaurantsCount }: Admin
     { path: '/admin-dashboard/denuncias', label: 'Denúncias', icon: Flag },
     { path: '/admin-dashboard/notificacoes', label: 'Notificações', icon: Bell },
     { path: '/admin-dashboard/relatorios', label: 'Relatórios', icon: BarChart3 },
+    { path: '/admin-dashboard/auditoria', label: 'Auditoria & Legado', icon: Shield },
   ];
 
   const renderSidebarContent = () => (

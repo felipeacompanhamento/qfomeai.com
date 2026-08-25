@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { formatDateTime } from '../../lib/utils';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
-import { collection, query, doc, setDoc, addDoc, deleteDoc, serverTimestamp, updateDoc, where, collectionGroup, getDocs, getDoc, limit, orderBy, startAfter, QueryConstraint } from 'firebase/firestore';
+import { collection, query, doc, setDoc, addDoc, deleteDoc, serverTimestamp, updateDoc, where, collectionGroup, getDocs, getDoc, limit, orderBy, startAfter, QueryConstraint, getCountFromServer, getAggregateFromServer, count, sum, average } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, auth, storage, handleFirestoreError, OperationType } from '../../firebase';
+import { db, auth, storage } from '../../firebase';
 import { getReports } from '../../services/reportService';
 import { scheduleService } from '../../services/scheduleService';
 import { isRestaurantOpen } from '../../utils/restaurantStatus';
@@ -23,6 +24,48 @@ import OptionGroups from '../restaurant/OptionGroups';
 import RestaurantPromotions from '../restaurant/Promotions';
 import FinancePage from './Finance';
 import { ReportsDashboard } from '../../components/admin/ReportsDashboard';
+import { LegacyAuditDashboard } from '../../components/admin/LegacyAuditDashboard';
+
+class AdminSectionErrorBoundary extends React.Component<
+  { title?: string; children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { title?: string; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error(`[Admin Section Error - ${this.props.title || 'Section'}]:`, error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-6 bg-red-50/80 border border-red-200 rounded-3xl text-red-700 space-y-3 my-4">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            <h3 className="font-bold text-base">Não foi possível carregar esta seção ({this.props.title || 'Módulo'})</h3>
+          </div>
+          <p className="text-sm text-red-600">
+            O restante do painel administrativo continua funcionando normalmente. Você pode tentar recarregar esta seção.
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="px-4 py-2 bg-white border border-red-300 text-red-700 font-bold text-xs rounded-xl hover:bg-red-50 transition-colors shadow-sm"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'custom' | 'year' | 'all';
 
@@ -56,11 +99,11 @@ export default function AdminDashboard() {
   const fetchAdminData = useCallback(async () => {
     try {
       const [resSnap, userSnap, orderSnap, catSnap, prodSnap] = await Promise.all([
-        getDocs(query(collection(db, 'restaurants'), limit(200))),
-        getDocs(query(collection(db, 'users'), limit(200))),
-        getDocs(query(collectionGroup(db, 'orders'), orderBy('data_criacao', 'desc'), limit(300))),
-        getDocs(query(collection(db, 'categories'), limit(100))),
-        getDocs(query(collectionGroup(db, 'products'), limit(500)))
+        getDocs(query(collection(db, 'restaurants'), limit(50))),
+        getDocs(query(collection(db, 'users'), limit(50))),
+        getDocs(query(collectionGroup(db, 'orders'), orderBy('data_criacao', 'desc'), limit(50))),
+        getDocs(query(collection(db, 'categories'), limit(50))),
+        getDocs(query(collectionGroup(db, 'products'), limit(50)))
       ]);
 
       setRestaurants(resSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -69,7 +112,7 @@ export default function AdminDashboard() {
       setCategories(catSnap.docs.map(d => ({ id: d.id, ...d.data() })));
       setProducts(prodSnap.docs.map(d => ({ id: d.id, restaurante_id: d.ref.parent.parent?.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'admin_dashboard_data');
+      console.error('[AdminDashboard] Erro ao carregar dados gerais do painel:', error);
     }
   }, []);
 
@@ -102,8 +145,10 @@ export default function AdminDashboard() {
       return items;
     }
 
-    return items.filter(item => {
+    return (items || []).filter(item => {
+      if (!item || !item[dateField]) return false;
       const itemDate = new Date(item[dateField]);
+      if (isNaN(itemDate.getTime())) return false;
       return itemDate >= start && itemDate <= end;
     });
   };
@@ -122,7 +167,7 @@ export default function AdminDashboard() {
     all: 'Todo o Período'
   };
 
-  const pendingRestaurantsCount = restaurants.filter(r => r.status_aprovacao === 'pendente_aprovacao').length;
+  const pendingRestaurantsCount = (restaurants || []).filter(r => r?.status_aprovacao === 'pendente_aprovacao').length;
 
   return (
     <AdminLayout pendingRestaurantsCount={pendingRestaurantsCount}>
@@ -189,18 +234,19 @@ export default function AdminDashboard() {
         </div>
 
         <Routes>
-          <Route path="/" element={<AdminStats restaurants={filteredRestaurants} users={filteredUsers} orders={filteredOrders} />} />
-          <Route path="restaurantes" element={<RestaurantManagement restaurants={restaurants} categories={categories} />} />
-          <Route path="usuarios" element={<UserManagement users={users} orders={orders} />} />
-          <Route path="pedidos" element={<OrderManagement restaurants={restaurants} users={users} />} />
-          <Route path="financeiro" element={<FinancePage />} />
-          <Route path="bairros" element={<LocationManagement />} />
-          <Route path="cupons" element={<CouponManagement restaurants={restaurants} categories={categories} products={products} />} />
-          <Route path="banners" element={<BannerManagement />} />
-          <Route path="categorias" element={<CategoryManagement />} />
-          <Route path="denuncias" element={<ReportManagement users={users} restaurants={restaurants} orders={orders} />} />
-          <Route path="notificacoes" element={<PushNotificationManagement />} />
-          <Route path="relatorios" element={<ReportsDashboard />} />
+          <Route path="/" element={<AdminSectionErrorBoundary title="Visão Geral"><AdminStats period={period} customRange={customRange} fallbackRestaurants={filteredRestaurants} fallbackUsers={filteredUsers} fallbackOrders={filteredOrders} /></AdminSectionErrorBoundary>} />
+          <Route path="restaurantes" element={<AdminSectionErrorBoundary title="Restaurantes"><RestaurantManagement restaurants={restaurants} categories={categories} /></AdminSectionErrorBoundary>} />
+          <Route path="usuarios" element={<AdminSectionErrorBoundary title="Usuários"><UserManagement users={users} orders={orders} /></AdminSectionErrorBoundary>} />
+          <Route path="pedidos" element={<AdminSectionErrorBoundary title="Pedidos"><OrderManagement restaurants={restaurants} users={users} /></AdminSectionErrorBoundary>} />
+          <Route path="financeiro" element={<AdminSectionErrorBoundary title="Financeiro"><FinancePage /></AdminSectionErrorBoundary>} />
+          <Route path="bairros" element={<AdminSectionErrorBoundary title="Localidades"><LocationManagement /></AdminSectionErrorBoundary>} />
+          <Route path="cupons" element={<AdminSectionErrorBoundary title="Cupons"><CouponManagement restaurants={restaurants} categories={categories} products={products} /></AdminSectionErrorBoundary>} />
+          <Route path="banners" element={<AdminSectionErrorBoundary title="Banners"><BannerManagement /></AdminSectionErrorBoundary>} />
+          <Route path="categorias" element={<AdminSectionErrorBoundary title="Categorias"><CategoryManagement /></AdminSectionErrorBoundary>} />
+          <Route path="denuncias" element={<AdminSectionErrorBoundary title="Denúncias"><ReportManagement users={users} restaurants={restaurants} orders={orders} /></AdminSectionErrorBoundary>} />
+          <Route path="notificacoes" element={<AdminSectionErrorBoundary title="Notificações"><PushNotificationManagement /></AdminSectionErrorBoundary>} />
+          <Route path="relatorios" element={<AdminSectionErrorBoundary title="Relatórios"><ReportsDashboard /></AdminSectionErrorBoundary>} />
+          <Route path="auditoria" element={<AdminSectionErrorBoundary title="Auditoria"><LegacyAuditDashboard restaurants={restaurants} /></AdminSectionErrorBoundary>} />
         </Routes>
       </AdminLayout>
     );
@@ -218,17 +264,33 @@ function UserManagement({ users, orders }: any) {
         status_conta: currentStatus === 'ativo' ? 'bloqueado' : 'ativo'
       }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${id}`);
+      console.error('[AdminDashboard] Erro ao alternar status do usuário:', error);
+      alert('Erro ao atualizar status do usuário.');
     }
   };
 
   const handleChangeRole = async (id: string, newRole: string) => {
     try {
+      const lower = newRole.toLowerCase();
+      let accountType = 'CLIENT';
+      let role = 'CLIENT';
+      if (lower === 'admin') { accountType = 'ADMIN'; role = 'ADMIN'; }
+      else if (['restaurant', 'restaurante', 'proprietario', 'owner'].includes(lower)) { accountType = 'RESTAURANT'; role = 'OWNER'; }
+      else if (['delivery_driver', 'entregador', 'driver'].includes(lower)) { accountType = 'DRIVER'; role = 'DRIVER'; }
+      else if (lower === 'manager' || lower === 'gerente') { accountType = 'RESTAURANT'; role = 'MANAGER'; }
+      else if (lower === 'waiter' || lower === 'garcom') { accountType = 'RESTAURANT'; role = 'WAITER'; }
+      else if (lower === 'cashier' || lower === 'caixa') { accountType = 'RESTAURANT'; role = 'CASHIER'; }
+      else if (lower === 'kitchen' || lower === 'cozinha') { accountType = 'RESTAURANT'; role = 'KITCHEN'; }
+
       await setDoc(doc(db, 'users', id), {
-        tipo_usuario: newRole
+        tipo_usuario: newRole,
+        accountType,
+        role,
+        _migratedAt: new Date().toISOString()
       }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${id}`);
+      console.error('[AdminDashboard] Erro ao alterar perfil/cargo do usuário:', error);
+      alert('Erro ao alterar perfil/cargo do usuário.');
     }
   };
 
@@ -420,7 +482,7 @@ function UserManagement({ users, orders }: any) {
                       <p className="text-xs text-stone-500">{new Date(order.data_criacao).toLocaleString()}</p>
                       <p className="text-xs font-bold text-emerald-600 mt-1">{order.restaurant_nome || order.restaurante_nome || 'Restaurante não identificado'}</p>
                       <div className="mt-2 space-y-1">
-                        {order.itens?.map((item: any, idx: number) => (
+                        {(order.items || order.itens)?.map((item: any, idx: number) => (
                           <p key={idx} className="text-xs text-stone-600">{item.quantidade}x {item.nome}</p>
                         ))}
                       </div>
@@ -481,7 +543,7 @@ function UserManagement({ users, orders }: any) {
                 <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Nome</label>
                 <input 
                   type="text"
-                  value={editingUser.nome}
+                  value={editingUser.nome || ''}
                   onChange={e => setEditingUser({...editingUser, nome: e.target.value})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
                   required
@@ -491,7 +553,7 @@ function UserManagement({ users, orders }: any) {
                 <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Email</label>
                 <input 
                   type="email"
-                  value={editingUser.email}
+                  value={editingUser.email || ''}
                   onChange={e => setEditingUser({...editingUser, email: e.target.value})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
                   required
@@ -501,7 +563,7 @@ function UserManagement({ users, orders }: any) {
                 <label className="block text-xs font-bold text-stone-500 uppercase mb-1">Telefone</label>
                 <input 
                   type="text"
-                  value={editingUser.telefone}
+                  value={editingUser.telefone || ''}
                   onChange={e => setEditingUser({...editingUser, telefone: e.target.value})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
                 />
@@ -580,7 +642,7 @@ function LocationManagement() {
       const snap = await getDocs(collection(db, 'estados'));
       setEstados(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'estados');
+      console.error('[AdminDashboard] Erro ao carregar estados:', error);
     }
   }, []);
 
@@ -598,7 +660,7 @@ function LocationManagement() {
       const snap = await getDocs(q);
       setCidades(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'cidades');
+      console.error('[AdminDashboard] Erro ao carregar cidades:', error);
     }
   }, [selectedEstado]);
 
@@ -616,7 +678,7 @@ function LocationManagement() {
       const snap = await getDocs(q);
       setBairros(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'bairros');
+      console.error('[AdminDashboard] Erro ao carregar bairros:', error);
     }
   }, [selectedCidade]);
 
@@ -641,7 +703,8 @@ function LocationManagement() {
       });
       setNewEstado({ nome: '', sigla: '', ativo: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'estados');
+      console.error('[AdminDashboard] Erro ao adicionar estado:', error);
+      alert('Erro ao adicionar estado.');
     }
   };
 
@@ -656,7 +719,8 @@ function LocationManagement() {
       });
       setNewCidade({ nome: '', ativo: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'cidades');
+      console.error('[AdminDashboard] Erro ao adicionar cidade:', error);
+      alert('Erro ao adicionar cidade.');
     }
   };
 
@@ -671,7 +735,8 @@ function LocationManagement() {
       });
       setNewBairro({ nome: '', ativo: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'bairros');
+      console.error('[AdminDashboard] Erro ao adicionar bairro:', error);
+      alert('Erro ao adicionar bairro.');
     }
   };
 
@@ -679,7 +744,8 @@ function LocationManagement() {
     try {
       await updateDoc(doc(db, collectionName, id), { ativo: !current });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `${collectionName}/${id}`);
+      console.error(`[AdminDashboard] Erro ao alternar status em ${collectionName}:`, error);
+      alert('Erro ao alterar status.');
     }
   };
 
@@ -689,7 +755,8 @@ function LocationManagement() {
       await deleteDoc(doc(db, deletingItem.collection, deletingItem.id));
       setDeletingItem(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `${deletingItem.collection}/${deletingItem.id}`);
+      console.error(`[AdminDashboard] Erro ao excluir item de ${deletingItem.collection}:`, error);
+      alert('Erro ao excluir item.');
     }
   };
 
@@ -703,7 +770,8 @@ function LocationManagement() {
       await updateDoc(doc(db, editingItem.collection, editingItem.id), updates);
       setEditingItem(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `${editingItem.collection}/${editingItem.id}`);
+      console.error(`[AdminDashboard] Erro ao atualizar item de ${editingItem.collection}:`, error);
+      alert('Erro ao atualizar item.');
     }
   };
 
@@ -928,7 +996,7 @@ function LocationManagement() {
               <div className="space-y-1">
                 <label className="text-xs font-bold text-stone-400 uppercase">Nome</label>
                 <input 
-                  value={editingItem.nome}
+                  value={editingItem.nome || ''}
                   onChange={e => setEditingItem({...editingItem, nome: e.target.value})}
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20"
                   required
@@ -938,7 +1006,7 @@ function LocationManagement() {
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-stone-400 uppercase">Sigla</label>
                   <input 
-                    value={editingItem.sigla}
+                    value={editingItem.sigla || ''}
                     onChange={e => setEditingItem({...editingItem, sigla: e.target.value.toUpperCase()})}
                     className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 uppercase"
                     maxLength={2}
@@ -1013,7 +1081,7 @@ function CouponManagement({ restaurants, categories, products }: { restaurants: 
       const snap = await getDocs(query(collection(db, 'coupons'), limit(50)));
       setCoupons(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'coupons');
+      console.error('[AdminDashboard] Erro ao buscar cupons:', error);
     }
   }, []);
 
@@ -1022,7 +1090,7 @@ function CouponManagement({ restaurants, categories, products }: { restaurants: 
       const snap = await getDocs(query(collectionGroup(db, 'orders'), orderBy('data_criacao', 'desc'), limit(50)));
       setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'orders');
+      console.error('[AdminDashboard] Erro ao buscar pedidos para cupons:', error);
     }
   }, []);
 
@@ -1070,8 +1138,10 @@ function CouponManagement({ restaurants, categories, products }: { restaurants: 
         tipo_escopo: 'geral',
         escopo_id: ''
       });
+      fetchCoupons();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, editingCouponId ? `coupons/${editingCouponId}` : 'coupons');
+      console.error('[AdminDashboard] Erro ao salvar cupom:', error);
+      alert('Erro ao salvar cupom.');
     }
   };
 
@@ -1126,8 +1196,10 @@ function CouponManagement({ restaurants, categories, products }: { restaurants: 
     try {
       await deleteDoc(doc(db, 'coupons', deletingCouponId));
       setDeletingCouponId(null);
+      fetchCoupons();
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `coupons/${deletingCouponId}`);
+      console.error('[AdminDashboard] Erro ao excluir cupom:', error);
+      alert('Erro ao excluir cupom.');
     }
   };
 
@@ -1420,7 +1492,7 @@ function BannerManagement() {
       const snap = await getDocs(query(collection(db, 'banners'), limit(50)));
       setBanners(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'banners');
+      console.error('[AdminDashboard] Erro ao buscar banners:', error);
     }
   }, []);
 
@@ -1449,13 +1521,15 @@ function BannerManagement() {
       setNewBanner({ 
         titulo: '', 
         bannerUrl: '', 
-        link: '',
+        link: '', 
         data_inicio_exibicao: '',
         data_fim_exibicao: '',
         ativo: true
       });
+      fetchData();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, editingBannerId ? `banners/${editingBannerId}` : 'banners');
+      console.error('[AdminDashboard] Erro ao salvar banner:', error);
+      alert('Erro ao salvar banner.');
     }
   };
 
@@ -1477,7 +1551,7 @@ function BannerManagement() {
     setNewBanner({ 
       titulo: '', 
       bannerUrl: '', 
-      link: '',
+      link: '', 
       data_inicio_exibicao: '',
       data_fim_exibicao: '',
       ativo: true
@@ -1487,8 +1561,10 @@ function BannerManagement() {
   const handleToggleAtivo = async (id: string, current: boolean) => {
     try {
       await updateDoc(doc(db, 'banners', id), { ativo: !current });
+      fetchData();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `banners/${id}`);
+      console.error('[AdminDashboard] Erro ao alternar status do banner:', error);
+      alert('Erro ao alterar status do banner.');
     }
   };
 
@@ -1497,8 +1573,10 @@ function BannerManagement() {
     try {
       await deleteDoc(doc(db, 'banners', deletingBannerId));
       setDeletingBannerId(null);
+      fetchData();
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `banners/${deletingBannerId}`);
+      console.error('[AdminDashboard] Erro ao excluir banner:', error);
+      alert('Erro ao excluir banner.');
     }
   };
 
@@ -1701,7 +1779,7 @@ function CategoryManagement() {
       const snap = await getDocs(query(collection(db, 'categories'), limit(50)));
       setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'categories');
+      console.error('[AdminDashboard] Erro ao buscar categorias:', error);
     }
   }, []);
 
@@ -1725,8 +1803,10 @@ function CategoryManagement() {
         });
       }
       setNewCat({ nome: '', icon_url: '' });
+      fetchData();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, editingCategoryId ? `categories/${editingCategoryId}` : 'categories');
+      console.error('[AdminDashboard] Erro ao salvar categoria:', error);
+      alert('Erro ao salvar categoria.');
     }
   };
 
@@ -1749,8 +1829,10 @@ function CategoryManagement() {
     try {
       await deleteDoc(doc(db, 'categories', deletingCategoryId));
       setDeletingCategoryId(null);
+      fetchData();
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `categories/${deletingCategoryId}`);
+      console.error('[AdminDashboard] Erro ao excluir categoria:', error);
+      alert('Erro ao excluir categoria.');
     }
   };
 
@@ -1889,12 +1971,8 @@ function ReportManagement({ users, restaurants, orders }: any) {
 
   const formatDate = (dateValue: any) => {
     if (!dateValue) return 'Data indisponível';
-    try {
-      if (typeof dateValue.toDate === 'function') return dateValue.toDate().toLocaleString();
-      return new Date(dateValue).toLocaleString();
-    } catch (e) {
-      return 'Data inválida';
-    }
+    const res = formatDateTime(dateValue);
+    return res === '-' ? 'Data inválida' : res;
   };
 
   useEffect(() => {
@@ -1904,7 +1982,7 @@ function ReportManagement({ users, restaurants, orders }: any) {
         const reportsData = await getReports();
         setReports(reportsData);
       } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, 'reports');
+        console.error('[AdminDashboard] Erro ao buscar denúncias:', error);
       } finally {
         setLoading(false);
       }
@@ -1924,11 +2002,13 @@ function ReportManagement({ users, restaurants, orders }: any) {
         status: newStatus,
         data_atualizacao: new Date().toISOString()
       });
+      setReports(prev => prev.map(r => r.id === id ? { ...r, status: newStatus, data_atualizacao: new Date().toISOString() } : r));
       if (selectedReport && selectedReport.id === id) {
         setSelectedReport({ ...selectedReport, status: newStatus, data_atualizacao: new Date().toISOString() });
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `reports/${id}`);
+      console.error('[AdminDashboard] Erro ao atualizar status da denúncia:', error);
+      alert('Erro ao atualizar status da denúncia.');
     }
   };
 
@@ -2142,7 +2222,7 @@ function PushNotificationManagement() {
       const snap = await getDocs(query(collection(db, 'notifications'), orderBy('data_envio', 'desc'), limit(50)));
       setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'notifications');
+      console.error('[AdminDashboard] Erro ao buscar histórico de notificações:', error);
     }
   }, []);
 
@@ -2333,53 +2413,184 @@ function PushNotificationManagement() {
   );
 }
 
-function AdminStats({ restaurants, users, orders }: any) {
-  const today = new Date().toISOString().split('T')[0];
-  const ordersToday = orders.filter((o: any) => o.data_criacao?.startsWith(today));
-  const activeRestaurants = restaurants.filter((r: any) => r.status_aprovacao === 'aprovado' && r.status_operacao !== 'suspenso');
-  
-  const totalVendas = orders.reduce((acc: any, o: any) => acc + (o.valor_total || 0), 0);
-  const ticketMedio = orders.length > 0 ? totalVendas / orders.length : 0;
+function AdminStats({ period, customRange, fallbackRestaurants = [], fallbackUsers = [], fallbackOrders = [] }: { period: Period; customRange: { start: string; end: string }; fallbackRestaurants?: any[]; fallbackUsers?: any[]; fallbackOrders?: any[] }) {
+  const [statsData, setStatsData] = useState<{
+    ordersToday: number;
+    activeRestaurants: number;
+    usersCount: number;
+    faturamentoHoje: number;
+    ticketMedio: number;
+    faturamentoTotal: number;
+    loading: boolean;
+  }>({
+    ordersToday: 0,
+    activeRestaurants: 0,
+    usersCount: 0,
+    faturamentoHoje: 0,
+    ticketMedio: 0,
+    faturamentoTotal: 0,
+    loading: true,
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadAggregates() {
+      try {
+        setStatsData(prev => ({ ...prev, loading: true }));
+
+        const now = new Date();
+        let startISO: string | null = null;
+        let endISO: string | null = null;
+
+        if (period === 'today') {
+          const s = new Date(); s.setHours(0, 0, 0, 0);
+          const e = new Date(); e.setHours(23, 59, 59, 999);
+          startISO = s.toISOString();
+          endISO = e.toISOString();
+        } else if (period === 'yesterday') {
+          const s = new Date(); s.setDate(s.getDate() - 1); s.setHours(0, 0, 0, 0);
+          const e = new Date(); e.setDate(e.getDate() - 1); e.setHours(23, 59, 59, 999);
+          startISO = s.toISOString();
+          endISO = e.toISOString();
+        } else if (period === 'week') {
+          const s = new Date(); s.setDate(s.getDate() - 7); s.setHours(0, 0, 0, 0);
+          startISO = s.toISOString();
+        } else if (period === 'month') {
+          const s = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+          startISO = s.toISOString();
+        } else if (period === 'year') {
+          const s = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+          startISO = s.toISOString();
+        } else if (period === 'custom') {
+          if (customRange.start) {
+            const s = new Date(customRange.start); s.setHours(0, 0, 0, 0);
+            startISO = s.toISOString();
+          }
+          if (customRange.end) {
+            const e = new Date(customRange.end); e.setHours(23, 59, 59, 999);
+            endISO = e.toISOString();
+          }
+        }
+
+        const todayStartISO = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+        const todayEndISO = new Date(new Date().setHours(23, 59, 59, 999)).toISOString();
+
+        const orderConstraints: QueryConstraint[] = [];
+        if (startISO) orderConstraints.push(where('data_criacao', '>=', startISO));
+        if (endISO) orderConstraints.push(where('data_criacao', '<=', endISO));
+
+        const periodOrdersQ = query(collectionGroup(db, 'orders'), ...orderConstraints);
+        const todayOrdersQ = query(
+          collectionGroup(db, 'orders'),
+          where('data_criacao', '>=', todayStartISO),
+          where('data_criacao', '<=', todayEndISO)
+        );
+        const activeRestQ = query(
+          collection(db, 'restaurants'),
+          where('status_aprovacao', '==', 'aprovado')
+        );
+        const usersQ = query(collection(db, 'users'));
+
+        const [periodAggSnap, todayAggSnap, activeRestSnap, usersSnap] = await Promise.all([
+          getAggregateFromServer(periodOrdersQ, {
+            totalCount: count(),
+            totalVendas: sum('valor_total'),
+            ticketMedio: average('valor_total')
+          }).catch(() => null),
+          getAggregateFromServer(todayOrdersQ, {
+            ordersTodayCount: count(),
+            faturamentoHoje: sum('valor_total')
+          }).catch(() => null),
+          getCountFromServer(activeRestQ).catch(() => null),
+          getCountFromServer(usersQ).catch(() => null)
+        ]);
+
+        if (isMounted) {
+          if (periodAggSnap && todayAggSnap && activeRestSnap && usersSnap) {
+            const periodData = periodAggSnap.data();
+            const todayData = todayAggSnap.data();
+
+            setStatsData({
+              ordersToday: todayData.ordersTodayCount || 0,
+              activeRestaurants: activeRestSnap.data().count || 0,
+              usersCount: usersSnap.data().count || 0,
+              faturamentoHoje: todayData.faturamentoHoje || 0,
+              ticketMedio: periodData.ticketMedio || 0,
+              faturamentoTotal: periodData.totalVendas || 0,
+              loading: false
+            });
+          } else {
+            // Fallback to memory calculation if server aggregation fails
+            const todayStr = new Date().toISOString().split('T')[0];
+            const ordersToday = fallbackOrders.filter((o: any) => o.data_criacao?.startsWith(todayStr));
+            const activeRestaurants = fallbackRestaurants.filter((r: any) => r.status_aprovacao === 'aprovado' && r.status_operacao !== 'suspenso');
+            const totalVendas = fallbackOrders.reduce((acc: any, o: any) => acc + (o.valor_total || 0), 0);
+            const ticketMedio = fallbackOrders.length > 0 ? totalVendas / fallbackOrders.length : 0;
+
+            setStatsData({
+              ordersToday: ordersToday.length,
+              activeRestaurants: activeRestaurants.length,
+              usersCount: fallbackUsers.length,
+              faturamentoHoje: ordersToday.reduce((acc: any, o: any) => acc + (o.valor_total || 0), 0),
+              ticketMedio,
+              faturamentoTotal: totalVendas,
+              loading: false
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching admin stats aggregates:', error);
+        if (isMounted) {
+          setStatsData(prev => ({ ...prev, loading: false }));
+        }
+      }
+    }
+
+    loadAggregates();
+
+    return () => { isMounted = false; };
+  }, [period, customRange, fallbackOrders, fallbackRestaurants, fallbackUsers]);
 
   const stats = [
     { 
       label: 'Pedidos Hoje', 
-      value: ordersToday.length, 
+      value: statsData.ordersToday, 
       icon: ShoppingBag, 
       color: 'text-emerald-600',
       bg: 'bg-emerald-50'
     },
     { 
       label: 'Restaurantes Ativos', 
-      value: activeRestaurants.length, 
+      value: statsData.activeRestaurants, 
       icon: Store, 
       color: 'text-blue-600',
       bg: 'bg-blue-50'
     },
     { 
       label: 'Usuários Cadastrados', 
-      value: users.length, 
+      value: statsData.usersCount, 
       icon: Users, 
       color: 'text-purple-600',
       bg: 'bg-purple-50'
     },
     { 
       label: 'Faturamento Hoje', 
-      value: `R$ ${ordersToday.reduce((acc: any, o: any) => acc + (o.valor_total || 0), 0).toFixed(2)}`, 
+      value: `R$ ${statsData.faturamentoHoje.toFixed(2)}`, 
       icon: LayoutDashboard, 
       color: 'text-orange-600',
       bg: 'bg-orange-50'
     },
     { 
       label: 'Ticket Médio', 
-      value: `R$ ${ticketMedio.toFixed(2)}`, 
+      value: `R$ ${statsData.ticketMedio.toFixed(2)}`, 
       icon: BarChart3, 
       color: 'text-pink-600',
       bg: 'bg-pink-50'
     },
     { 
       label: 'Faturamento Total', 
-      value: `R$ ${totalVendas.toFixed(2)}`, 
+      value: `R$ ${statsData.faturamentoTotal.toFixed(2)}`, 
       icon: BarChart3, 
       color: 'text-indigo-600',
       bg: 'bg-indigo-50'
@@ -2531,29 +2742,43 @@ function OrderManagement({ restaurants, users }: any) {
 
       setLoadingDetails(true);
       try {
-        // Fetch customer data
-        const userDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id));
-        if (userDoc.exists()) {
-          setCustomerData(userDoc.data());
-        } else {
-          setCustomerData(null);
+        const customer = selectedOrder.cliente || (selectedOrder.cliente_nome ? {
+          nome: selectedOrder.cliente_nome,
+          telefone: selectedOrder.cliente_telefone || selectedOrder.telefone || '',
+          email: selectedOrder.cliente_email || selectedOrder.email || ''
+        } : null);
+
+        const address = selectedOrder.endereco_entrega || selectedOrder.endereco || null;
+
+        setCustomerData(customer || { nome: selectedOrder.cliente_nome || 'Cliente' });
+        setAddressData(address);
+
+        // Fetch customer data if not embedded
+        if (!customer && selectedOrder.cliente_id) {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id));
+            if (userDoc.exists()) {
+              setCustomerData(userDoc.data());
+            }
+          } catch {
+            // Handled gracefully
+          }
         }
         
-        // Fetch address data
-        if (selectedOrder.endereco_entrega) {
-          setAddressData(selectedOrder.endereco_entrega);
-        } else if (selectedOrder.endereco_id && selectedOrder.cliente_id) {
-          const addrDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id, 'enderecos', selectedOrder.endereco_id));
-          if (addrDoc.exists()) {
-            setAddressData(addrDoc.data());
-          } else {
-            setAddressData(null);
+        // Fetch address data if not embedded
+        if (!address && selectedOrder.endereco_id && selectedOrder.cliente_id) {
+          try {
+            const addrDoc = await getDoc(doc(db, 'users', selectedOrder.cliente_id, 'enderecos', selectedOrder.endereco_id));
+            if (addrDoc.exists()) {
+              setAddressData(addrDoc.data());
+            }
+          } catch {
+            // Handled gracefully
           }
-        } else {
-          setAddressData(null);
         }
-      } catch (error) {
-        console.error("Error fetching details", error);
+      } catch {
+        setCustomerData(selectedOrder.cliente || { nome: selectedOrder.cliente_nome || 'Cliente' });
+        setAddressData(selectedOrder.endereco_entrega || selectedOrder.endereco || null);
       } finally {
         setLoadingDetails(false);
       }
@@ -2563,13 +2788,17 @@ function OrderManagement({ restaurants, users }: any) {
   }, [selectedOrder?.id]);
 
   const filteredOrders = useMemo(() => {
-    return localOrders.filter((o: any) => {
-      const userName = users?.find((u: any) => u.id === o.cliente_id)?.nome || o.usuario_nome || o.cliente_nome || '';
-      const restName = o.restaurant_nome || o.restaurante_nome || '';
+    const filterLower = (filter || '').toLowerCase().trim();
+    return (localOrders || []).filter((o: any) => {
+      if (!o) return false;
+      const userName = String(users?.find((u: any) => u?.id === o.cliente_id)?.nome || o.usuario_nome || o.cliente_nome || '').toLowerCase();
+      const restName = String(o.restaurant_nome || o.restaurante_nome || '').toLowerCase();
+      const orderId = String(o.id || '').toLowerCase();
       
-      const matchesSearch = o.id.toLowerCase().includes(filter.toLowerCase()) ||
-        restName.toLowerCase().includes(filter.toLowerCase()) ||
-        userName.toLowerCase().includes(filter.toLowerCase());
+      const matchesSearch = !filterLower ||
+        orderId.includes(filterLower) ||
+        restName.includes(filterLower) ||
+        userName.includes(filterLower);
       
       return matchesSearch;
     });
@@ -2589,7 +2818,8 @@ function OrderManagement({ restaurants, users }: any) {
       // Update local state to reflect changes immediately
       setSelectedOrder({ ...order, ...updateData });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `restaurants/${order.restaurante_id}/orders/${order.id}`);
+      console.error('[AdminDashboard] Erro ao atualizar status do pedido:', error);
+      alert('Erro ao atualizar status do pedido.');
     }
   };
 
@@ -2769,7 +2999,7 @@ function OrderManagement({ restaurants, users }: any) {
                       <ShoppingBag className="w-4 h-4" /> Itens do Pedido
                     </h3>
                     <div className="space-y-4">
-                      {selectedOrder.itens?.map((item: any, idx: number) => (
+                      {(selectedOrder.items || selectedOrder.itens)?.map((item: any, idx: number) => (
                         <div key={idx} className="flex gap-4 p-4 bg-stone-50 rounded-2xl border border-stone-100">
                           <div className="w-8 h-8 bg-stone-200 text-stone-700 rounded-lg flex items-center justify-center font-bold shrink-0">
                             {item.quantidade}x
@@ -2991,7 +3221,7 @@ function RestaurantManagement({ restaurants, categories }: any) {
       const snap = await getDocs(query(collection(db, 'bairros'), limit(50)));
       setAllBairros(snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter((b: any) => b.ativo));
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'bairros');
+      console.error('[AdminDashboard] Erro ao carregar bairros:', error);
     }
   }, []);
 
@@ -3004,13 +3234,19 @@ function RestaurantManagement({ restaurants, categories }: any) {
   };
 
   const grouped = useMemo(() => {
-    const filtered = restaurants.filter((r: any) => 
-      r.nome.toLowerCase().includes(filter.toLowerCase())
-    );
+    const filterLower = (filter || '').toLowerCase().trim();
+    const filtered = (restaurants || []).filter((r: any) => {
+      if (!r) return false;
+      const name = String(r.nome || r.name || r.razao_social || r.fantasia || '').toLowerCase();
+      const email = String(r.email || '').toLowerCase();
+      const phone = String(r.telefone || r.phone || '').toLowerCase();
+      const id = String(r.id || '').toLowerCase();
+      return !filterLower || name.includes(filterLower) || email.includes(filterLower) || phone.includes(filterLower) || id.includes(filterLower);
+    });
     return {
-      pending: filtered.filter((r: any) => r.status_aprovacao === 'pendente_aprovacao'),
-      approved: filtered.filter((r: any) => r.status_aprovacao === 'aprovado' && r.status_operacao !== 'suspenso'),
-      suspended: filtered.filter((r: any) => r.status_operacao === 'suspenso' || r.status_aprovacao === 'rejeitado')
+      pending: filtered.filter((r: any) => r?.status_aprovacao === 'pendente_aprovacao'),
+      approved: filtered.filter((r: any) => r?.status_aprovacao === 'aprovado' && r?.status_operacao !== 'suspenso'),
+      suspended: filtered.filter((r: any) => r?.status_operacao === 'suspenso' || r?.status_aprovacao === 'rejeitado')
     };
   }, [restaurants, filter]);
 
@@ -3036,7 +3272,8 @@ function RestaurantManagement({ restaurants, categories }: any) {
       }
       setConfirmingStatusUpdate(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `restaurants/${id}`);
+      console.error('[AdminDashboard] Erro ao atualizar status do restaurante:', error);
+      alert('Erro ao atualizar status do restaurante.');
     }
   };
 
@@ -3051,7 +3288,8 @@ function RestaurantManagement({ restaurants, categories }: any) {
       });
       setDeletingRestaurantId(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `restaurants/${deletingRestaurantId}`);
+      console.error('[AdminDashboard] Erro ao excluir restaurante:', error);
+      alert('Erro ao excluir restaurante.');
     }
   };
 
@@ -3081,7 +3319,8 @@ function RestaurantManagement({ restaurants, categories }: any) {
       });
       setEditingRestaurant(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `restaurants/${data.id}`);
+      console.error('[AdminDashboard] Erro ao salvar dados do restaurante:', error);
+      alert('Erro ao salvar restaurante.');
     } finally {
       setSaveLoading(false);
     }
@@ -3561,7 +3800,7 @@ function RestaurantCard({ rest, categories, onEdit, onStatusUpdate, onDelete, on
           <img src={rest.logoUrl || rest.logo_url || 'https://picsum.photos/seed/logo/100/100'} className="w-full h-full object-cover" referrerPolicy="no-referrer" loading="lazy" />
         </div>
         <div>
-          <h3 className="font-bold text-lg text-stone-800">{rest.nome}</h3>
+          <h3 className="font-bold text-lg text-stone-800">{rest.nome || rest.name || 'Restaurante Sem Nome'}</h3>
           <div className="flex flex-wrap gap-1 mt-1">
             {(() => {
               const cats = Array.isArray(rest.categorias) ? rest.categorias : 
@@ -3571,7 +3810,7 @@ function RestaurantCard({ rest, categories, onEdit, onStatusUpdate, onDelete, on
               if (cats.length === 0) return <span className="text-[10px] text-stone-400 font-bold uppercase">Sem categoria</span>;
               
               return cats.map((catId: string) => {
-                const category = categories.find((c: any) => c.id === catId || c.nome === catId);
+                const category = (categories || []).find((c: any) => c?.id === catId || c?.nome === catId);
                 return (
                   <span key={catId} className="text-[10px] text-stone-500 bg-stone-100 px-2 py-0.5 rounded-md font-bold uppercase tracking-wider">
                     {category?.nome || catId}

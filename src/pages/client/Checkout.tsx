@@ -6,7 +6,8 @@ import { collection, addDoc, doc, getDocs, query, where, getDoc, collectionGroup
 import { db } from '../../firebase';
 import { sendPushNotification } from '../../services/notificationService';
 import { ChevronLeft, MapPin, CreditCard, CheckCircle2, Loader2, Smartphone, Banknote, Wallet, Copy } from 'lucide-react';
-import { invalidateRestaurantCache } from '../../services/restaurantService';
+import { invalidateRestaurantCache, restaurantService } from '../../services/restaurantService';
+import { deliveryAreaService } from '../../services/deliveryAreaService';
 import { getAvailablePaymentMethods, isCashPaymentMethod, isPixPaymentMethod, PaymentChannel } from '../../services/paymentMethodsService';
 
 export default function Checkout() {
@@ -36,18 +37,17 @@ export default function Checkout() {
     const fetchRestaurantData = async () => {
       try {
         const restaurantId = items[0].restaurant_id;
-        const restDoc = await getDoc(doc(db, 'restaurants', restaurantId));
-        if (restDoc.exists()) {
-          setRestaurantData(restDoc.data());
+        const restData = await restaurantService.getRestaurantById(restaurantId);
+        if (restData) {
+          setRestaurantData(restData);
         } else {
           console.error("Restaurant document does not exist:", restaurantId);
         }
 
-        const areasSnap = await getDocs(collection(db, 'restaurants', restaurantId, 'delivery_areas'));
-        setDeliveryAreas(areasSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const areas = await deliveryAreaService.getDeliveryAreasByRestaurant(restaurantId);
+        setDeliveryAreas(areas);
       } catch (error) {
         console.error("Error fetching restaurant data:", error);
-        // Add specific error handling for permissions
         if (error instanceof Error && error.message.includes('permission')) {
           console.error("Permission error details:", error.message);
         }
@@ -283,6 +283,8 @@ export default function Checkout() {
       } : null;
 
       const orderData = {
+        origem: 'DELIVERY',
+        source: 'DELIVERY',
         cliente_id: user.uid,
         cliente_nome: profile?.nome || user.displayName || 'Cliente',
         cliente_telefone: profile?.telefone || profile?.phone || '',

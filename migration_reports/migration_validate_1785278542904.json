@@ -1,0 +1,15 @@
+{
+  "totalUsersBefore": 65,
+  "processed": 65,
+  "migrated": 0,
+  "ignored": 0,
+  "conflicts": [
+    "Duplicate phone found: 88999266723 (UIDs: kcWtSmGdI5PVh87M7OGPNdTmG8T2, ttYFQ0Rrm0SCim1nYZBPE7vya193)",
+    "Duplicate phone found: 88999266723 (UIDs: WVLpJXVltWNMDKQdjbYwdcNqURm2, kcWtSmGdI5PVh87M7OGPNdTmG8T2)",
+    "Duplicate phone found: 88999266723 (UIDs: leTyrp7lSMXMur0TM19KfZl527q1, WVLpJXVltWNMDKQdjbYwdcNqURm2)",
+    "Duplicate phone found: 88999266723 (UIDs: WU1MoIjT6QXzuW4IBQrlv2DhFUw2, leTyrp7lSMXMur0TM19KfZl527q1)",
+    "Duplicate phone found: 88992050669 (UIDs: qRQRs25TkQd8tPADKeZYAD9009N2, A6a175h50BQeBHnaCjaPM6LTZ6i2)"
+  ],
+  "pending": [],
+  "errors": []
+}
