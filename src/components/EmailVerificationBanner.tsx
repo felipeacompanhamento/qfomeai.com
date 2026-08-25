@@ -2,14 +2,15 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Mail, AlertCircle, Loader2, CheckCircle, RefreshCw } from 'lucide-react';
 import { sendEmailVerification } from 'firebase/auth';
+import { isRestaurantTeamMember } from '../utils/authResolution';
 
 export default function EmailVerificationBanner() {
-  const { user, refreshUser } = useAuth();
+  const { user, profile, refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!user || user.emailVerified) return null;
+  if (!user || user.emailVerified || isRestaurantTeamMember(profile)) return null;
 
   const handleResendVerification = async () => {
     setLoading(true);

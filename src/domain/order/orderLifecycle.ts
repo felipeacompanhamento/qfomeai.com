@@ -1,3 +1,5 @@
+import { isGarcomOrder } from './orderSource';
+
 export type OrderStatus =
   | 'NEW'
   | 'CONFIRMED'
@@ -288,6 +290,52 @@ export function getCanonicalOrderState(order: any): CanonicalOrderState {
   Determines the correct Kanban column ID for the restaurant view
  */
 export function getOrderKanbanColumn(order: any): string {
+  if (!order) return 'novo';
+
+  // Regras específicas para pedidos de GARÇOM/MESA
+  if (isGarcomOrder(order)) {
+    const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
+    const isDeliveredOrDone =
+      rawStatus === 'entregue' ||
+      rawStatus === 'delivered' ||
+      rawStatus === 'servido' ||
+      rawStatus === 'finalizado' ||
+      rawStatus === 'completed' ||
+      rawStatus === 'finalized' ||
+      rawStatus === 'cancelado' ||
+      rawStatus === 'cancelled' ||
+      order.orderStatus === 'DELIVERED' ||
+      order.orderStatus === 'FINALIZED' ||
+      order.orderStatus === 'CANCELLED' ||
+      order.deliveryStatus === 'DELIVERED';
+
+    if (isDeliveredOrDone) {
+      return 'finalizado';
+    }
+
+    if (
+      rawStatus === 'pronto' ||
+      rawStatus === 'ready' ||
+      rawStatus === 'preparo' ||
+      rawStatus === 'cozinha' ||
+      rawStatus === 'preparing' ||
+      order.orderStatus === 'PREPARING' ||
+      order.orderStatus === 'READY'
+    ) {
+      return 'cozinha';
+    }
+
+    if (
+      rawStatus === 'confirmado' ||
+      rawStatus === 'aceito' ||
+      order.orderStatus === 'CONFIRMED'
+    ) {
+      return 'confirmado';
+    }
+
+    return 'novo';
+  }
+
   const { orderStatus, deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(order);
 
   // Histórico/Finalizado: 'FINALIZED', 'cancelado'
@@ -424,19 +472,29 @@ export function getAvailableOrderActions(order: any, actor: OrderActor): OrderAc
   Human-readable labels
  */
 export function getOrderStatusLabel(order: any): string {
+  if (isGarcomOrder(order)) {
+    const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
+    if (rawStatus === 'pronto' || rawStatus === 'ready' || order.orderStatus === 'READY') {
+      return 'Pronto';
+    }
+    if (rawStatus === 'entregue' || rawStatus === 'delivered' || rawStatus === 'servido' || order.orderStatus === 'DELIVERED') {
+      return 'Servido';
+    }
+  }
   const status = normalizeOrderStatus(order);
   const labels: Record<OrderStatus, string> = {
     NEW: 'Novo Pedido',
     CONFIRMED: 'Confirmado',
     PREPARING: 'Em Preparo',
-    READY: 'Pronto para Retirada/Entrega',
+    READY: isGarcomOrder(order) ? 'Pronto' : 'Pronto para Retirada/Entrega',
     OUT_FOR_DELIVERY: 'Em Rota de Entrega',
-    DELIVERED: 'Entregue',
+    DELIVERED: isGarcomOrder(order) ? 'Servido' : 'Entregue',
     FINALIZED: 'Finalizado',
     CANCELLED: 'Cancelado'
   };
   return labels[status] || status;
 }
+
 
 export function getDeliveryStatusLabel(order: any): string {
   const status = normalizeDeliveryStatus(order);

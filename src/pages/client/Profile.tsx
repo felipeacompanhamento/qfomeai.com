@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { authApi } from '../../services/authApi';
 import { staticDataCacheService } from '../../services/staticDataCacheService';
+import { isRestaurantTeamMember } from '../../utils/authResolution';
 
 
 export default function Profile() {
@@ -906,7 +907,7 @@ export default function Profile() {
 
       <main className="max-w-6xl mx-auto px-4 py-4 md:py-8">
         {/* Verification banner */}
-        {isRestaurant && !user?.emailVerified && (
+        {isRestaurant && !user?.emailVerified && !isRestaurantTeamMember(profile) && (
           <div className="bg-amber-50 text-amber-800 p-4 rounded-2xl border border-amber-200 mb-6 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
             <div>
               <p className="font-bold text-sm">E-mail não verificado</p>

@@ -31,6 +31,7 @@ import {
   Play 
 } from 'lucide-react';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { ReadyOrdersBanner } from './ReadyOrdersBanner';
 
 const OpenTabModal = lazyWithRetry(() => import('../../components/tables/OpenTabModal'));
 const TabDetailsModal = lazyWithRetry(() => import('../../components/tables/TabDetailsModal'));
@@ -559,6 +560,8 @@ export function WaiterTablesPage() {
         description="Visualize o salão e acesse as mesas em atendimento."
         icon={LayoutGrid}
       />
+
+      <ReadyOrdersBanner />
 
       {actionNotice && (
         <InlineFeedback

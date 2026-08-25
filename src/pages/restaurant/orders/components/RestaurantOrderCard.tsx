@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Button, IconButton } from '../../../../components/ui';
 import { getCanonicalOrderState, getOrderKanbanColumn, normalizeOrderStatus, normalizeDeliveryStatus, normalizeFinancialSettlementStatus } from '../../../../domain/order/orderLifecycle';
-import { getOrderSourceDetails } from '../utils/orderSource';
+import { getOrderSourceDetails, isGarcomOrder } from '../utils/orderSource';
 import { getOrderStageTimeInfo } from '../utils/orderPresentation';
 
 interface RestaurantOrderCardProps {
@@ -29,12 +29,19 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
 }) => {
   const [showMenu, setShowMenu] = useState(false);
 
+  const isGarcom = isGarcomOrder(order);
   const columnId = getOrderKanbanColumn(order);
   const { orderStatus, deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(order);
   const source = getOrderSourceDetails(order);
   const timeInfo = getOrderStageTimeInfo(order, columnId, nowMs);
 
   const orderCode = (order.id || '').slice(-6).toUpperCase();
+  const orderNum = order.numero_pedido || order.numeroPedido || orderCode;
+  const mesaNum = order.mesa_numero || order.tableNumber || order.tableName || order.mesa || '--';
+  const comandaNum = order.comanda_id || order.tabId || order.comandaId || order.comandaNumero || order.comanda_numero || '--';
+  const waiterName = order.waiterName || order.garcom_nome || order.sentBy?.name || order.garcom || '--';
+  const roundNum = order.roundNumber || order.numero_rodada || order.rodada || order.roundId || '--';
+
   const fullCustomerName = order.cliente_nome || order.nome_cliente || order.customerName || order.cliente?.nome || 'Cliente';
   const customerName = fullCustomerName.trim().split(' ')[0] || 'Cliente';
   const customerPhone = order.telefone_cliente || order.customerPhone || order.cliente?.telefone || '';
@@ -42,10 +49,52 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
   const total = Number(order.total || order.valor_total || 0);
   const paymentMethod = order.forma_pagamento || order.paymentMethod || order.metodo_pagamento || 'A combinar';
 
-  const isPendingSettlement = deliveryStatus === 'DELIVERED' && financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
-  const driverName = order.assignedDriverName || order.driverName || order.entregador_nome || '';
+  const isPendingSettlement = !isGarcom && deliveryStatus === 'DELIVERED' && financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
+  const driverName = !isGarcom ? (order.assignedDriverName || order.driverName || order.entregador_nome || '') : '';
 
   const getPrimaryAction = () => {
+    if (isGarcom) {
+      const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
+
+      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
+        return {
+          label: 'Aceitar Pedido',
+          nextStatus: 'aceito',
+          bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
+        };
+      }
+
+      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
+        return {
+          label: 'Enviar p/ Cozinha',
+          nextStatus: 'preparo',
+          bg: 'bg-stone-900 hover:bg-stone-800 text-white'
+        };
+      }
+
+      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
+        return {
+          label: 'Marcar Pronto',
+          nextStatus: 'pronto',
+          bg: 'bg-amber-600 hover:bg-amber-700 text-white'
+        };
+      }
+
+      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
+        return {
+          label: 'Servido',
+          nextStatus: 'entregue',
+          bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
+        };
+      }
+
+      return {
+        label: 'Ver Detalhes',
+        isModalTrigger: true,
+        bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800'
+      };
+    }
+
     if (orderStatus === 'NEW') {
       return {
         label: 'Aceitar Pedido',
@@ -107,6 +156,7 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
       bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800'
     };
   };
+
 
   const primaryAction = getPrimaryAction();
 
@@ -173,27 +223,53 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
 
       {/* Main Card Body */}
       <div className="p-2.5 space-y-2 min-w-0 overflow-hidden">
-        {/* Customer & Location */}
-        <div className="min-w-0">
-          <h3 className="text-xs sm:text-sm font-bold text-stone-900 tracking-tight truncate">
-            {customerName}
-          </h3>
-
-          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-stone-500 min-w-0 flex-wrap sm:flex-nowrap">
-            {neighborhood && (
-              <span className="flex items-center gap-0.5 truncate min-w-0">
-                <MapPin className="w-2.5 h-2.5 text-stone-400 shrink-0" />
-                <span className="truncate">{neighborhood}</span>
+        {isGarcom ? (
+          /* Garçom Order Details Card Block */
+          <div className="bg-stone-50/90 p-2 rounded-xl border border-stone-200/80 space-y-1 text-xs min-w-0">
+            <div className="flex items-center justify-between gap-1 font-extrabold text-stone-900">
+              <span className="text-stone-900">Pedido #{orderNum}</span>
+              <span className="bg-stone-200/90 text-stone-800 px-2 py-0.5 rounded-md text-[11px]">
+                Mesa {mesaNum}
               </span>
-            )}
-            {customerPhone && (
-              <span className="flex items-center gap-0.5 shrink-0 text-stone-400">
-                <Phone className="w-2.5 h-2.5 shrink-0" />
-                <span>{customerPhone.slice(-4)}</span>
-              </span>
-            )}
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px] text-stone-600 pt-1 font-medium border-t border-stone-200/60 mt-1 min-w-0">
+              <div className="truncate">
+                <span className="text-stone-400">Comanda: </span>
+                <span className="font-bold text-stone-800">{comandaNum}</span>
+              </div>
+              <div className="truncate">
+                <span className="text-stone-400">Garçom: </span>
+                <span className="font-bold text-stone-800">{waiterName}</span>
+              </div>
+              <div className="col-span-2 truncate">
+                <span className="text-stone-400">Rodada: </span>
+                <span className="font-bold text-stone-800">{roundNum}</span>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          /* Standard Customer & Location for Delivery/Balcão */
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-stone-900 tracking-tight truncate">
+              {customerName}
+            </h3>
+
+            <div className="flex items-center gap-1.5 mt-0.5 text-xs text-stone-500 min-w-0 flex-wrap sm:flex-nowrap">
+              {neighborhood && (
+                <span className="flex items-center gap-0.5 truncate min-w-0">
+                  <MapPin className="w-2.5 h-2.5 text-stone-400 shrink-0" />
+                  <span className="truncate">{neighborhood}</span>
+                </span>
+              )}
+              {customerPhone && (
+                <span className="flex items-center gap-0.5 shrink-0 text-stone-400">
+                  <Phone className="w-2.5 h-2.5 shrink-0" />
+                  <span>{customerPhone.slice(-4)}</span>
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Items Summary Preview */}
         {order.items && Array.isArray(order.items) && order.items.length > 0 && (
@@ -214,7 +290,7 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
         )}
 
         {/* Driver Assigned Info (if delivery) */}
-        {driverName && (
+        {!isGarcom && driverName && (
           <div className="flex items-center gap-1 text-xs text-emerald-800 bg-emerald-50/80 px-2 py-0.5 rounded-md border border-emerald-100 min-w-0">
             <Truck className="w-3 h-3 text-emerald-600 shrink-0" />
             <span className="font-semibold truncate">Entregador: {driverName}</span>
@@ -222,7 +298,7 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
         )}
 
         {/* Pending Settlement Alert Banner */}
-        {isPendingSettlement && (
+        {!isGarcom && isPendingSettlement && (
           <div className="flex items-center gap-1 text-xs font-bold text-amber-900 bg-amber-100/90 px-2 py-1 rounded-lg border border-amber-300 min-w-0">
             <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0 animate-bounce" />
             <span className="truncate">Aguardando baixa do recebimento</span>
@@ -232,13 +308,16 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
         {/* Bottom Row: Payment & Action Button */}
         <div className="pt-1.5 border-t border-stone-100 flex items-center justify-between gap-1.5 min-w-0 overflow-hidden">
           <div className="min-w-0 flex-1">
-            <span className="text-[11px] font-medium text-stone-500 block truncate max-w-[100px]">
-              {paymentMethod}
-            </span>
+            {!isGarcom && (
+              <span className="text-[11px] font-medium text-stone-500 block truncate max-w-[100px]">
+                {paymentMethod}
+              </span>
+            )}
             <span className="text-xs sm:text-sm font-black text-stone-900 truncate block">
               R$ {total.toFixed(2)}
             </span>
           </div>
+
 
           <Button
             size="sm"

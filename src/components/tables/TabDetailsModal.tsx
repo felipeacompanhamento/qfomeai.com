@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { formatCurrency as canonicalFormatCurrency, formatTime as canonicalFormatTime, formatDateTime as canonicalFormatDateTime } from '../../lib/utils';
 import { db, auth } from '../../firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { Table, Tab, TabItem } from '../../types/mesas';
 import { tabRoundService } from '../../services/tabRoundService';
 import { tabRepository } from '../../domain/tab/tabRepository';
@@ -115,7 +115,7 @@ export function TabDetailsModal({
   onOpenSplitTabs,
   onSuccessClose
 }: TabDetailsModalProps) {
-  const { profile, isAdmin, isRestaurant } = useAuth();
+  const { user, profile, isAdmin, isRestaurant } = useAuth();
 
   const formatCurrency = (cents: number, showCents: boolean = true) => {
     if (!canViewPrices) return '***';
@@ -198,6 +198,60 @@ export function TabDetailsModal({
       console.warn('Falha ao carregar rodadas da comanda via API:', err);
     }
   }, []);
+
+  const handleMarkServed = async (orderId?: string) => {
+    if (!orderId) return;
+    const restId = tab?.restaurantId || liveTab?.restaurantId || profile?.restaurantId;
+    if (!restId) return;
+
+    try {
+      setIsSubmittingAction(true);
+      const clientActionId = `act_srv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const idToken = await user?.getIdToken();
+
+      let success = false;
+      if (idToken) {
+        try {
+          const res = await fetch(`/api/restaurant/orders/${orderId}/status`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${idToken}`
+            },
+            body: JSON.stringify({
+              status: 'entregue',
+              clientActionId
+            })
+          });
+          if (res.ok) success = true;
+        } catch (err) {
+          console.warn('Backend status update falhou, aplicando via Firestore:', err);
+        }
+      }
+
+      if (!success) {
+        const now = new Date().toISOString();
+        const orderRef = doc(db, 'restaurants', restId, 'orders', orderId);
+        await updateDoc(orderRef, {
+          status: 'entregue',
+          deliveryStatus: 'DELIVERED',
+          canonicalStatus: 'DELIVERED',
+          orderStatus: 'DELIVERED',
+          deliveredAt: now,
+          updatedAt: now
+        });
+      }
+
+      if (tab?.id) {
+        await fetchRounds(tab.id, restId);
+      }
+    } catch (err: any) {
+      console.error('Erro ao marcar como servido:', err);
+      alert(err.message || 'Falha ao alterar status para servido.');
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
 
   // Real-time synchronization for Tab & Orders
   useEffect(() => {
@@ -625,11 +679,11 @@ export function TabDetailsModal({
         </span>
       );
     }
-    if (s === 'entregue' || s === 'delivered') {
+    if (s === 'entregue' || s === 'delivered' || s === 'servido') {
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
           <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
-          <span>Entregue</span>
+          <span>Servido</span>
         </span>
       );
     }
@@ -1253,8 +1307,19 @@ export function TabDetailsModal({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       {getProductionStatusBadge(round.status)}
+                      {((round.status || '').toLowerCase() === 'pronto' || (round.status || '').toLowerCase() === 'ready') && (
+                        <button
+                          type="button"
+                          onClick={() => handleMarkServed(round.orderId)}
+                          disabled={isSubmittingAction}
+                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>SERVIDO NA MESA</span>
+                        </button>
+                      )}
                       <span className="font-extrabold text-stone-900 text-xs sm:text-sm">
                         {formatCurrency(round.totalCents)}
                       </span>

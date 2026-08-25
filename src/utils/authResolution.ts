@@ -78,3 +78,81 @@ export function resolveUserDestination(user: CanonicalUser | null): AuthResoluti
 
   return { isValid: false, destination: null, error: 'Perfil inválido ou desconhecido.' };
 }
+
+/**
+ * Retorna se o usuário autenticado é membro da equipe de um restaurante.
+ * Membros da equipe incluem: garçom, entregador, caixa, cozinha, KDS, gerente, admin do restaurante e demais membros da equipe.
+ */
+export function isRestaurantTeamMember(user: any): boolean {
+  if (!user) return false;
+
+  const accountTypeStr = String(user.accountType || '').toUpperCase();
+  const roleStr = String(user.role || '').toUpperCase();
+  const legacyTipo = String(user.tipo_usuario || '').toLowerCase();
+  const hasRestaurantId = typeof user.restaurantId === 'string' && user.restaurantId.trim().length > 0;
+
+  // 1. Tipo de conta RESTAURANT
+  if (accountTypeStr === AccountType.RESTAURANT || accountTypeStr === 'RESTAURANT') {
+    return true;
+  }
+
+  // 2. Roles da equipe de restaurante
+  const teamRoles = [
+    UserRole.OWNER,
+    UserRole.RESTAURANT_ADMIN,
+    UserRole.MANAGER,
+    UserRole.WAITER,
+    UserRole.DRIVER,
+    UserRole.CASHIER,
+    UserRole.KITCHEN,
+    'OWNER',
+    'RESTAURANT_ADMIN',
+    'ADMINISTRADOR',
+    'MANAGER',
+    'GERENTE',
+    'WAITER',
+    'GARCOM',
+    'GARÇOM',
+    'CASHIER',
+    'CAIXA',
+    'KITCHEN',
+    'COZINHA',
+    'KDS',
+    'DRIVER',
+    'DELIVERY_DRIVER',
+    'ENTREGADOR'
+  ];
+  if (teamRoles.includes(roleStr as any)) {
+    return true;
+  }
+
+  // 3. Tipos legados da equipe
+  const legacyTeamTipos = [
+    'restaurant',
+    'restaurante',
+    'restaurant_admin',
+    'manager',
+    'gerente',
+    'waiter',
+    'garcom',
+    'garçom',
+    'delivery_driver',
+    'entregador',
+    'cashier',
+    'caixa',
+    'kitchen',
+    'cozinha',
+    'kds'
+  ];
+  if (legacyTeamTipos.includes(legacyTipo)) {
+    return true;
+  }
+
+  // 4. Usuários com vínculo de restaurante ativo (que não sejam clientes ou admins globais puros)
+  if (hasRestaurantId && accountTypeStr !== AccountType.CLIENT && roleStr !== UserRole.CLIENT && legacyTipo !== 'cliente') {
+    return true;
+  }
+
+  return false;
+}
+

@@ -51,3 +51,10 @@ export function normalizeOrderOrigem(order: any): OrderOrigem {
 
   return 'DELIVERY';
 }
+
+export function isGarcomOrder(order: any): boolean {
+  if (!order) return false;
+  if (normalizeOrderOrigem(order) === 'GARCOM') return true;
+  return Boolean(order.waiterName || order.garcom_nome || order.sentBy?.name);
+}
+

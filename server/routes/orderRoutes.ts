@@ -36,14 +36,38 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
 
     try {
       const driverRef = db.collection('restaurants').doc(restaurantId).collection('drivers').doc(driverId);
-      const driverDoc = await driverRef.get();
+      const staffRef = db.collection('restaurants').doc(restaurantId).collection('staffProfiles').doc(driverId);
+      const userRef = db.collection('users').doc(driverId);
 
-      if (!driverDoc.exists) {
+      const [driverDoc, staffDoc, userDoc] = await Promise.all([
+        driverRef.get(),
+        staffRef.get(),
+        userRef.get()
+      ]);
+
+      if (!driverDoc.exists && !staffDoc.exists && !userDoc.exists) {
         return res.status(404).json({ error: 'Entregador não encontrado neste restaurante' });
       }
 
-      const driverData = driverDoc.data()!;
-      if (driverData.status !== 'ACTIVE' || driverData.active === false) {
+      const dData = driverDoc.exists ? driverDoc.data()! : {};
+      const pData = staffDoc.exists ? staffDoc.data()! : {};
+      const uData = userDoc.exists ? userDoc.data()! : {};
+      const roleData = pData.roleSpecificData || {};
+      const commonData = pData.commonOperationalData || {};
+
+      const driverData = {
+        ...dData,
+        ...pData,
+        ...roleData,
+        ...commonData,
+        ...uData
+      };
+
+      const rawStatus = String(driverData.status || driverData.status_conta || driverData.operationalStatus || uData.status || pData.operationalStatus || '').toUpperCase().trim();
+      const isExplicitlyInactive = ['INACTIVE', 'INATIVO', 'BLOCKED', 'BLOQUEADO', 'DISABLED', 'DESATIVADO', 'SUSPENDED'].includes(rawStatus);
+      const isExplicitlyFalseActive = driverData.active === false || driverData.ativo === false || driverData.active === 'false' || driverData.ativo === 'false' || uData.active === false || uData.ativo === false;
+
+      if (isExplicitlyInactive || isExplicitlyFalseActive) {
         return res.status(400).json({ error: 'Este entregador está inativo' });
       }
 

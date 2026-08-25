@@ -253,25 +253,27 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                   {origem === 'GARCOM' ? (
                     <div className={`p-3.5 sm:p-4 flex items-start justify-between gap-2 border-b ${isPreparo ? 'bg-amber-50/70 border-amber-200' : 'bg-stone-50/80 border-stone-200'}`}>
                       <div className="space-y-2 flex-1 min-w-0">
-                        {/* Top Badges */}
+                        {/* Top Badges: Origem GARÇOM & Pedido #numero */}
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-mono text-xs font-bold text-stone-500">#{order.numero_pedido || (order.id ? order.id.substring(0, 6).toUpperCase() : '')}</span>
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-black bg-stone-900 text-white shadow-2xs">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-black bg-emerald-700 text-white shadow-2xs">
                             <Utensils className="w-3 h-3" />
                             GARÇOM
                           </span>
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
-                            {rodadaDisplay}
+                          <span className="font-mono text-xs font-black text-stone-800 bg-stone-100 border border-stone-300 px-2 py-0.5 rounded-lg">
+                            Pedido #{order.numero_pedido || order.numeroPedido || (order.id ? order.id.substring(0, 6).toUpperCase() : '')}
                           </span>
                         </div>
 
-                        {/* High-contrast Mesa e Comanda Highlights */}
+                        {/* High-contrast Mesa, Comanda e Rodada Highlights */}
                         <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                           <div className="bg-white border-2 border-stone-300 px-2.5 sm:px-3 py-1 rounded-xl text-xs sm:text-sm font-black text-stone-900 shadow-2xs flex items-center gap-1">
                             <span>{mesaDisplay}</span>
                           </div>
                           <div className="bg-white border-2 border-stone-300 px-2.5 sm:px-3 py-1 rounded-xl text-xs sm:text-sm font-black text-stone-900 shadow-2xs flex items-center gap-1">
                             <span>{comandaDisplay}</span>
+                          </div>
+                          <div className="bg-amber-100 border border-amber-300 px-2.5 sm:px-3 py-1 rounded-xl text-xs sm:text-sm font-extrabold text-amber-900 shadow-2xs flex items-center gap-1">
+                            <span>{rodadaDisplay}</span>
                           </div>
                         </div>
 

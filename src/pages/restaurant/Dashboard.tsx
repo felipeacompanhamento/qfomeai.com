@@ -8,6 +8,7 @@ import { db, auth, handleFirestoreError, OperationType } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { authApi } from '../../services/authApi';
 import { normalizeRestaurantFeatures } from '../../domain/restaurant/restaurantFeatures';
+import { isRestaurantTeamMember } from '../../utils/authResolution';
 import {
   PageHeader,
   SectionHeader,
@@ -681,7 +682,7 @@ export default function RestaurantDashboard() {
           <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
         </div>
       )}
-      {user && !user.emailVerified && (
+      {user && !user.emailVerified && !isRestaurantTeamMember(profile) && (
         <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">

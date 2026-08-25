@@ -16,6 +16,7 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { normalizeRestaurantFeatures, RestaurantFeatures, DEFAULT_RESTAURANT_FEATURES } from '../domain/restaurant/restaurantFeatures';
 import { hasPermission } from '../domain/permissions/canonicalPermissions';
 import { AccountType } from '../types';
+import { isRestaurantTeamMember } from '../utils/authResolution';
 
 interface RestaurantLayoutProps {
   children: React.ReactNode;
@@ -520,7 +521,7 @@ export default function RestaurantLayout({ children, pendingOrdersCount }: Resta
 
   return (
     <div className={`flex bg-stone-100 overflow-x-hidden ${isFixedOperationalRoute ? 'h-screen max-h-screen overflow-hidden' : 'min-h-screen'}`}>
-      {user && !user.emailVerified ? (
+      {user && !user.emailVerified && !isRestaurantTeamMember(profile) ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-screen text-center p-8 bg-stone-50">
           <div className="bg-white p-12 rounded-[2rem] border border-stone-200 shadow-xl max-w-lg w-full">
             <div className="bg-amber-100 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-8">

@@ -34,6 +34,7 @@ import {
   Users
 } from 'lucide-react';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { ReadyOrdersBanner } from './ReadyOrdersBanner';
 
 const OpenTabModal = lazyWithRetry(() => import('../../components/tables/OpenTabModal'));
 const TabDetailsModal = lazyWithRetry(() => import('../../components/tables/TabDetailsModal'));
@@ -470,6 +471,8 @@ export function WaiterTabsPage() {
         description="Acompanhe todas as comandas e atendimentos em andamento."
         icon={Receipt}
       />
+
+      <ReadyOrdersBanner />
 
       {actionNotice && (
         <div className="relative">

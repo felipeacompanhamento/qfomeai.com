@@ -3,10 +3,11 @@
  * Preparado para futuras expansões do Qfomeai
  */
 
-import { OrderSource, OrderOrigem, normalizeOrderOrigem } from '../../../../domain/order/orderSource';
+import { OrderSource, OrderOrigem, normalizeOrderOrigem, isGarcomOrder } from '../../../../domain/order/orderSource';
 
 export type { OrderSource, OrderOrigem };
-export { normalizeOrderOrigem };
+export { normalizeOrderOrigem, isGarcomOrder };
+
 
 export interface OrderSourceDetails {
   source: OrderSource;
