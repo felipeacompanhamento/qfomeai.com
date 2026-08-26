@@ -66,42 +66,77 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
     }
 
     const getServerOrderDeliveryStatus = (orderData: any): string => {
-      if (orderData.deliveryStatus) {
-        return orderData.deliveryStatus.toUpperCase();
-      }
-      const se = orderData.status_entrega ? orderData.status_entrega.toLowerCase() : '';
-      const sp = orderData.status ? orderData.status.toLowerCase() : '';
+      if (!orderData) return 'UNASSIGNED';
 
-      if (se === 'waiting' || se === 'pending') {
-        return 'ASSIGNED';
-      }
-      if (se === 'accepted') {
-        return 'ACCEPTED';
-      }
-      if (se === 'out_for_delivery' || se === 'delivering' || sp === 'delivering') {
-        return 'IN_TRANSIT';
-      }
-      if (se === 'delivered' || sp === 'completed' || sp === 'finalizado' || sp === 'entregue') {
+      const rawCanonical = (orderData.deliveryStatus || orderData.canonicalStatus || '').toUpperCase();
+      if (
+        rawCanonical === 'DELIVERED' ||
+        orderData.status === 'delivered_pending_settlement' ||
+        orderData.status === 'entregue' ||
+        orderData.status === 'delivered' ||
+        Boolean(orderData.driverPaymentReport) ||
+        Boolean(orderData.deliveredAt)
+      ) {
         return 'DELIVERED';
       }
-      if (se === 'rejected' || se === 'refused' || se === 'not_delivered' || se === 'failed') {
+
+      if (
+        rawCanonical === 'IN_TRANSIT' ||
+        orderData.status === 'delivering' ||
+        orderData.status === 'saiu para entrega' ||
+        orderData.status === 'despachado' ||
+        orderData.status === 'out_for_delivery' ||
+        orderData.status_entrega === 'out_for_delivery' ||
+        orderData.status_entrega === 'delivering'
+      ) {
+        return 'IN_TRANSIT';
+      }
+
+      if (rawCanonical === 'ACCEPTED' || orderData.status_entrega === 'accepted') {
+        return 'ACCEPTED';
+      }
+
+      if (rawCanonical === 'FAILED' || orderData.status_entrega === 'failed' || orderData.status_entrega === 'rejected') {
         return 'FAILED';
       }
-      if (sp === 'cancelled' || sp === 'cancelado') {
+
+      if (rawCanonical === 'CANCELLED' || orderData.status === 'cancelado' || orderData.status === 'cancelled') {
         return 'CANCELLED';
       }
-      return 'ASSIGNED';
+
+      if (rawCanonical === 'ASSIGNED' || orderData.status_entrega === 'waiting' || orderData.status_entrega === 'pending') {
+        return 'ASSIGNED';
+      }
+
+      const hasDriver = Boolean(orderData.assignedDriverId || orderData.driverId || orderData.entregador_id);
+      return hasDriver ? 'ASSIGNED' : 'UNASSIGNED';
     };
 
-    // First, check if order exists in ANY restaurant's order collection globally to distinguish 404 vs 403
-    let orderQuery;
-    try {
-      orderQuery = await db.collectionGroup('orders').where('id', '==', orderId).get();
-    } catch (queryErr: any) {
-      logger.error('Error querying order globally', { error: queryErr });
+    // 1. First, check direct path in driver's restaurant
+    const directOrderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc(orderId);
+    let orderDocSnap = await directOrderRef.get();
+    let orderRestaurantId = restaurantId;
+
+    // If not found by direct doc ID, check collectionGroup
+    if (!orderDocSnap.exists) {
+      try {
+        const orderQuery = await db.collection('restaurants').doc(restaurantId).collection('orders').where('id', '==', orderId).get();
+        if (!orderQuery.empty) {
+          orderDocSnap = orderQuery.docs[0];
+        } else {
+          const cgQuery = await db.collectionGroup('orders').where('id', '==', orderId).get();
+          if (!cgQuery.empty) {
+            orderDocSnap = cgQuery.docs[0];
+            const orderPathParts = orderDocSnap.ref.path.split('/');
+            orderRestaurantId = orderPathParts[1];
+          }
+        }
+      } catch (queryErr: any) {
+        logger.error('Error querying order in driver action', { error: queryErr });
+      }
     }
 
-    if (!orderQuery || orderQuery.empty) {
+    if (!orderDocSnap.exists) {
       await logDriverAudit({
         requestId,
         uid: driver.uid,
@@ -116,10 +151,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
       return res.status(404).json({ error: 'Pedido não encontrado' });
     }
 
-    const orderDocSnap = orderQuery.docs[0];
-    const orderData = orderDocSnap.data();
-    const orderPathParts = orderDocSnap.ref.path.split('/');
-    const orderRestaurantId = orderPathParts[1];
+    const orderData = orderDocSnap.data()!;
 
     if (orderRestaurantId !== restaurantId) {
       await logDriverAudit({
@@ -139,7 +171,12 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
     const isAssignedToThisDriver = 
       orderData.driverId === driver.id || 
       orderData.assignedDriverId === driver.id || 
-      orderData.entregador_id === driver.id;
+      orderData.entregador_id === driver.id ||
+      orderData.driverId === driver.uid || 
+      orderData.assignedDriverId === driver.uid || 
+      orderData.entregador_id === driver.uid ||
+      orderData.responsibleDriverId === driver.id ||
+      orderData.responsibleDriverId === driver.uid;
 
     if (!isAssignedToThisDriver) {
       await logDriverAudit({
@@ -157,6 +194,19 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
     }
 
     const currentStatus = getServerOrderDeliveryStatus(orderData);
+
+    // Idempotency: If already in requested status, return success directly
+    if (normalizedAction === 'ACCEPT' && (currentStatus === 'ACCEPTED' || currentStatus === 'IN_TRANSIT')) {
+      return res.json({ success: true, message: 'Pedido já aceito anteriormente', status: currentStatus });
+    }
+    if (normalizedAction === 'START' && currentStatus === 'IN_TRANSIT') {
+      return res.json({ success: true, message: 'Entrega já iniciada anteriormente', status: 'IN_TRANSIT' });
+    }
+    if (normalizedAction === 'DELIVER' && currentStatus === 'DELIVERED') {
+      return res.json({ success: true, message: 'Entrega já finalizada anteriormente', status: 'DELIVERED' });
+    }
+
+    // Status transition checks
     if (normalizedAction === 'ACCEPT' && currentStatus !== 'ASSIGNED') {
       await logDriverAudit({
         requestId,
@@ -171,7 +221,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
       });
       return res.status(409).json({ error: 'Transição de status inválida', currentStatus, requestedAction: normalizedAction });
     }
-    if (normalizedAction === 'REJECT' && currentStatus !== 'ASSIGNED') {
+    if (normalizedAction === 'REJECT' && currentStatus !== 'ASSIGNED' && currentStatus !== 'ACCEPTED') {
       await logDriverAudit({
         requestId,
         uid: driver.uid,
@@ -185,7 +235,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
       });
       return res.status(409).json({ error: 'Transição de status inválida', currentStatus, requestedAction: normalizedAction });
     }
-    if (normalizedAction === 'START' && currentStatus !== 'ACCEPTED') {
+    if (normalizedAction === 'START' && currentStatus !== 'ACCEPTED' && currentStatus !== 'ASSIGNED') {
       await logDriverAudit({
         requestId,
         uid: driver.uid,
@@ -199,7 +249,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
       });
       return res.status(409).json({ error: 'Transição de status inválida', currentStatus, requestedAction: normalizedAction });
     }
-    if (normalizedAction === 'DELIVER' && currentStatus !== 'IN_TRANSIT') {
+    if (normalizedAction === 'DELIVER' && currentStatus !== 'IN_TRANSIT' && currentStatus !== 'ACCEPTED') {
       await logDriverAudit({
         requestId,
         uid: driver.uid,
@@ -213,7 +263,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
       });
       return res.status(409).json({ error: 'Transição de status inválida', currentStatus, requestedAction: normalizedAction });
     }
-    if (normalizedAction === 'FAIL' && currentStatus !== 'IN_TRANSIT') {
+    if (normalizedAction === 'FAIL' && currentStatus !== 'IN_TRANSIT' && currentStatus !== 'ACCEPTED') {
       await logDriverAudit({
         requestId,
         uid: driver.uid,
@@ -269,7 +319,12 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
         const isAssignedToThisDriverTx = 
           orderDataInsideTx.driverId === driver.id || 
           orderDataInsideTx.assignedDriverId === driver.id || 
-          orderDataInsideTx.entregador_id === driver.id;
+          orderDataInsideTx.entregador_id === driver.id ||
+          orderDataInsideTx.driverId === driver.uid || 
+          orderDataInsideTx.assignedDriverId === driver.uid || 
+          orderDataInsideTx.entregador_id === driver.uid ||
+          orderDataInsideTx.responsibleDriverId === driver.id ||
+          orderDataInsideTx.responsibleDriverId === driver.uid;
 
         if (!isAssignedToThisDriverTx) {
           throw { status: 403, message: 'Este pedido não está atribuído a você' };
@@ -277,19 +332,19 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
 
         // 4. Validate transition inside transaction
         const currentStatusTx = getServerOrderDeliveryStatus(orderDataInsideTx);
-        if (normalizedAction === 'ACCEPT' && currentStatusTx !== 'ASSIGNED') {
+        if (normalizedAction === 'ACCEPT' && currentStatusTx !== 'ASSIGNED' && currentStatusTx !== 'ACCEPTED') {
           throw { status: 409, message: 'Transição de status inválida', currentStatus: currentStatusTx, requestedAction: normalizedAction };
         }
-        if (normalizedAction === 'REJECT' && currentStatusTx !== 'ASSIGNED') {
+        if (normalizedAction === 'REJECT' && currentStatusTx !== 'ASSIGNED' && currentStatusTx !== 'ACCEPTED') {
           throw { status: 409, message: 'Transição de status inválida', currentStatus: currentStatusTx, requestedAction: normalizedAction };
         }
-        if (normalizedAction === 'START' && currentStatusTx !== 'ACCEPTED') {
+        if (normalizedAction === 'START' && currentStatusTx !== 'ACCEPTED' && currentStatusTx !== 'ASSIGNED' && currentStatusTx !== 'IN_TRANSIT') {
           throw { status: 409, message: 'Transição de status inválida', currentStatus: currentStatusTx, requestedAction: normalizedAction };
         }
-        if (normalizedAction === 'DELIVER' && currentStatusTx !== 'IN_TRANSIT') {
+        if (normalizedAction === 'DELIVER' && currentStatusTx !== 'IN_TRANSIT' && currentStatusTx !== 'ACCEPTED' && currentStatusTx !== 'DELIVERED') {
           throw { status: 409, message: 'Transição de status inválida', currentStatus: currentStatusTx, requestedAction: normalizedAction };
         }
-        if (normalizedAction === 'FAIL' && currentStatusTx !== 'IN_TRANSIT') {
+        if (normalizedAction === 'FAIL' && currentStatusTx !== 'IN_TRANSIT' && currentStatusTx !== 'ACCEPTED') {
           throw { status: 409, message: 'Transição de status inválida', currentStatus: currentStatusTx, requestedAction: normalizedAction };
         }
 
@@ -318,16 +373,23 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
         if (normalizedAction === 'ACCEPT') {
           newStatus = 'ACCEPTED';
           orderUpdates.deliveryStatus = 'ACCEPTED';
-          orderUpdates.canonicalStatus = 'ASSIGNED'; // keeping legacy alignment
+          orderUpdates.canonicalStatus = 'ACCEPTED';
           orderUpdates.status_entrega = 'accepted';
           orderUpdates.acceptedAt = now;
+          orderUpdates.assignedDriverId = driver.id;
+          orderUpdates.driverId = driver.id;
+          orderUpdates.entregador_id = driver.id;
+          orderUpdates.driverName = driver.nome || driver.name || 'Entregador';
+          orderUpdates.assignedDriverName = driver.nome || driver.name || 'Entregador';
 
           deliveryUpdates.deliveryStatus = 'ACCEPTED';
-          deliveryUpdates.canonicalStatus = 'ASSIGNED';
+          deliveryUpdates.canonicalStatus = 'ACCEPTED';
           deliveryUpdates.status_entrega = 'accepted';
           deliveryUpdates.acceptedAt = now;
-          deliveryUpdates.lastAssignedDriverId = driver.id;
+          deliveryUpdates.assignedDriverId = driver.id;
           deliveryUpdates.responsibleDriverId = driver.id;
+          deliveryUpdates.driverName = driver.nome || driver.name || 'Entregador';
+          deliveryUpdates.assignedDriverName = driver.nome || driver.name || 'Entregador';
         } else if (normalizedAction === 'REJECT') {
           newStatus = 'UNASSIGNED';
           const rejectionReason = reason || failureReason || 'Recusado pelo entregador';
@@ -338,6 +400,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
           orderUpdates.assignedDriverId = null;
           orderUpdates.entregador_id = null;
           orderUpdates.driverName = null;
+          orderUpdates.assignedDriverName = null;
           orderUpdates.status_entrega = 'waiting';
           orderUpdates.lastRejectedDriverId = driver.id;
           orderUpdates.lastRejectionReason = rejectionReason;
@@ -366,7 +429,13 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
           orderUpdates.status = 'delivering';
           orderUpdates.startedAt = now;
           orderUpdates.horario_saida = now;
+          orderUpdates.assignedDriverId = driver.id;
+          orderUpdates.driverId = driver.id;
+          orderUpdates.entregador_id = driver.id;
+          orderUpdates.driverName = driver.nome || driver.name || 'Entregador';
+          orderUpdates.assignedDriverName = driver.nome || driver.name || 'Entregador';
 
+          deliveryUpdates.orderStatus = 'OUT_FOR_DELIVERY';
           deliveryUpdates.deliveryStatus = 'IN_TRANSIT';
           deliveryUpdates.canonicalStatus = 'IN_TRANSIT';
           deliveryUpdates.status_entrega = 'out_for_delivery';
@@ -375,6 +444,8 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
           deliveryUpdates.horario_saida = now;
           deliveryUpdates.lastAssignedDriverId = driver.id;
           deliveryUpdates.responsibleDriverId = driver.id;
+          deliveryUpdates.driverName = driver.nome || driver.name || 'Entregador';
+          deliveryUpdates.assignedDriverName = driver.nome || driver.name || 'Entregador';
 
           driverUpdates.currentOrderId = orderId;
           driverUpdates.availabilityStatus = 'ON_DELIVERY';
@@ -425,7 +496,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
           orderUpdates.canonicalStatus = 'DELIVERED';
           orderUpdates.status_entrega = 'delivered';
           orderUpdates.status = 'entregue'; // Keeps in "entrega" column in Kanban while pending settlement
-          orderUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
+          orderUpdates.financialSettlementStatus = isPrepaid ? 'SETTLED' : 'PENDING_RESTAURANT_CONFIRMATION';
           orderUpdates.driverPaymentReport = driverPaymentReport;
 
           deliveryUpdates.deliveredAt = now;
@@ -438,7 +509,7 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
           deliveryUpdates.canonicalStatus = 'DELIVERED';
           deliveryUpdates.status_entrega = 'delivered';
           deliveryUpdates.status = 'entregue';
-          deliveryUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
+          deliveryUpdates.financialSettlementStatus = isPrepaid ? 'SETTLED' : 'PENDING_RESTAURANT_CONFIRMATION';
           deliveryUpdates.driverPaymentReport = driverPaymentReport;
 
           // Audit events

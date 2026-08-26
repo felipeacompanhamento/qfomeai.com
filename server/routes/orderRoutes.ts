@@ -492,7 +492,7 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
       }
 
       // Terminal status check
-      const terminalStatuses = ['finalizado', 'cancelado', 'rejeitado'];
+      const terminalStatuses = ['finalizado', 'cancelado', 'rejeitado', 'completed'];
       if (terminalStatuses.includes((currentStatus || '').toLowerCase())) {
         return res.status(400).json({
           error: 'INVALID_TRANSITION',
@@ -502,19 +502,37 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
 
       // Valid status transitions check
       const validTransitions: Record<string, string[]> = {
-        pendente: ['aceito', 'preparo', 'em preparo', 'em_preparo', 'cancelado', 'rejeitado'],
-        recebido: ['aceito', 'preparo', 'em preparo', 'em_preparo', 'cancelado', 'rejeitado'],
-        aceito: ['preparo', 'em preparo', 'em_preparo', 'pronto', 'cancelado', 'rejeitado'],
-        confirmado: ['preparo', 'em preparo', 'em_preparo', 'pronto', 'cancelado', 'rejeitado'],
-        preparo: ['pronto', 'cancelado', 'rejeitado'],
-        'em preparo': ['pronto', 'cancelado', 'rejeitado'],
-        'em_preparo': ['pronto', 'cancelado', 'rejeitado'],
-        pronto: ['saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'cancelado', 'rejeitado'],
-        saiu_entrega: ['entregue', 'finalizado', 'cancelado'],
-        entrega: ['entregue', 'finalizado', 'cancelado'],
-        'saiu para entrega': ['entregue', 'finalizado', 'cancelado'],
-        'saiu_para_entrega': ['entregue', 'finalizado', 'cancelado'],
-        entregue: ['finalizado', 'cancelado']
+        pendente: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+        recebido: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+        novo: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+        new: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+        pending: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+        aguardando_aprovacao: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+        aguardando_confirmacao: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+
+        aceito: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        confirmado: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        confirmed: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+
+        preparo: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        'em preparo': ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        'em_preparo': ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        cozinha: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        preparing: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+
+        pronto: ['despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'em_entrega', 'out_for_delivery', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        ready: ['despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'em_entrega', 'out_for_delivery', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+
+        despachado: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        saiu_entrega: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        entrega: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        'saiu para entrega': ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        'saiu_para_entrega': ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        em_entrega: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        out_for_delivery: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+
+        entregue: ['finalizado', 'completed', 'cancelado'],
+        delivered: ['finalizado', 'completed', 'cancelado']
       };
 
       const allowedNext = validTransitions[(currentStatus || '').toLowerCase()] || ['cancelado', 'rejeitado'];
@@ -535,12 +553,22 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
         updatedAt: now
       };
 
-      if (newStatus === 'aceito') {
+      if (newStatus === 'aceito' || newStatus === 'confirmado') {
         updates.data_aceite = now;
+      } else if (newStatus === 'despachado' || newStatus === 'saiu_entrega' || newStatus === 'saiu_para_entrega' || newStatus === 'entrega' || newStatus === 'saiu para entrega' || newStatus === 'em_entrega' || newStatus === 'out_for_delivery') {
+        updates.data_despacho = now;
+        updates.dispatchedAt = now;
+        if (!orderData.status_entrega || orderData.status_entrega === 'unassigned' || orderData.status_entrega === 'sem_entregador') {
+          updates.status_entrega = 'out_for_delivery';
+        }
+      } else if (newStatus === 'entregue' || newStatus === 'delivered') {
+        updates.deliveredAt = now;
+        updates.horario_entrega = now;
+        updates.status_entrega = 'delivered';
       } else if (newStatus === 'rejeitado' || newStatus === 'cancelado') {
         if (motivo) updates.motivo_cancelamento = motivo;
         updates.cancelledAt = now;
-      } else if (newStatus === 'finalizado') {
+      } else if (newStatus === 'finalizado' || newStatus === 'completed') {
         updates.data_finalizado = now;
         updates.finalizedAt = now;
       }

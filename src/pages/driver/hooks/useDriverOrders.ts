@@ -16,16 +16,77 @@ const normalizeLegacyDeliveryStatus = (statusEntrega?: string, status?: string):
   const se = statusEntrega ? statusEntrega.toLowerCase() : '';
   const sp = status ? status.toLowerCase() : '';
 
-  if (se === 'waiting' || se === 'pending') return 'ASSIGNED';
-  if (se === 'accepted') return 'ACCEPTED';
-  if (se === 'out_for_delivery' || se === 'delivering' || se === 'picked_up' || sp === 'delivering') return 'IN_TRANSIT';
   if (se === 'delivered' || sp === 'completed' || sp === 'finalizado' || sp === 'entregue') return 'DELIVERED';
+  if (se === 'out_for_delivery' || se === 'delivering' || se === 'picked_up' || sp === 'delivering' || sp === 'saiu para entrega' || sp === 'despachado') return 'IN_TRANSIT';
+  if (se === 'accepted') return 'ACCEPTED';
+  if (se === 'waiting' || se === 'pending') return 'ASSIGNED';
   if (se === 'rejected' || se === 'refused' || se === 'not_delivered' || se === 'failed') return 'FAILED';
   if (sp === 'cancelled' || sp === 'cancelado' || se === 'cancelled') return 'CANCELLED';
   return 'ASSIGNED';
 };
 
 export const getOrderDeliveryStatus = (order: AssignedOrder): string => {
+  if (!order) return 'ASSIGNED';
+
+  // Delivered evidence guarantee
+  if (
+    order.status === 'entregue' ||
+    order.status === 'delivered' ||
+    order.status === 'delivered_pending_settlement' ||
+    Boolean(order.deliveredAt) ||
+    Boolean(order.driverPaymentReport) ||
+    order.deliveryStatus === 'DELIVERED' ||
+    order.canonicalStatus === 'DELIVERED'
+  ) {
+    if (order.financialSettlementStatus === 'SETTLED' || order.status === 'finalizado') {
+      return 'DELIVERED';
+    }
+    return 'DELIVERED_PENDING_SETTLEMENT';
+  }
+
+  // In Transit evidence
+  if (
+    order.deliveryStatus === 'IN_TRANSIT' ||
+    order.canonicalStatus === 'IN_TRANSIT' ||
+    order.canonicalStatus === 'OUT_FOR_DELIVERY' ||
+    order.orderStatus === 'OUT_FOR_DELIVERY' ||
+    order.status === 'delivering' ||
+    order.status === 'saiu para entrega' ||
+    order.status === 'despachado' ||
+    order.status === 'out_for_delivery' ||
+    order.status_entrega === 'out_for_delivery' ||
+    order.status_entrega === 'delivering'
+  ) {
+    return 'IN_TRANSIT';
+  }
+
+  // Accepted evidence
+  if (
+    order.deliveryStatus === 'ACCEPTED' ||
+    order.canonicalStatus === 'ACCEPTED' ||
+    order.status_entrega === 'accepted'
+  ) {
+    return 'ACCEPTED';
+  }
+
+  if (
+    order.deliveryStatus === 'FAILED' ||
+    order.canonicalStatus === 'FAILED' ||
+    order.status_entrega === 'failed' ||
+    order.status_entrega === 'rejected'
+  ) {
+    return 'FAILED';
+  }
+
+  if (
+    order.deliveryStatus === 'CANCELLED' ||
+    order.canonicalStatus === 'CANCELLED' ||
+    order.status === 'cancelado' ||
+    order.status === 'cancelled'
+  ) {
+    return 'CANCELLED';
+  }
+
   return (
     order.deliveryStatus ||
     normalizeLegacyDeliveryStatus(order.status_entrega, order.status)
@@ -79,61 +140,47 @@ export const useDriverOrders = ({
 
     const ordersRef = collection(db, 'restaurants', restaurantId, 'orders');
 
-    // Canonical query for active assigned orders using canonical field
+    // Dual real-time queries for assignedDriverId and driverId
     const qCanonical = query(ordersRef, where('assignedDriverId', '==', user.uid));
+    const qDriverId = query(ordersRef, where('driverId', '==', user.uid));
 
     // History query from deliveries collection with limit
     const deliveriesRef = collection(db, 'restaurants', restaurantId, 'deliveries');
     const qHistory = query(deliveriesRef, where('responsibleDriverId', '==', user.uid), limit(50));
 
-    let canonicalList: AssignedOrder[] = [];
-    let legacyList: AssignedOrder[] = [];
+    let canonicalMap = new Map<string, AssignedOrder>();
+    let driverIdMap = new Map<string, AssignedOrder>();
 
-    const mergeActiveOrders = () => {
-      const mergedObj: Record<string, AssignedOrder> = {};
-      legacyList.forEach(o => {
-        if (o && o.id) mergedObj[o.id] = o;
-      });
-      canonicalList.forEach(o => {
-        if (o && o.id) mergedObj[o.id] = o;
-      });
-      const merged = Object.values(mergedObj);
+    const updateMergedActiveOrders = () => {
+      const mergedMap = new Map<string, AssignedOrder>();
+      driverIdMap.forEach((val, key) => mergedMap.set(key, val));
+      canonicalMap.forEach((val, key) => mergedMap.set(key, val));
+
+      const merged = Array.from(mergedMap.values());
       setOrders(merged);
       setOrdersLoading(false);
       saveCachedOrders(merged);
     };
 
-    // Point-in-time check for legacy fields (driverId, entregador_id) to avoid continuous multiple listeners
-    const fetchLegacyOrders = async () => {
-      try {
-        const qLegacyDriver = query(ordersRef, where('driverId', '==', user.uid));
-        const qLegacyEntregador = query(ordersRef, where('entregador_id', '==', user.uid));
-
-        const [snapDriver, snapEntregador] = await Promise.all([
-          getDocs(qLegacyDriver),
-          getDocs(qLegacyEntregador)
-        ]);
-
-        const legacyMap = new Map<string, AssignedOrder>();
-        snapDriver.docs.forEach(d => legacyMap.set(d.id, { id: d.id, ...d.data() } as AssignedOrder));
-        snapEntregador.docs.forEach(d => legacyMap.set(d.id, { id: d.id, ...d.data() } as AssignedOrder));
-
-        legacyList = Array.from(legacyMap.values());
-        mergeActiveOrders();
-      } catch (err) {
-        console.warn('[useDriverOrders] Legacy order fetch fallback:', err);
-      }
-    };
-
-    fetchLegacyOrders();
-
-    // Single canonical real-time listener
     const unsubCanonical = onSnapshot(qCanonical, (snap) => {
-      canonicalList = snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedOrder));
-      mergeActiveOrders();
+      canonicalMap.clear();
+      snap.docs.forEach(d => {
+        canonicalMap.set(d.id, { id: d.id, ...d.data() } as AssignedOrder);
+      });
+      updateMergedActiveOrders();
     }, (err) => {
       console.warn('[useDriverOrders] Canonical query listener fallback:', err);
       setOrdersLoading(false);
+    });
+
+    const unsubDriverId = onSnapshot(qDriverId, (snap) => {
+      driverIdMap.clear();
+      snap.docs.forEach(d => {
+        driverIdMap.set(d.id, { id: d.id, ...d.data() } as AssignedOrder);
+      });
+      updateMergedActiveOrders();
+    }, (err) => {
+      console.warn('[useDriverOrders] DriverId query listener fallback:', err);
     });
 
     const unsubHistory = onSnapshot(qHistory, (snap) => {
@@ -155,6 +202,7 @@ export const useDriverOrders = ({
 
     return () => {
       unsubCanonical();
+      unsubDriverId();
       unsubHistory();
     };
   }, [user, restaurantId, isOnline]);

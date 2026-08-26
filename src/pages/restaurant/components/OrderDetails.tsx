@@ -394,8 +394,8 @@ const OrderDetails = ({
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-stone-800 truncate">Pedido #{selectedOrder.id.slice(-6).toUpperCase()}</h2>
-              <p className="text-xs sm:text-sm text-stone-500 truncate">Feito em {new Date(selectedOrder.data_criacao).toLocaleString('pt-BR')}</p>
+              <h2 className="text-lg sm:text-xl font-bold text-stone-800 truncate">Pedido #{String(selectedOrder.id || selectedOrder._id || '').slice(-6).toUpperCase() || '------'}</h2>
+              <p className="text-xs sm:text-sm text-stone-500 truncate">Feito em {selectedOrder.data_criacao || selectedOrder.createdAt ? new Date(selectedOrder.data_criacao || selectedOrder.createdAt).toLocaleString('pt-BR') : 'Data não informada'}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -528,7 +528,7 @@ const OrderDetails = ({
                     <div className="flex items-center gap-2 mt-1">
                       <p className="text-sm text-stone-500">{customerData?.telefone || selectedOrder.cliente_telefone}</p>
                       <a 
-                        href={`https://wa.me/55${(customerData?.telefone || selectedOrder.cliente_telefone).replace(/\D/g, '')}?text=Ol%C3%A1%20${encodeURIComponent(customerData?.nome || customerData?.displayName || selectedOrder.cliente_nome || '')},%20somos%20do%20restaurante%20e%20gostar%C3%ADamos%20de%20falar%20sobre%20o%20seu%20pedido%20%23${selectedOrder.id.slice(-6).toUpperCase()}.`}
+                        href={`https://wa.me/55${(customerData?.telefone || selectedOrder.cliente_telefone || '').replace(/\D/g, '')}?text=Ol%C3%A1%20${encodeURIComponent(customerData?.nome || customerData?.displayName || selectedOrder.cliente_nome || '')},%20somos%20do%20restaurante%20e%20gostar%C3%ADamos%20de%20falar%20sobre%20o%20seu%20pedido%20%23${String(selectedOrder.id || selectedOrder._id || '').slice(-6).toUpperCase()}.`}
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="text-emerald-500 hover:text-emerald-600 transition-colors bg-emerald-50 p-1.5 rounded-lg"
@@ -1028,7 +1028,7 @@ const OrderDetails = ({
           </button>
         ) : ['finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'FINALIZED' ? (
           <div className="text-center text-stone-400 font-bold py-2">
-            Este pedido já foi {getRestaurantStatusText(selectedOrder.status).toLowerCase()}.
+            Este pedido já foi {String(getRestaurantStatusText(selectedOrder.status) || '').toLowerCase()}.
           </div>
         ) : null}
       </div>
@@ -1062,12 +1062,12 @@ const OrderDetails = ({
       >
         <div className="space-y-4 text-left">
           <p className="text-sm text-stone-600">
-            O valor total do pedido é de <strong className="text-stone-800">R$ {Number(selectedOrder.valor_total).toFixed(2)}</strong>.
+            O valor total do pedido é de <strong className="text-stone-800">R$ {Number(selectedOrder.valor_total || selectedOrder.total || 0).toFixed(2)}</strong>.
           </p>
           
           <FormField label="Valor do Estorno (R$)">
             <TextInput
-              placeholder={`Ex: ${Number(selectedOrder.valor_total).toFixed(2)}`}
+              placeholder={`Ex: ${Number(selectedOrder.valor_total || selectedOrder.total || 0).toFixed(2)}`}
               value={refundAmount}
               onChange={(e) => setRefundAmount(e.target.value)}
               disabled={isRefunding}
@@ -1112,7 +1112,7 @@ const OrderDetails = ({
         isOpen={isAssignModalOpen}
         onClose={() => setIsAssignModalOpen(false)}
         title="Atribuir Entregador"
-        subtitle={`Pedido #${selectedOrder?.id?.slice(-6).toUpperCase()} • R$ ${Number(selectedOrder?.valor_total).toFixed(2)}`}
+        subtitle={`Pedido #${String(selectedOrder?.id || selectedOrder?._id || '').slice(-6).toUpperCase() || '------'} • R$ ${Number(selectedOrder?.valor_total || selectedOrder?.total || 0).toFixed(2)}`}
         icon={Bike}
         iconBgColor="bg-indigo-50"
         iconTextColor="text-indigo-600"

@@ -338,7 +338,7 @@ export default function DeliveryHistoryTab() {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-extrabold text-stone-850 text-sm">
-                        #{order.numero_pedido || order.id.slice(-6).toUpperCase()}
+                        #{order.numero_pedido || String(order?.id || '').slice(-6).toUpperCase() || '------'}
                       </span>
                       <Badge 
                         variant={isCancelled ? 'danger' : 'success'} 
@@ -398,7 +398,7 @@ export default function DeliveryHistoryTab() {
             <div className="flex items-center justify-between border-b border-stone-100 pb-4">
               <div>
                 <h3 className="font-black text-stone-850 text-lg">
-                  Pedido #{selectedOrder.numero_pedido || selectedOrder.id.slice(-6).toUpperCase()}
+                  Pedido #{selectedOrder.numero_pedido || String(selectedOrder?.id || '').slice(-6).toUpperCase() || '------'}
                 </h3>
                 <p className="text-xs text-stone-400">
                   {selectedOrder.data_criacao ? new Date(selectedOrder.data_criacao).toLocaleString('pt-BR') : ''}

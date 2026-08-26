@@ -35,19 +35,19 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
   const source = getOrderSourceDetails(order);
   const timeInfo = getOrderStageTimeInfo(order, columnId, nowMs);
 
-  const orderCode = (order.id || '').slice(-6).toUpperCase();
-  const orderNum = order.numero_pedido || order.numeroPedido || orderCode;
-  const mesaNum = order.mesa_numero || order.tableNumber || order.tableName || order.mesa || '--';
-  const comandaNum = order.comanda_id || order.tabId || order.comandaId || order.comandaNumero || order.comanda_numero || '--';
-  const waiterName = order.waiterName || order.garcom_nome || order.sentBy?.name || order.garcom || '--';
-  const roundNum = order.roundNumber || order.numero_rodada || order.rodada || order.roundId || '--';
+  const orderCode = String(order?.id || order?._id || '').slice(-6).toUpperCase() || '------';
+  const orderNum = order?.numero_pedido || order?.numeroPedido || orderCode;
+  const mesaNum = order?.mesa_numero || order?.tableNumber || order?.tableName || order?.mesa || '--';
+  const comandaNum = order?.comanda_id || order?.tabId || order?.comandaId || order?.comandaNumero || order?.comanda_numero || '--';
+  const waiterName = order?.waiterName || order?.garcom_nome || order?.sentBy?.name || order?.garcom || '--';
+  const roundNum = order?.roundNumber || order?.numero_rodada || order?.rodada || order?.roundId || '--';
 
-  const fullCustomerName = order.cliente_nome || order.nome_cliente || order.customerName || order.cliente?.nome || 'Cliente';
+  const fullCustomerName = order?.cliente_nome || order?.nome_cliente || order?.customerName || order?.cliente?.nome || 'Cliente';
   const customerName = fullCustomerName.trim().split(' ')[0] || 'Cliente';
-  const customerPhone = order.telefone_cliente || order.customerPhone || order.cliente?.telefone || '';
-  const neighborhood = order.endereco?.bairro || order.bairro || order.bairro_entrega || '';
-  const total = Number(order.total || order.valor_total || 0);
-  const paymentMethod = order.forma_pagamento || order.paymentMethod || order.metodo_pagamento || 'A combinar';
+  const customerPhone = String(order?.telefone_cliente || order?.customerPhone || order?.cliente?.telefone || '');
+  const neighborhood = order?.endereco?.bairro || order?.bairro || order?.bairro_entrega || '';
+  const total = Number(order?.total || order?.valor_total || 0);
+  const paymentMethod = order?.forma_pagamento || order?.paymentMethod || order?.metodo_pagamento || 'A combinar';
 
   const isPendingSettlement = !isGarcom && deliveryStatus === 'DELIVERED' && financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
   const driverName = !isGarcom ? (order.assignedDriverName || order.driverName || order.entregador_nome || '') : '';

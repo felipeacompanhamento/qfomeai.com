@@ -239,7 +239,7 @@ export default function DeliveryAssignmentTab() {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between pb-3 border-b border-stone-100 flex-wrap gap-2">
                     <Badge variant="neutral" size="md" className="font-extrabold text-stone-800">
-                      #{order.numero_pedido || order.id.slice(-6).toUpperCase()}
+                      #{order.numero_pedido || String(order?.id || '').slice(-6).toUpperCase() || '------'}
                     </Badge>
                     <Badge 
                       variant={currentDriverId ? 'success' : 'warning'} 
