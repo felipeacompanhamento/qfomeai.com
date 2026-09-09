@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Clock, MapPin, Phone, Printer, MoreVertical, DollarSign, User, Truck, 
-  Store, ShoppingBag, UtensilsCrossed, CheckCircle2, AlertTriangle, ArrowRight,
-  Eye, Ban
+  Store, ShoppingBag, Utensils, Monitor, CheckCircle2, AlertTriangle, ArrowRight,
+  Eye, Ban, Bike
 } from 'lucide-react';
 import { Button, IconButton } from '../../../../components/ui';
-import { getCanonicalOrderState, getOrderKanbanColumn, normalizeOrderStatus, normalizeDeliveryStatus, normalizeFinancialSettlementStatus } from '../../../../domain/order/orderLifecycle';
-import { getOrderSourceDetails, isGarcomOrder } from '../utils/orderSource';
+import { getCanonicalOrderState, getOrderKanbanColumn } from '../../../../domain/order/orderLifecycle';
+import { getOrderModalityDetails } from '../utils/orderSource';
 import { 
   getOrderStageTimeInfo,
   extractOrderTableDisplay,
@@ -24,6 +24,7 @@ interface RestaurantOrderCardProps {
   onUpdateStatus?: (orderId: string, status: string) => void;
   onCancelOrder?: (order: any) => void;
   onPrintOrder?: (order: any) => void;
+  onAssignDriver?: (order: any) => void;
 }
 
 export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
@@ -34,7 +35,8 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
   onOrderClick,
   onUpdateStatus,
   onCancelOrder,
-  onPrintOrder
+  onPrintOrder,
+  onAssignDriver
 }) => {
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -53,10 +55,13 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
     };
   }, [showMenu]);
 
-  const isGarcom = isGarcomOrder(order);
+  const modDetails = getOrderModalityDetails(order);
+  const modality = modDetails.modality;
+  const isDeliveryFlow = modDetails.isDeliveryFlow;
+  const isTableModality = modDetails.isTableModality;
+
   const columnId = getOrderKanbanColumn(order);
   const { orderStatus, deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(order);
-  const source = getOrderSourceDetails(order);
   const timeInfo = getOrderStageTimeInfo(order, columnId, nowMs);
 
   const orderCode = String(order?.id || order?._id || '').slice(-6).toUpperCase() || '------';
@@ -66,98 +71,131 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
   const waiterName = extractOrderWaiterDisplay(order);
   const roundNum = extractOrderRoundDisplay(order);
 
-  const fullCustomerName = order?.cliente_nome || order?.nome_cliente || order?.customerName || order?.cliente?.nome || 'Cliente';
-  const customerName = fullCustomerName.trim().split(' ')[0] || 'Cliente';
-  const customerPhone = String(order?.telefone_cliente || order?.customerPhone || order?.cliente?.telefone || '');
-  const neighborhood = order?.endereco?.bairro || order?.bairro || order?.bairro_entrega || '';
+  const rawCustomerName = order?.cliente_nome || order?.nome_cliente || order?.customerName || order?.cliente?.nome || '';
+  const customerName = rawCustomerName ? rawCustomerName.trim().split(' ')[0] : '';
+  const customerPhone = String(order?.cliente_telefone || order?.telefone_cliente || order?.customerPhone || order?.cliente?.telefone || order?.telefone || '');
+  
+  // Endereço resumido para Delivery e Balcão + Entrega
+  const addressStreet = order?.endereco?.rua || order?.endereco_entrega?.rua || order?.rua || '';
+  const addressNum = order?.endereco?.numero || order?.endereco_entrega?.numero || order?.numero || '';
+  const neighborhood = order?.endereco?.bairro || order?.endereco_entrega?.bairro || order?.bairro || order?.bairro_entrega || '';
+  const addressSummary = addressStreet ? `${addressStreet}${addressNum ? `, ${addressNum}` : ''}${neighborhood ? ` - ${neighborhood}` : ''}` : neighborhood;
+
   const total = Number(order?.total || order?.valor_total || 0);
   const paymentMethod = order?.forma_pagamento || order?.paymentMethod || order?.metodo_pagamento || 'A combinar';
 
-  const isPendingSettlement = !isGarcom && deliveryStatus === 'DELIVERED' && financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
-  const driverName = !isGarcom ? (order.assignedDriverName || order.driverName || order.entregador_nome || '') : '';
+  const isPendingSettlement = isDeliveryFlow && deliveryStatus === 'DELIVERED' && financialSettlementStatus === 'PENDING_RESTAURANT_CONFIRMATION';
+  const driverName = isDeliveryFlow ? (order.deliveredByDriverName || order.assignedDriverName || order.driverName || order.entregador_nome || '') : '';
+
+  const getModalityIcon = () => {
+    switch (modDetails.iconName) {
+      case 'Utensils': return <Utensils className="w-3 h-3 shrink-0" />;
+      case 'Store': return <Store className="w-3 h-3 shrink-0" />;
+      case 'Bike': return <Bike className="w-3 h-3 shrink-0" />;
+      case 'Monitor': return <Monitor className="w-3 h-3 shrink-0" />;
+      default: return <ShoppingBag className="w-3 h-3 shrink-0" />;
+    }
+  };
 
   const getPrimaryAction = () => {
-    if (isGarcom) {
-      const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
+    const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
 
+    // 1. GARÇOM / MESA
+    if (modality === 'GARCOM_MESA') {
       if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
-        return {
-          label: 'Aceitar Pedido',
-          nextStatus: 'aceito',
-          bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
-        };
+        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
       }
-
       if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
-        return {
-          label: 'Enviar p/ Cozinha',
-          nextStatus: 'preparo',
-          bg: 'bg-stone-900 hover:bg-stone-800 text-white'
-        };
+        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
       }
-
       if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
-        return {
-          label: 'Marcar Pronto',
-          nextStatus: 'pronto',
-          bg: 'bg-amber-600 hover:bg-amber-700 text-white'
-        };
+        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
       }
-
       if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
-        return {
-          label: 'Servido',
-          nextStatus: 'entregue',
-          bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
-        };
+        return { label: 'MARCAR COMO SERVIDO', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
       }
-
-      return {
-        label: 'Ver Detalhes',
-        isModalTrigger: true,
-        bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800'
-      };
+      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
     }
 
+    // 2. BALCÃO + RETIRADA
+    if (modality === 'BALCAO_RETIRADA') {
+      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
+        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
+        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+      }
+      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
+        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+      }
+      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
+        return { label: 'Entregar ao Cliente', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      if (rawStatus === 'entregue' || orderStatus === 'DELIVERED') {
+        return { label: 'Finalizar Pedido', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+    }
+
+    // 3. BALCÃO + MESA
+    if (modality === 'BALCAO_MESA') {
+      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
+        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
+        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+      }
+      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
+        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+      }
+      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
+        return { label: 'Servir na Mesa', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+    }
+
+    // 4. TOTEM
+    if (modality === 'TOTEM') {
+      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
+        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
+        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+      }
+      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
+        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+      }
+      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
+        return { label: 'Entregar ao Cliente', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+    }
+
+    // 5. BALCÃO + ENTREGA & DELIVERY
     if (orderStatus === 'NEW') {
-      return {
-        label: 'Aceitar Pedido',
-        nextStatus: 'aceito',
-        bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
-      };
+      return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
     }
-
     if (orderStatus === 'CONFIRMED') {
-      return {
-        label: 'Enviar p/ Cozinha',
-        nextStatus: 'preparo',
-        bg: 'bg-stone-900 hover:bg-stone-800 text-white'
-      };
+      return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
     }
-
     if (orderStatus === 'PREPARING') {
-      return {
-        label: 'Marcar Pronto',
-        nextStatus: 'pronto',
-        bg: 'bg-amber-600 hover:bg-amber-700 text-white'
-      };
+      return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
     }
-
     if (orderStatus === 'READY') {
-      if (source.source === 'TAKEAWAY' || source.source === 'COUNTER' || source.source === 'TABLE') {
+      if (!driverName) {
         return {
-          label: 'Entregar ao Cliente',
-          nextStatus: 'finalizado',
-          bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
+          label: 'Enviar para entregador',
+          isModalTrigger: true,
+          actionType: 'assign_driver',
+          bg: 'bg-indigo-600 hover:bg-indigo-700 text-white'
         };
       }
       return {
-        label: 'Despachar / Em Entrega',
+        label: 'Despachar / Saiu',
         nextStatus: 'despachado',
         bg: 'bg-blue-600 hover:bg-blue-700 text-white'
       };
     }
-
     if (isPendingSettlement) {
       return {
         label: 'Conferir Recebimento',
@@ -165,36 +203,27 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
         bg: 'bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold'
       };
     }
-
     if (orderStatus === 'OUT_FOR_DELIVERY') {
-      return {
-        label: 'Marcar Entregue',
-        nextStatus: 'entregue',
-        bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
-      };
+      return { label: 'Marcar Entregue', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
     }
-
     if (orderStatus === 'DELIVERED') {
-      return {
-        label: 'Finalizar Pedido',
-        nextStatus: 'finalizado',
-        bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
-      };
+      return { label: 'Finalizar Pedido', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
     }
 
-    return {
-      label: 'Ver Detalhes',
-      isModalTrigger: true,
-      bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800'
-    };
+    return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
   };
-
 
   const primaryAction = getPrimaryAction();
 
   const handleActionClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (primaryAction.isModalTrigger || !primaryAction.nextStatus) {
+    if ((primaryAction as any).actionType === 'assign_driver') {
+      if (onAssignDriver) {
+        onAssignDriver(order);
+      } else {
+        onOrderClick(order);
+      }
+    } else if (primaryAction.isModalTrigger || !primaryAction.nextStatus) {
       onOrderClick(order);
     } else if (onUpdateStatus) {
       onUpdateStatus(order.id, primaryAction.nextStatus);
@@ -214,20 +243,21 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
           : 'border-stone-200 hover:border-stone-300'
       }`}
     >
-      {/* Top Header Row */}
+      {/* Top Header Row: Modality Badge & Order # */}
       <div className="bg-stone-50/90 px-2.5 sm:px-3 py-1.5 border-b border-stone-200/80 flex items-center justify-between gap-1.5 min-w-0 overflow-hidden">
         <div className="flex items-center gap-1.5 min-w-0 shrink-0">
-          <span className="text-xs font-black text-stone-900 tracking-tight shrink-0">
-            #{orderCode}
+          {/* Tag de Destaque da Modalidade */}
+          <span className={`text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-lg border shadow-2xs flex items-center gap-1 shrink-0 ${modDetails.badgeBg} ${modDetails.badgeBorder}`}>
+            {getModalityIcon()}
+            <span>{modDetails.label}</span>
           </span>
 
-          {/* Origin Badge */}
-          <span className={`text-[10px] sm:text-xs font-bold px-1.5 sm:px-2 py-0.5 rounded-md border shrink-0 ${source.badgeBg} ${source.badgeText} ${source.badgeBorder}`}>
-            {source.shortLabel}
+          <span className="text-xs font-black text-stone-900 tracking-tight shrink-0 font-mono">
+            #{orderCode}
           </span>
         </div>
 
-        {/* Stage Timer / Delay Badge */}
+        {/* Stage Timer / Delay Badge & Actions */}
         <div className="flex items-center gap-1 shrink-0">
           <span className={`text-[10px] sm:text-xs font-bold px-1.5 sm:px-2 py-0.5 rounded-md border flex items-center gap-1 ${timeInfo.badgeBg}`}>
             <Clock className="w-2.5 h-2.5 shrink-0" />
@@ -331,39 +361,117 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
         </div>
       </div>
 
-      {/* Main Card Body */}
+      {/* Main Card Body - Adapted per Modality */}
       <div className="p-2.5 space-y-2 min-w-0 overflow-hidden">
-        {isGarcom ? (
-          /* Garçom Order Details Card Block */
-          <div className="bg-stone-50/90 p-2 rounded-xl border border-stone-200/80 space-y-1 text-xs min-w-0">
+        {modality === 'GARCOM_MESA' ? (
+          /* 1. GARÇOM / MESA */
+          <div className="bg-emerald-50/40 p-2.5 rounded-xl border border-emerald-100/80 space-y-1.5 text-xs min-w-0">
             <div className="flex items-center justify-between gap-1 font-extrabold text-stone-900">
-              <span className="text-stone-900">Pedido #{orderNum}</span>
-              <span className="bg-stone-200/90 text-stone-800 px-2 py-0.5 rounded-md text-[11px]">
+              <span className="font-mono text-stone-900">Pedido #{orderNum}</span>
+              <span className="bg-emerald-100 text-emerald-900 border border-emerald-200 px-2 py-0.5 rounded-md text-[11px] font-black">
                 Mesa {mesaNum}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px] text-stone-600 pt-1 font-medium border-t border-stone-200/60 mt-1 min-w-0">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-stone-600 pt-1 font-medium border-t border-emerald-100/60 min-w-0">
               <div className="truncate">
                 <span className="text-stone-400">Comanda: </span>
-                <span className="font-bold text-stone-800">{comandaNum}</span>
+                <strong className="font-bold text-stone-900">{comandaNum}</strong>
               </div>
               <div className="truncate">
                 <span className="text-stone-400">Garçom: </span>
-                <span className="font-bold text-stone-800">{waiterName}</span>
+                <strong className="font-bold text-stone-900">{waiterName}</strong>
               </div>
               <div className="col-span-2 truncate">
                 <span className="text-stone-400">Rodada: </span>
-                <span className="font-bold text-stone-800">{roundNum}</span>
+                <strong className="font-bold text-stone-900">{roundNum}</strong>
               </div>
             </div>
           </div>
-        ) : (
-          /* Standard Customer & Location for Delivery/Balcão */
+        ) : modality === 'BALCAO_MESA' ? (
+          /* 4. BALCÃO + MESA */
+          <div className="bg-teal-50/40 p-2.5 rounded-xl border border-teal-100/80 space-y-1.5 text-xs min-w-0">
+            <div className="flex items-center justify-between gap-1 font-extrabold text-stone-900">
+              <span className="font-mono text-stone-900">Pedido #{orderNum}</span>
+              <span className="bg-teal-100 text-teal-900 border border-teal-200 px-2 py-0.5 rounded-md text-[11px] font-black">
+                Mesa {mesaNum}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-stone-600 pt-1 font-medium border-t border-teal-100/60 min-w-0">
+              <div className="truncate">
+                <span className="text-stone-400">Comanda: </span>
+                <strong className="font-bold text-stone-900">{comandaNum}</strong>
+              </div>
+              <div className="truncate text-teal-700 font-bold">
+                <span>Comanda</span>
+              </div>
+            </div>
+          </div>
+        ) : modality === 'BALCAO_RETIRADA' ? (
+          /* 2. BALCÃO + RETIRADA */
           <div className="min-w-0">
-            <h3 className="text-xs sm:text-sm font-bold text-stone-900 tracking-tight truncate">
-              {customerName}
+            <div className="flex items-center justify-between gap-1 font-bold text-xs text-stone-900">
+              <span className="font-mono text-stone-800">Pedido #{orderNum}</span>
+              <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                Retirada no Balcão
+              </span>
+            </div>
+            {customerName && (
+              <h3 className="text-xs sm:text-sm font-extrabold text-stone-900 tracking-tight truncate mt-1">
+                Cliente: {customerName}
+              </h3>
+            )}
+          </div>
+        ) : modality === 'BALCAO_ENTREGA' ? (
+          /* 3. BALCÃO + ENTREGA */
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-1 font-bold text-xs text-stone-900">
+              <span className="font-mono text-stone-800">Pedido #{orderNum}</span>
+              <span className="text-[10px] font-bold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                Entrega Balcão
+              </span>
+            </div>
+            <h3 className="text-xs sm:text-sm font-extrabold text-stone-900 tracking-tight truncate mt-1">
+              {customerName || 'Cliente'}
             </h3>
-
+            <div className="flex items-center gap-1.5 mt-0.5 text-xs text-stone-500 min-w-0 flex-wrap">
+              {addressSummary && (
+                <span className="flex items-center gap-0.5 truncate min-w-0">
+                  <MapPin className="w-2.5 h-2.5 text-stone-400 shrink-0" />
+                  <span className="truncate">{addressSummary}</span>
+                </span>
+              )}
+              {customerPhone && (
+                <span className="flex items-center gap-0.5 shrink-0 text-stone-400">
+                  <Phone className="w-2.5 h-2.5 shrink-0" />
+                  <span>{customerPhone.slice(-4)}</span>
+                </span>
+              )}
+            </div>
+          </div>
+        ) : modality === 'TOTEM' ? (
+          /* 6. TOTEM */
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-1 font-bold text-xs text-stone-900">
+              <span className="font-mono text-stone-800">Pedido #{orderNum}</span>
+              <span className="text-[10px] font-bold text-stone-800 bg-stone-100 px-2 py-0.5 rounded-md border border-stone-200">
+                Autoatendimento
+              </span>
+            </div>
+            {customerName && (
+              <h3 className="text-xs sm:text-sm font-extrabold text-stone-900 tracking-tight truncate mt-1">
+                {customerName}
+              </h3>
+            )}
+          </div>
+        ) : (
+          /* 5. DELIVERY (Padrão) */
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-1 font-bold text-xs text-stone-900">
+              <span className="font-mono text-stone-800">Pedido #{orderNum}</span>
+            </div>
+            <h3 className="text-xs sm:text-sm font-bold text-stone-900 tracking-tight truncate mt-0.5">
+              {customerName || 'Cliente'}
+            </h3>
             <div className="flex items-center gap-1.5 mt-0.5 text-xs text-stone-500 min-w-0 flex-wrap sm:flex-nowrap">
               {neighborhood && (
                 <span className="flex items-center gap-0.5 truncate min-w-0">
@@ -399,26 +507,30 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
           </div>
         )}
 
-        {/* Driver Assigned Info (if delivery) */}
-        {!isGarcom && driverName && (
-          <div className="flex items-center gap-1 text-xs text-emerald-800 bg-emerald-50/80 px-2 py-0.5 rounded-md border border-emerald-100 min-w-0">
-            <Truck className="w-3 h-3 text-emerald-600 shrink-0" />
+        {/* Driver Assigned Info (SOMENTE para modalidades com fluxo de entrega: DELIVERY e BALCÃO + ENTREGA) */}
+        {isDeliveryFlow && driverName && (
+          <div className="flex items-center gap-1 text-xs text-indigo-900 bg-indigo-50/80 px-2 py-0.5 rounded-md border border-indigo-100 min-w-0">
+            <Truck className="w-3 h-3 text-indigo-600 shrink-0" />
             <span className="font-semibold truncate">Entregador: {driverName}</span>
           </div>
         )}
 
-        {/* Pending Settlement Alert Banner */}
-        {!isGarcom && isPendingSettlement && (
+        {/* Pending Settlement Alert Banner (SOMENTE para fluxo de entrega) */}
+        {isDeliveryFlow && isPendingSettlement && (
           <div className="flex items-center gap-1 text-xs font-bold text-amber-900 bg-amber-100/90 px-2 py-1 rounded-lg border border-amber-300 min-w-0">
             <AlertTriangle className="w-3 h-3 text-amber-700 shrink-0 animate-bounce" />
             <span className="truncate">Aguardando baixa do recebimento</span>
           </div>
         )}
 
-        {/* Bottom Row: Payment & Action Button */}
+        {/* Bottom Row: Payment & Primary Action Button */}
         <div className="pt-1.5 border-t border-stone-100 flex items-center justify-between gap-1.5 min-w-0 overflow-hidden">
           <div className="min-w-0 flex-1">
-            {!isGarcom && (
+            {isTableModality ? (
+              <span className="text-[10px] font-bold text-stone-500 block truncate max-w-[110px]" title="Pagamento na Comanda">
+                Na Comanda
+              </span>
+            ) : (
               <span className="text-[11px] font-medium text-stone-500 block truncate max-w-[100px]">
                 {paymentMethod}
               </span>
@@ -428,14 +540,13 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
             </span>
           </div>
 
-
           <Button
             size="sm"
             loading={isUpdating}
             onClick={handleActionClick}
             icon={<ArrowRight className="w-3 h-3" />}
             iconPosition="right"
-            className={`min-h-[34px] sm:min-h-[32px] px-2.5 py-1 text-xs font-extrabold max-w-[145px] sm:max-w-[160px] truncate shadow-2xs shrink-0 ${primaryAction.bg}`}
+            className={`min-h-[34px] sm:min-h-[32px] px-2.5 py-1 text-xs font-extrabold max-w-[170px] sm:max-w-[195px] truncate shadow-2xs shrink-0 ${primaryAction.bg}`}
           >
             <span className="truncate">{primaryAction.label}</span>
           </Button>
@@ -444,3 +555,4 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
     </div>
   );
 };
+

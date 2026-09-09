@@ -34,6 +34,7 @@ import {
   ExternalLink,
   ChevronDown
 } from 'lucide-react';
+import Navbar from '../../components/Navbar';
 import { useAuth } from '../../contexts/AuthContext';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 
@@ -336,11 +337,11 @@ export default function Services() {
 
   const getCategoryColor = (catId: string) => {
     switch (catId) {
-      case 'acompanhante': return 'bg-amber-100 text-amber-800 border-amber-200';
-      case 'adestramento': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
-      case 'buffet': return 'bg-purple-100 text-purple-800 border-purple-200';
-      case 'chaveiro': return 'bg-blue-100 text-blue-800 border-blue-200';
-      default: return 'bg-stone-100 text-stone-800 border-stone-200';
+      case 'acompanhante': return 'bg-amber-50 text-amber-800 border-amber-200';
+      case 'adestramento': return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+      case 'buffet': return 'bg-purple-50 text-purple-800 border-purple-200';
+      case 'chaveiro': return 'bg-blue-50 text-blue-800 border-blue-200';
+      default: return 'bg-stone-50 text-stone-800 border-stone-200';
     }
   };
 
@@ -354,35 +355,35 @@ export default function Services() {
     const rawNumber = phone.replace(/\D/g, '');
     const numberToUse = rawNumber.startsWith('55') ? rawNumber : `55${rawNumber}`;
     const textMsg = encodeURIComponent(
-      `Olá ${providerName}, vi o seu serviço anunciado no QFomeai ("${serviceTitle}") e gostaria de saber as informações básicas e valores.`
+      `Olá ${providerName}, vi o seu serviço anunciado no Qfomeai ("${serviceTitle}") e gostaria de saber as informações básicas e valores.`
     );
     return `https://api.whatsapp.com/send?phone=${numberToUse}&text=${textMsg}`;
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-16 font-sans flex flex-col antialiased">
-      {/* Fully responsive Top Navigation Bar */}
-      <header className="bg-[#0b1b17] text-white select-none sticky top-0 z-40 shadow-sm border-b border-emerald-950/20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4.5 flex items-center justify-between">
+    <div className="min-h-screen bg-stone-50 pb-24 font-sans flex flex-col antialiased">
+      {/* Top Navigation Bar adhering to Qfomeai Header style */}
+      <header className="bg-[#0b1b17] text-white select-none sticky top-0 z-40 shadow-sm border-b border-emerald-950/30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button 
               onClick={() => navigate(-1)} 
-              className="p-2 hover:bg-emerald-950/60 rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              className="p-2 hover:bg-emerald-950/80 active:scale-95 rounded-full transition-all focus:outline-none focus:ring-2 focus:ring-emerald-400"
               id="services-back-btn"
               aria-label="Voltar"
             >
-              <ChevronLeft className="w-6 h-6 text-white" />
+              <ChevronLeft className="w-5 h-5 text-white" />
             </button>
-            <h1 className="text-xl font-bold tracking-tight text-white font-sans" id="services-title">
+            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-white font-sans" id="services-title">
               Serviços Locais
             </h1>
           </div>
           
           <div className="flex items-center gap-3">
-            {/* Real CTAs for Providers to self register */}
+            {/* CTAs for Providers to self register with Qfomeai emerald style */}
             <button
               onClick={handleOpenRegistration}
-              className="px-4 py-2 bg-[#ff5f36] hover:bg-[#ff724d] active:scale-95 text-xs sm:text-sm font-extrabold rounded-full text-white flex items-center gap-1.5 transition-all shadow-md shadow-[#ff5f36]/20"
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-xs sm:text-sm font-extrabold rounded-full text-white flex items-center gap-1.5 transition-all shadow-md shadow-emerald-950/40"
               id="services-register-cta-top"
             >
               <PlusCircle className="w-4 h-4" />
@@ -391,31 +392,31 @@ export default function Services() {
 
             <button 
               onClick={() => navigate('/servicos/solicitacoes')}
-              className="p-2 hover:bg-emerald-950/60 rounded-full transition-all text-white relative focus:outline-none"
+              className="p-2 hover:bg-emerald-950/80 active:scale-95 rounded-full transition-all text-white relative focus:outline-none"
               id="services-history-btn"
-              title="Solicitações"
+              title="Minhas Solicitações"
             >
-              <History className="w-5.5 h-5.5 text-white" />
+              <History className="w-5 h-5 text-white" />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Layout Stage, completely responsive using fluid grid limits */}
+      {/* Main Layout Stage */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         
-        {/* Soft Pink/Cream Info Banner with responsive sizing changes */}
+        {/* Qfomeai Regional Info Banner */}
         <div 
-          className="bg-orange-50 border border-orange-100 rounded-2xl p-4 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-stone-800"
+          className="bg-emerald-50/80 border border-emerald-100 rounded-3xl p-4 sm:p-5 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-stone-800 shadow-xs"
           id="services-distance-banner"
         >
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-orange-100/50 rounded-xl">
-              <MapPin className="w-5 h-5 text-[#ff5f36] shrink-0 fill-[#ff5f36]/10" />
+          <div className="flex items-center gap-3.5">
+            <div className="p-2.5 bg-emerald-100/80 rounded-2xl shrink-0">
+              <MapPin className="w-5 h-5 text-emerald-600" />
             </div>
             <div>
-              <span className="text-sm font-bold tracking-tight text-stone-800">
-                Região Atendida: <span className="text-[#ff5f36] underline decoration-2">{currentCidadeNome}</span>
+              <span className="text-sm font-bold tracking-tight text-stone-900">
+                Região Atendida: <span className="text-emerald-700 underline decoration-2 font-extrabold">{currentCidadeNome}</span>
               </span>
               <p className="text-xs text-stone-500 font-medium mt-0.5">
                 Exibindo prestadores de serviços disponíveis próximo de você
@@ -423,14 +424,14 @@ export default function Services() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-extrabold tracking-wider uppercase bg-[#ff5f36]/10 text-[#ff5f36] px-3 py-1.5 rounded-lg shrink-0">
+            <span className="text-xs font-extrabold tracking-wider uppercase bg-emerald-600/10 text-emerald-700 border border-emerald-200/60 px-3 py-1.5 rounded-xl shrink-0">
               {filteredServices.length} {filteredServices.length === 1 ? 'disponível' : 'disponíveis'}
             </span>
           </div>
         </div>
 
-        {/* Responsive main layout with 100% full-width coverage */}
-        <div className="space-y-6 mt-4">
+        {/* Responsive main layout */}
+        <div className="space-y-6">
           
           {/* Main Listings and Filters */}
           <div className="space-y-6">
@@ -438,13 +439,13 @@ export default function Services() {
             {/* Categories filters */}
             <section id="services-categories-section">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-black text-stone-900 tracking-tight">
+                <h2 className="text-lg font-extrabold text-stone-900 tracking-tight">
                   Filtrar por Categoria
                 </h2>
               </div>
 
-              {/* Horizontally dynamic scrollable row with fully adaptive custom selection sizing */}
-              <div className="flex items-start gap-3 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-stone-200/80 snap-x">
+              {/* Horizontally scrollable row */}
+              <div className="flex items-start gap-3 overflow-x-auto pb-3 no-scrollbar snap-x">
                 {categories.map((cat) => {
                   const IconComponent = cat.icon;
                   const isSelected = selectedCategory === cat.id;
@@ -453,10 +454,10 @@ export default function Services() {
                     <button
                       key={cat.id}
                       onClick={() => setSelectedCategory(cat.id)}
-                      className={`flex items-center gap-2.5 px-4 py-3 rounded-2xl border shrink-0 snap-center transition-all duration-300 select-none cursor-pointer focus:outline-none ${
+                      className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl border shrink-0 snap-center transition-all duration-200 select-none cursor-pointer focus:outline-none ${
                         isSelected 
-                          ? 'bg-[#0b1b17] border-[#0b1b17] text-white shadow-md' 
-                          : 'bg-white border-stone-200 hover:border-stone-300 text-stone-600'
+                          ? 'bg-emerald-600 border-emerald-600 text-white shadow-md shadow-emerald-600/20' 
+                          : 'bg-white border-stone-200 hover:border-emerald-200 hover:text-emerald-600 text-stone-700 shadow-xs'
                       }`}
                       id={`cat-button-${cat.id}`}
                     >
@@ -473,28 +474,28 @@ export default function Services() {
             {/* List logic: Loading or Data renders */}
             {loading ? (
               <div className="flex flex-col items-center justify-center py-20 text-stone-400">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#ff5f36] mb-4"></div>
-                <p className="text-sm font-semibold">Buscando profissionais cadastrados...</p>
+                <div className="animate-spin rounded-full h-8 w-8 border-3 border-emerald-600 border-t-transparent mb-4"></div>
+                <p className="text-sm font-semibold text-stone-500">Buscando profissionais cadastrados...</p>
               </div>
             ) : filteredServices.length === 0 ? (
               /* Empty state layout */
               <section 
-                className="bg-white border border-stone-100 rounded-3xl flex flex-col items-center justify-center p-12 text-center shadow-sm"
+                className="bg-white border border-stone-200/80 rounded-3xl flex flex-col items-center justify-center p-12 text-center shadow-xs"
                 id="services-empty-state"
               >
-                <div className="w-16 h-16 bg-stone-100 rounded-3xl flex items-center justify-center text-stone-300 mb-5 border border-stone-200/80">
-                  <SearchX className="w-7 h-7 text-[#ff5f36]" strokeWidth={1.5} />
+                <div className="w-16 h-16 bg-emerald-50 rounded-3xl flex items-center justify-center text-emerald-600 mb-5 border border-emerald-100">
+                  <SearchX className="w-7 h-7 text-emerald-600" strokeWidth={1.5} />
                 </div>
                 
-                <h3 className="text-base sm:text-lg font-bold text-stone-800 tracking-tight">
+                <h3 className="text-base sm:text-lg font-extrabold text-stone-900 tracking-tight">
                   Nenhum prestador encontrado
                 </h3>
-                <p className="text-xs sm:text-sm text-stone-400 mt-2 max-w-xs font-semibold leading-relaxed">
+                <p className="text-xs sm:text-sm text-stone-500 mt-2 max-w-xs font-medium leading-relaxed">
                   Não existem prestadores cadastrados para a categoria selecionada nesta região. Seja o primeiro anunciando acima!
                 </p>
                 <button
                   onClick={handleOpenRegistration}
-                  className="mt-6 px-5 py-2.5 bg-[#ff5f36] hover:bg-[#ff724d] font-bold text-xs rounded-full text-white flex items-center gap-1.5 transition-all shadow-sm"
+                  className="mt-6 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 font-bold text-xs rounded-full text-white flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20"
                 >
                   <PlusCircle className="w-4 h-4" />
                   Cadastrar meu Serviço
@@ -506,15 +507,15 @@ export default function Services() {
                 {/* 1. Directly Matching current User City section */}
                 {cityMatchedServices.length > 0 && (
                   <div className="space-y-4">
-                    <h3 className="text-sm font-extrabold text-stone-400 uppercase tracking-widest flex items-center gap-2">
+                    <h3 className="text-xs font-extrabold text-stone-400 uppercase tracking-widest flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                       Prestadores em {currentCidadeNome}
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                       {cityMatchedServices.map((serv) => (
                         <div 
                           key={serv.id} 
-                          className="bg-white rounded-2xl border border-stone-200/80 shadow-xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between"
+                          className="bg-white rounded-3xl border border-stone-200/80 hover:border-emerald-300 hover:shadow-md transition-all duration-300 overflow-hidden flex flex-col justify-between"
                         >
                           <div className="p-5 space-y-3.5">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -526,7 +527,7 @@ export default function Services() {
                               {(user && (user.uid === serv.userId || profile?.role === 'admin')) && (
                                 <button
                                   onClick={() => handleDeleteService(serv.id)}
-                                  className="text-stone-400 hover:text-red-500 p-1.5 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
+                                  className="text-stone-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
                                   title="Remover seu cadastro"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -540,10 +541,10 @@ export default function Services() {
                                   src={convertDriveUrl(serv.logoUrl)} 
                                   alt={`Logo de ${serv.nome}`} 
                                   referrerPolicy="no-referrer"
-                                  className="w-12 h-12 rounded-xl object-cover shrink-0 border border-stone-200/60 bg-white"
+                                  className="w-12 h-12 rounded-2xl object-cover shrink-0 border border-stone-200/60 bg-white"
                                 />
                               ) : (
-                                <div className="w-12 h-12 rounded-xl bg-stone-100 flex items-center justify-center text-stone-400 shrink-0 border border-stone-150">
+                                <div className="w-12 h-12 rounded-2xl bg-stone-100 flex items-center justify-center text-stone-400 shrink-0 border border-stone-200/60">
                                   <User className="w-6 h-6 text-stone-400" strokeWidth={1.5} />
                                 </div>
                               )}
@@ -551,7 +552,7 @@ export default function Services() {
                                 <h4 className="text-sm font-extrabold text-stone-900 tracking-tight leading-tight line-clamp-2" title={serv.titulo}>
                                   {serv.titulo}
                                 </h4>
-                                <p className="text-xs text-stone-550 font-bold truncate">
+                                <p className="text-xs text-stone-500 font-bold truncate">
                                   {serv.nome}
                                 </p>
                               </div>
@@ -565,7 +566,7 @@ export default function Services() {
                           {/* Card Footer actions */}
                           <div className="border-t border-stone-100 p-4 bg-stone-50/50 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3.5">
                             <div className="flex items-center gap-1.5 text-[11px] text-stone-500 font-bold">
-                              <MapPin className="w-3.5 h-3.5 text-stone-400" />
+                              <MapPin className="w-3.5 h-3.5 text-stone-400 shrink-0" />
                               <span className="line-clamp-1">{serv.bairro ? `${serv.bairro}, ` : ''}{serv.cidade} - {serv.estado}</span>
                             </div>
                             
@@ -573,7 +574,7 @@ export default function Services() {
                               href={getWhatsAppLink(serv.telefone, serv.titulo, serv.nome)}
                               target="_blank"
                               rel="noreferrer"
-                              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-xs font-extrabold text-white rounded-xl flex items-center justify-center gap-1.5 transition-all focus:outline-none"
+                              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-xs font-extrabold text-white rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs focus:outline-none"
                             >
                               <MessageCircle className="w-4 h-4" />
                               Falar
@@ -587,16 +588,16 @@ export default function Services() {
 
                 {/* 2. Other adjacent towns section inside the State */}
                 {otherCitiesServices.length > 0 && (
-                  <div className="space-y-4 pt-4 border-t border-stone-200/50">
-                    <h3 className="text-sm font-extrabold text-stone-400 uppercase tracking-widest flex items-center gap-2">
+                  <div className="space-y-4 pt-4 border-t border-stone-200/60">
+                    <h3 className="text-xs font-extrabold text-stone-400 uppercase tracking-widest flex items-center gap-2">
                       <Briefcase className="w-4 h-4 text-stone-400" />
                       Outras cidades em seu estado
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                       {otherCitiesServices.map((serv) => (
                         <div 
                           key={serv.id} 
-                          className="bg-white rounded-2xl border border-stone-200/85 hover:shadow-md transition-all overflow-hidden flex flex-col justify-between"
+                          className="bg-white rounded-3xl border border-stone-200/80 hover:border-emerald-300 hover:shadow-md transition-all duration-300 overflow-hidden flex flex-col justify-between"
                         >
                           <div className="p-5 space-y-3.5">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -608,7 +609,7 @@ export default function Services() {
                               {(user && (user.uid === serv.userId || profile?.role === 'admin')) && (
                                 <button
                                   onClick={() => handleDeleteService(serv.id)}
-                                  className="text-stone-400 hover:text-red-500 p-1.5 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
+                                  className="text-stone-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
                                   title="Remover seu cadastro"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -622,10 +623,10 @@ export default function Services() {
                                   src={convertDriveUrl(serv.logoUrl)} 
                                   alt={`Logo de ${serv.nome}`} 
                                   referrerPolicy="no-referrer"
-                                  className="w-12 h-12 rounded-xl object-cover shrink-0 border border-stone-200/60 bg-white"
+                                  className="w-12 h-12 rounded-2xl object-cover shrink-0 border border-stone-200/60 bg-white"
                                 />
                               ) : (
-                                <div className="w-12 h-12 rounded-xl bg-stone-100 flex items-center justify-center text-stone-400 shrink-0 border border-stone-150">
+                                <div className="w-12 h-12 rounded-2xl bg-stone-100 flex items-center justify-center text-stone-400 shrink-0 border border-stone-200/60">
                                   <User className="w-6 h-6 text-stone-400" strokeWidth={1.5} />
                                 </div>
                               )}
@@ -633,7 +634,7 @@ export default function Services() {
                                 <h4 className="text-sm font-extrabold text-stone-900 tracking-tight leading-tight line-clamp-2" title={serv.titulo}>
                                   {serv.titulo}
                                 </h4>
-                                <p className="text-xs text-stone-550 font-bold truncate">
+                                <p className="text-xs text-stone-500 font-bold truncate">
                                   {serv.nome}
                                 </p>
                               </div>
@@ -647,7 +648,7 @@ export default function Services() {
                           {/* Card Footer actions */}
                           <div className="border-t border-stone-100 p-4 bg-stone-50/50 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3.5">
                             <div className="flex items-center gap-1.5 text-[11px] text-stone-500 font-bold">
-                              <MapPin className="w-3.5 h-3.5 text-stone-400" />
+                              <MapPin className="w-3.5 h-3.5 text-stone-400 shrink-0" />
                               <span className="line-clamp-1">{serv.bairro ? `${serv.bairro}, ` : ''}{serv.cidade} - {serv.estado}</span>
                             </div>
                             
@@ -655,7 +656,7 @@ export default function Services() {
                               href={getWhatsAppLink(serv.telefone, serv.titulo, serv.nome)}
                               target="_blank"
                               rel="noreferrer"
-                              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-xs font-extrabold text-white rounded-xl flex items-center justify-center gap-1.5 transition-all focus:outline-none"
+                              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-xs font-extrabold text-white rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-xs focus:outline-none"
                             >
                               <MessageCircle className="w-4 h-4" />
                               Falar
@@ -679,7 +680,7 @@ export default function Services() {
       {/* MODAL DIALOG: Self-service registration form */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-stone-900/65 flex items-center justify-center z-50 p-4 overflow-y-auto backdrop-blur-xs">
-          <div className="bg-white w-full max-w-xl rounded-3xl p-6.5 shadow-2xl relative border border-stone-100 max-h-[92vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-xl rounded-3xl p-6 sm:p-7 shadow-2xl relative border border-stone-100 max-h-[92vh] overflow-y-auto">
             
             {/* Close Button */}
             <button
@@ -692,7 +693,7 @@ export default function Services() {
             {/* Title */}
             <div className="mb-4">
               <h2 className="text-xl font-extrabold text-stone-900 flex items-center gap-2">
-                <Briefcase className="w-6 h-6 text-[#ff5f36]" />
+                <Briefcase className="w-6 h-6 text-emerald-600" />
                 Cadastrar Seu Serviço
               </h2>
               <p className="text-xs text-stone-500 font-medium mt-1">
@@ -700,24 +701,24 @@ export default function Services() {
               </p>
             </div>
 
-            {/* Informational cards moved inside the modal (Trabalha por conta própria? & Informações Importantes) */}
-            <div className="space-y-3.5 mb-5 select-none text-left">
+            {/* Informational cards inside the modal */}
+            <div className="space-y-3 mb-5 select-none text-left">
               <div className="bg-[#0b1b17] text-white p-4.5 rounded-2xl border border-emerald-950 flex gap-3.5 items-start">
-                <div className="w-9 h-9 bg-[#ff5f36]/10 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
-                  <Briefcase className="w-4.5 h-4.5 text-[#ff5f36]" />
+                <div className="w-9 h-9 bg-emerald-500/20 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+                  <Briefcase className="w-4.5 h-4.5 text-emerald-400" />
                 </div>
                 <div>
                   <h3 className="text-sm font-extrabold text-white">
                     Trabalha por conta própria?
                   </h3>
-                  <p className="text-[11px] text-emerald-250 mt-1 font-medium leading-relaxed">
+                  <p className="text-[11px] text-emerald-200 mt-1 font-medium leading-relaxed">
                     Cadastre seus serviços gratuitamente para começar a receber pedidos e mensagens diretas via WhatsApp de centenas de clientes de {currentCidadeNome}!
                   </p>
                 </div>
               </div>
 
-              <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100">
-                <h4 className="text-[11px] font-black text-orange-950 uppercase tracking-wider mb-2">
+              <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/80">
+                <h4 className="text-[11px] font-black text-emerald-950 uppercase tracking-wider mb-2">
                   Informações Importantes
                 </h4>
                 <ul className="space-y-1.5">
@@ -733,16 +734,16 @@ export default function Services() {
               </div>
             </div>
 
-            {/* Error notifications inside form dialog */}
+            {/* Error notifications */}
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-2xl text-xs font-bold text-red-600">
                 {error}
               </div>
             )}
 
-            {/* Success notifications inside form dialog */}
+            {/* Success notifications */}
             {successMessage && (
-              <div className="mb-4 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-xs font-bold text-emerald-800 flex items-center gap-2 animate-bounce">
+              <div className="mb-4 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-xs font-bold text-emerald-800 flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-600" />
                 <span>{successMessage}</span>
               </div>
@@ -754,21 +755,21 @@ export default function Services() {
               <div className="space-y-1.5">
                 <label className="text-xs font-extrabold text-stone-700 flex items-center gap-1">
                   <User className="w-3.5 h-3.5 text-stone-400" />
-                  Nome do Prestador / Empresa <span className="text-[#ff5f36]">*</span>
+                  Nome do Prestador / Empresa <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   placeholder="Nome que será exibido no anúncio"
                   value={regNome}
                   onChange={(e) => setRegNome(e.target.value)}
-                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-stone-850 font-medium"
+                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-stone-800 font-medium transition-all"
                 />
               </div>
 
               {/* Field: Public Google Drive Logo URL */}
               <div className="space-y-1.5">
                 <label className="text-xs font-extrabold text-stone-700 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 text-[#ff5f36]" />
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
                   Link Público da Logomarca (Google Drive - Opcional)
                 </label>
                 <input
@@ -776,7 +777,7 @@ export default function Services() {
                   placeholder="Ex: https://drive.google.com/file/d/.../view"
                   value={regLogoUrl}
                   onChange={(e) => setRegLogoUrl(e.target.value)}
-                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-stone-850 font-medium"
+                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-stone-800 font-medium transition-all"
                 />
                 <p className="text-[10px] text-stone-400 leading-normal">
                   Insira o link público de compartilhamento da sua logomarca ou foto no Google Drive. Lembre-se de definir o acesso como <strong>"Qualquer pessoa com o link"</strong> no Drive.
@@ -790,14 +791,14 @@ export default function Services() {
                 <div className="space-y-1.5">
                   <label className="text-xs font-extrabold text-stone-700 flex items-center gap-1">
                     <Phone className="w-3.5 h-3.5 text-stone-400" />
-                    WhatsApp do Profissional <span className="text-[#ff5f36]">*</span>
+                    WhatsApp do Profissional <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="tel"
                     placeholder="Ex: (85) 99999-9999"
                     value={regTelefone}
                     onChange={(e) => setRegTelefone(e.target.value)}
-                    className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-stone-850 font-medium"
+                    className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-stone-800 font-medium transition-all"
                   />
                   <p className="text-[10px] text-stone-400 font-medium">Insira o número completo com DDD.</p>
                 </div>
@@ -806,13 +807,13 @@ export default function Services() {
                 <div className="space-y-1.5">
                   <label className="text-xs font-extrabold text-stone-700 flex items-center gap-1">
                     <LayoutGrid className="w-3.5 h-3.5 text-stone-400" />
-                    Categoria do Serviço <span className="text-[#ff5f36]">*</span>
+                    Categoria do Serviço <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     <select
                       value={regCategoria}
                       onChange={(e) => setRegCategoria(e.target.value)}
-                      className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-stone-850 appearance-none font-bold"
+                      className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-stone-800 appearance-none font-bold transition-all"
                     >
                       <option value="acompanhante">Acompanhante de Idoso</option>
                       <option value="adestramento">Adestramento de Pets</option>
@@ -829,14 +830,14 @@ export default function Services() {
               <div className="space-y-1.5">
                 <label className="text-xs font-extrabold text-stone-700 flex items-center gap-1">
                   <Type className="w-3.5 h-3.5 text-stone-400" />
-                  Título Curto do Anúncio <span className="text-[#ff5f36]">*</span>
+                  Título Curto do Anúncio <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   placeholder="Ex: Ofereço serviços de chaveiro residencial 24 horas no centro"
                   value={regTitulo}
                   onChange={(e) => setRegTitulo(e.target.value)}
-                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-stone-850 font-medium"
+                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-stone-800 font-medium transition-all"
                 />
               </div>
 
@@ -844,7 +845,7 @@ export default function Services() {
               <div className="space-y-1.5">
                 <label className="text-xs font-extrabold text-stone-700 flex items-center gap-1">
                   <FileText className="w-3.5 h-3.5 text-stone-400" />
-                  Descrição do Serviço / Diferenciais <span className="text-[#ff5f36]">*</span>
+                  Descrição do Serviço / Diferenciais <span className="text-red-500">*</span>
                 </label>
                 <textarea
                   placeholder="Descreva detalhadamente sua experiência, dias e horários de atendimento, preços médios e o que está incluso no atendimento..."
@@ -852,25 +853,25 @@ export default function Services() {
                   value={regDescricao}
                   onChange={(e) => setRegDescricao(e.target.value)}
                   maxLength={1000}
-                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-stone-850 font-medium resize-none"
+                  className="w-full px-4 py-3 border border-stone-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-stone-800 font-medium resize-none transition-all"
                 />
-                <span className="text-[10px] text-stone-400 font-medium block text-right">{regDescricao.length}/1000 caractores</span>
+                <span className="text-[10px] text-stone-400 font-medium block text-right">{regDescricao.length}/1000 caracteres</span>
               </div>
 
               {/* Geo location select parameters with active fallbacks */}
-              <div className="bg-stone-50 p-4.5 rounded-2xl border border-stone-100 space-y-3.5">
+              <div className="bg-stone-50 p-4.5 rounded-2xl border border-stone-200/80 space-y-3.5">
                 <span className="text-xs font-black text-stone-800 tracking-tight block">
                   Área de Cobertura do Atendimento
                 </span>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div className="space-y-1">
-                    <label className="text-[11px] font-bold text-stone-500">Estado *</label>
+                    <label className="text-[11px] font-bold text-stone-600">Estado <span className="text-red-500">*</span></label>
                     <div className="relative">
                       <select
                         value={regEstadoId}
                         onChange={(e) => setRegEstadoId(e.target.value)}
-                        className="w-full px-3 py-2.5 border border-stone-200 bg-white rounded-xl text-xs font-bold text-stone-850 appearance-none"
+                        className="w-full px-3 py-2.5 border border-stone-200 bg-white rounded-xl text-xs font-bold text-stone-800 appearance-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
                       >
                         <option value="">Selecione um Estado</option>
                         {allEstados.map((est) => (
@@ -881,14 +882,14 @@ export default function Services() {
                     </div>
                   </div>
 
-                  <div className="space-y-1 border-stone-100">
-                    <label className="text-[11px] font-bold text-stone-500">Cidade *</label>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-stone-600">Cidade <span className="text-red-500">*</span></label>
                     <div className="relative">
                       <select
                         value={regCidadeId}
                         onChange={(e) => setRegCidadeId(e.target.value)}
                         disabled={!regEstadoId}
-                        className="w-full px-3 py-2.5 border border-stone-200 bg-white rounded-xl text-xs font-bold text-stone-850 appearance-none disabled:bg-stone-100 disabled:opacity-60"
+                        className="w-full px-3 py-2.5 border border-stone-200 bg-white rounded-xl text-xs font-bold text-stone-800 appearance-none disabled:bg-stone-100 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
                       >
                         <option value="">Selecione uma Cidade</option>
                         {filteredCities.map((cid) => (
@@ -901,13 +902,13 @@ export default function Services() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[11px] font-bold text-stone-500">Bairro / Região (Opcional)</label>
+                  <label className="text-[11px] font-bold text-stone-600">Bairro / Região (Opcional)</label>
                   <input
                     type="text"
                     placeholder="Ex: Aldeota, Centro, Atende toda a cidade..."
                     value={regBairro}
                     onChange={(e) => setRegBairro(e.target.value)}
-                    className="w-full px-3.5 py-2.5 border border-stone-200 rounded-xl text-xs text-stone-850 font-medium"
+                    className="w-full px-3.5 py-2.5 border border-stone-200 bg-white rounded-xl text-xs text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
                   />
                 </div>
               </div>
@@ -918,14 +919,14 @@ export default function Services() {
                   type="button"
                   onClick={() => setIsModalOpen(false)}
                   disabled={regLoading}
-                  className="px-5 py-3 text-xs font-bold text-stone-500 bg-stone-100 hover:bg-stone-200/80 rounded-2xl transition-all cursor-pointer disabled:opacity-50"
+                  className="px-5 py-3 text-xs font-bold text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-2xl transition-all cursor-pointer disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={regLoading}
-                  className="px-6 py-3 text-xs font-bold bg-[#ff5f36] hover:bg-[#ff724d] text-white rounded-2xl flex items-center gap-1.5 transition-all shadow-md cursor-pointer disabled:opacity-50"
+                  className="px-6 py-3 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-2xl flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
                 >
                   {regLoading ? 'Publicando...' : 'Publicar Anúncio'}
                 </button>
@@ -936,6 +937,9 @@ export default function Services() {
           </div>
         </div>
       )}
+
+      {/* Standard bottom Navbar */}
+      <Navbar />
 
     </div>
   );

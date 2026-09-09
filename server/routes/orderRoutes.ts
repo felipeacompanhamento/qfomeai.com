@@ -55,19 +55,51 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
       const roleData = pData.roleSpecificData || {};
       const commonData = pData.commonOperationalData || {};
 
-      const driverData = {
-        ...dData,
-        ...pData,
-        ...roleData,
-        ...commonData,
-        ...uData
-      };
+      const resolvedName = uData.nome || uData.name || pData.name || roleData.nickname || dData.name || 'Entregador';
+      const resolvedPhone = uData.phone || uData.telefone || commonData.emergencyContact || dData.phone || '';
 
-      const rawStatus = String(driverData.status || driverData.status_conta || driverData.operationalStatus || uData.status || pData.operationalStatus || '').toUpperCase().trim();
-      const isExplicitlyInactive = ['INACTIVE', 'INATIVO', 'BLOCKED', 'BLOQUEADO', 'DISABLED', 'DESATIVADO', 'SUSPENDED'].includes(rawStatus);
-      const isExplicitlyFalseActive = driverData.active === false || driverData.ativo === false || driverData.active === 'false' || driverData.ativo === 'false' || uData.active === false || uData.ativo === false;
+      // Canonical status resolution matching the listing rule:
+      // In GET /api/restaurant/drivers: status = uData.status || (pData.operationalStatus !== 'INACTIVE' ? 'ACTIVE' : 'INACTIVE')
+      const isExplicitlyBlocked =
+        pData.blocked === true || pData.bloqueado === true ||
+        uData.blocked === true || uData.bloqueado === true ||
+        dData.blocked === true || dData.bloqueado === true ||
+        String(pData.status || '').toUpperCase().trim() === 'BLOCKED' ||
+        String(pData.status || '').toUpperCase().trim() === 'BLOQUEADO' ||
+        String(uData.status || '').toUpperCase().trim() === 'BLOCKED' ||
+        String(uData.status || '').toUpperCase().trim() === 'BLOQUEADO' ||
+        String(uData.status_conta || '').toUpperCase().trim() === 'BLOCKED' ||
+        String(uData.status_conta || '').toUpperCase().trim() === 'BLOQUEADO';
 
-      if (isExplicitlyInactive || isExplicitlyFalseActive) {
+      if (isExplicitlyBlocked) {
+        return res.status(400).json({ error: 'Este entregador está bloqueado' });
+      }
+
+      // Canonical status check matching GET /api/restaurant/drivers
+      const canonicalStatus = (uData.status || (pData.operationalStatus !== 'INACTIVE' ? 'ACTIVE' : 'INACTIVE')).toString().toUpperCase().trim();
+
+      const isPositivelyActive =
+        canonicalStatus === 'ACTIVE' ||
+        uData.active === true || uData.ativo === true ||
+        pData.active === true || pData.ativo === true ||
+        dData.active === true || dData.ativo === true ||
+        String(pData.operationalStatus || '').toUpperCase().trim() === 'AVAILABLE' ||
+        String(pData.operationalStatus || '').toUpperCase().trim() === 'ONLINE' ||
+        String(pData.operationalStatus || '').toUpperCase().trim() === 'ACTIVE' ||
+        String(pData.roleSpecificData?.availability || '').toUpperCase().trim() === 'ONLINE' ||
+        String(dData.availabilityStatus || '').toUpperCase().trim() === 'ONLINE';
+
+      const isExplicitlyInactive =
+        canonicalStatus === 'INACTIVE' ||
+        String(uData.status || '').toUpperCase().trim() === 'INACTIVE' ||
+        String(uData.status || '').toUpperCase().trim() === 'INATIVO' ||
+        String(pData.status || '').toUpperCase().trim() === 'INACTIVE' ||
+        String(pData.status || '').toUpperCase().trim() === 'INATIVO' ||
+        String(pData.operationalStatus || '').toUpperCase().trim() === 'INACTIVE' ||
+        pData.active === false || pData.ativo === false ||
+        uData.active === false || uData.ativo === false;
+
+      if (!isPositivelyActive && isExplicitlyInactive) {
         return res.status(400).json({ error: 'Este entregador está inativo' });
       }
 
@@ -112,8 +144,8 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
       const statusEntrega = entregadorAceitaRecusa ? 'waiting' : 'accepted';
       const acceptedAt = entregadorAceitaRecusa ? null : now;
 
-      const driverName = driverData.name || driverData.nickname || 'Entregador';
-      const driverPhone = driverData.phone || '';
+      const driverName = resolvedName;
+      const driverPhone = resolvedPhone;
 
       const batch = db.batch();
 
@@ -150,12 +182,27 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
         driverName: driverName,
         driverPhone: driverPhone,
         cliente_id: orderData.cliente_id || '',
-        cliente_nome: orderData.cliente_nome || 'Cliente',
-        cliente_telefone: orderData.cliente_telefone || orderData.telefone || '',
+        cliente_nome: orderData.cliente_nome || orderData.customerName || orderData.nome_cliente || 'Cliente',
+        cliente_telefone: orderData.cliente_telefone || orderData.cliente_telefone_whatsapp || orderData.telefone_cliente || orderData.customerPhone || orderData.telefone || '',
+        cliente_telefone_whatsapp: orderData.cliente_telefone_whatsapp || orderData.cliente_telefone || orderData.customerPhone || '',
         endereco_entrega: orderData.endereco_entrega || orderData.endereco || '',
+        rua: orderData.rua || orderData.endereco_entrega?.rua || orderData.endereco_entrega?.street || null,
+        numero_endereco: orderData.numero_endereco || orderData.endereco_numero || orderData.endereco_entrega?.numero || orderData.endereco_entrega?.number || null,
+        bairro: orderData.bairro || orderData.endereco_entrega?.bairro || orderData.endereco_entrega?.neighborhood || null,
+        complemento: orderData.complemento || orderData.endereco_entrega?.complemento || orderData.endereco_entrega?.complement || null,
+        ponto_referencia: orderData.ponto_referencia || orderData.referencia || orderData.endereco_entrega?.ponto_referencia || orderData.endereco_entrega?.referencia || null,
+        referencia: orderData.referencia || orderData.ponto_referencia || orderData.endereco_entrega?.referencia || orderData.endereco_entrega?.ponto_referencia || null,
+        numero_pedido: orderData.numero_pedido || orderData.orderNumber || orderData.numero || null,
+        orderNumber: orderData.orderNumber || orderData.numero_pedido || orderData.numero || null,
+        origem: orderData.origem || 'DELIVERY',
+        atendimento: orderData.atendimento || orderData.tipo_entrega || 'ENTREGA',
         deliveryStatus: deliveryStatus,
         canonicalStatus: deliveryStatus,
+        pago: Boolean(orderData.pago),
         paymentStatus: orderData.pago ? 'PAID' : 'PENDING',
+        payments: orderData.payments || [],
+        amountReceived: orderData.amountReceived || null,
+        changeAmount: orderData.changeAmount || null,
         status_entrega: statusEntrega,
         status: currentStatus,
         valor_total: orderData.valor_total || 0,
@@ -163,6 +210,9 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
         taxa_entrega: orderData.taxa_entrega || 0,
         forma_pagamento: orderData.forma_pagamento || '',
         troco: orderData.troco || null,
+        items: orderData.items || orderData.itens || [],
+        observacoes: orderData.observacoes || orderData.observacao || orderData.notes || '',
+        notes: orderData.notes || orderData.observacoes || orderData.observacao || '',
         data_criacao: orderData.data_criacao || now,
         assignedAt: now,
         acceptedAt: acceptedAt,

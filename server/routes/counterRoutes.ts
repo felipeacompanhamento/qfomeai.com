@@ -34,6 +34,14 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
       clientActionId,
       serviceMode = 'COUNTER',
       clientName = '',
+      clientPhone = '',
+      tableNumber = '',
+      tableId = '',
+      tableName = '',
+      tabId = '',
+      comandaId = '',
+      deliveryAddress = null,
+      tipoAtendimento = '',
       items = [],
       paymentMethod: rawPaymentMethod,
       forma_pagamento,
@@ -68,6 +76,40 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
     }
     const finalClientName = normalizedClientName || 'Cliente Balcão';
 
+    if (tipoAtendimento === 'ENTREGA') {
+      if (!normalizedClientName) {
+        return res.status(400).json({ success: false, error: 'CLIENT_NAME_REQUIRED', message: 'O nome do cliente é obrigatório para pedidos de entrega.' });
+      }
+      const rawPhone = typeof clientPhone === 'string' ? clientPhone.trim() : '';
+      if (!rawPhone) {
+        return res.status(400).json({ success: false, error: 'CLIENT_PHONE_REQUIRED', message: 'O telefone / WhatsApp é obrigatório para pedidos de entrega.' });
+      }
+      const street = deliveryAddress?.street || deliveryAddress?.rua || deliveryAddress?.endereco;
+      const num = deliveryAddress?.number || deliveryAddress?.numero;
+      const neighborhood = deliveryAddress?.neighborhood || deliveryAddress?.bairro;
+      if (!street || !String(street).trim()) {
+        return res.status(400).json({ success: false, error: 'DELIVERY_STREET_REQUIRED', message: 'O endereço (rua/logradouro) é obrigatório para pedidos de entrega.' });
+      }
+      if (!num || !String(num).trim()) {
+        return res.status(400).json({ success: false, error: 'DELIVERY_NUMBER_REQUIRED', message: 'O número do endereço é obrigatório para pedidos de entrega.' });
+      }
+      if (!neighborhood || !String(neighborhood).trim()) {
+        return res.status(400).json({ success: false, error: 'DELIVERY_NEIGHBORHOOD_REQUIRED', message: 'O bairro é obrigatório para pedidos de entrega.' });
+      }
+    }
+
+    if (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') {
+      const hasTable = (typeof tableId === 'string' && tableId.trim()) || (typeof tableNumber === 'string' && tableNumber.trim()) || typeof tableNumber === 'number';
+      const hasTab = (typeof tabId === 'string' && tabId.trim()) || (typeof comandaId === 'string' && comandaId.trim());
+      if (!hasTable && !hasTab) {
+        return res.status(400).json({
+          success: false,
+          error: 'TABLE_OR_TAB_REQUIRED',
+          message: 'Para atendimento em mesa, é necessário selecionar uma mesa livre ou comanda ativa existente.'
+        });
+      }
+    }
+
     if (typeof pago !== 'boolean') {
       return res.status(400).json({ success: false, error: 'INVALID_PAGO', message: 'O campo "pago" deve ser um booleano.' });
     }
@@ -84,7 +126,7 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
       if (order.status !== 'cozinha') return false;
       if (!Array.isArray(order.items)) return false;
       if (typeof order.valor_total !== 'number' || !Number.isFinite(order.valor_total) || order.valor_total < 0) return false;
-      if (!['dinheiro', 'pix', 'credito', 'debito'].includes(order.forma_pagamento)) return false;
+      if (!['dinheiro', 'pix', 'credito', 'debito', 'comanda'].includes(order.forma_pagamento)) return false;
       return true;
     };
 
@@ -96,15 +138,18 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
         return res.status(403).json({ success: false, error: 'COUNTER_DISABLED', message: 'A funcionalidade de Balcão não está ativada neste restaurante.' });
       }
 
-      const paymentCheck = await loadRestaurantCounterPaymentMethods(restaurantId, serviceMode);
-      if (paymentCheck.hasExplicitConfiguration) {
-        const anyEnabledForChannel = paymentCheck.methods.some(m => m.enabledForCurrentServiceMode);
-        if (!anyEnabledForChannel) {
-          return res.status(400).json({
-            success: false,
-            error: 'NO_PAYMENT_METHOD_AVAILABLE',
-            message: 'Nenhuma forma de pagamento está habilitada para este tipo de atendimento.'
-          });
+      let paymentCheck: any = { hasExplicitConfiguration: false, methods: [] };
+      if (tipoAtendimento !== 'MESA' && serviceMode !== 'DINE_IN') {
+        paymentCheck = await loadRestaurantCounterPaymentMethods(restaurantId, serviceMode);
+        if (paymentCheck.hasExplicitConfiguration) {
+          const anyEnabledForChannel = paymentCheck.methods.some((m: any) => m.enabledForCurrentServiceMode);
+          if (!anyEnabledForChannel) {
+            return res.status(400).json({
+              success: false,
+              error: 'NO_PAYMENT_METHOD_AVAILABLE',
+              message: 'Nenhuma forma de pagamento está habilitada para este tipo de atendimento.'
+            });
+          }
         }
       }
 
@@ -117,7 +162,11 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
         return (cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       };
 
-      if (reqPayments.length > 0) {
+      if (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') {
+        normalizedPayments = [];
+        cashPaymentCents = 0;
+        totalPaymentsCents = 0;
+      } else if (reqPayments.length > 0) {
         for (const p of reqPayments) {
           const pMethodId = normalizePaymentMethodId(p.paymentMethodId || p.forma_pagamento || p.method);
           if (!pMethodId) {
@@ -129,7 +178,7 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
           }
 
           if (paymentCheck.hasExplicitConfiguration) {
-            const methodObj = paymentCheck.methods.find(m => m.id === pMethodId);
+            const methodObj = paymentCheck.methods.find((m: any) => m.id === pMethodId);
             if (!methodObj || !methodObj.enabledForCurrentServiceMode) {
               return res.status(400).json({
                 success: false,
@@ -180,7 +229,7 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
         }
 
         if (paymentCheck.hasExplicitConfiguration) {
-          const methodObj = paymentCheck.methods.find(m => m.id === normalizedMethod);
+          const methodObj = paymentCheck.methods.find((m: any) => m.id === normalizedMethod);
           if (!methodObj || !methodObj.enabledForCurrentServiceMode) {
             return res.status(400).json({
               success: false,
@@ -445,19 +494,21 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
         });
       }
 
-      if (reqPayments.length === 0) {
-        normalizedPayments[0].amount = totalCents;
-        if (normalizedPayments[0].paymentMethodId === 'dinheiro') {
-          cashPaymentCents = totalCents;
+      if (tipoAtendimento !== 'MESA' && serviceMode !== 'DINE_IN') {
+        if (reqPayments.length === 0) {
+          normalizedPayments[0].amount = totalCents;
+          if (normalizedPayments[0].paymentMethodId === 'dinheiro') {
+            cashPaymentCents = totalCents;
+          }
         }
-      }
 
-      if (pago && reqPayments.length > 0 && totalPaymentsCents !== totalCents) {
-        return res.status(400).json({
-          success: false,
-          error: 'PAYMENT_SUM_MISMATCH',
-          message: `A soma das formas de pagamento (R$ ${formatPtBrCurrency(totalPaymentsCents)}) é diferente do total do pedido (R$ ${formatPtBrCurrency(totalCents)}).`
-        });
+        if (pago && reqPayments.length > 0 && totalPaymentsCents !== totalCents) {
+          return res.status(400).json({
+            success: false,
+            error: 'PAYMENT_SUM_MISMATCH',
+            message: `A soma das formas de pagamento (R$ ${formatPtBrCurrency(totalPaymentsCents)}) é diferente do total do pedido (R$ ${formatPtBrCurrency(totalCents)}).`
+          });
+        }
       }
 
       let finalPago = Boolean(pago);
@@ -465,7 +516,12 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
       let finalChangeAmountCents = 0;
       let settlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
 
-      if (finalPago) {
+      if (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') {
+        finalPago = false;
+        finalAmountReceivedCents = 0;
+        finalChangeAmountCents = 0;
+        settlementStatus = 'NOT_REQUIRED';
+      } else if (finalPago) {
         settlementStatus = 'SETTLED';
         if (cashPaymentCents > 0) {
           let inputReceivedCents = 0;
@@ -559,13 +615,223 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
         if (counterSnap.exists) {
           nextNumber = (counterSnap.data().value || 0) + 1;
         }
+
+        // Mesa / Comanda resolution (READ phase: all reads must happen before any writes)
+        let resolvedTabId: string | null = null;
+        let resolvedTableId: string | null = null;
+        let resolvedTableName: string | null = null;
+        let resolvedTableNumber: any = null;
+
+        let targetTabRef: any = null;
+        let targetTabData: any = null;
+        let isNewTab = false;
+        let targetTableRef: any = null;
+        let targetTableData: any = null;
+
+        if (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') {
+          const rawTabId = typeof tabId === 'string' && tabId.trim() ? tabId.trim() : (typeof comandaId === 'string' && comandaId.trim() ? comandaId.trim() : '');
+          const rawTableId = typeof tableId === 'string' && tableId.trim() ? tableId.trim() : '';
+
+          if (rawTabId) {
+            // Existing active comanda selected
+            const rootTabRef = db.collection('tabs').doc(rawTabId);
+            let tabSnap = await transaction.get(rootTabRef);
+            if (!tabSnap.exists) {
+              const nestedTabRef = db.collection('restaurants').doc(restaurantId).collection('tabs').doc(rawTabId);
+              tabSnap = await transaction.get(nestedTabRef);
+            }
+            if (!tabSnap.exists) {
+              return {
+                error: 'TAB_NOT_FOUND',
+                status: 404,
+                message: 'Comanda ativa selecionada não foi encontrada.'
+              };
+            }
+            targetTabRef = tabSnap.ref;
+            targetTabData = tabSnap.data() || {};
+            const tabStatusUpper = String(targetTabData.status || '').toUpperCase().trim();
+            if (['CLOSED', 'FECHADA', 'CANCELLED', 'CANCELADA'].includes(tabStatusUpper)) {
+              return {
+                error: 'TAB_ALREADY_CLOSED',
+                status: 400,
+                message: 'A comanda selecionada já se encontra fechada.'
+              };
+            }
+
+            resolvedTabId = tabSnap.id;
+            resolvedTableId = rawTableId || targetTabData.tableId || null;
+            resolvedTableName = tableName || targetTabData.tableName || (targetTabData.tableNumber !== undefined && targetTabData.tableNumber !== null ? `Mesa ${targetTabData.tableNumber}` : null);
+            resolvedTableNumber = tableNumber || targetTabData.tableNumber || null;
+
+            if (resolvedTableId) {
+              const rootTableRef = db.collection('tables').doc(resolvedTableId);
+              let tSnap = await transaction.get(rootTableRef);
+              if (!tSnap.exists) {
+                const nestedTableRef = db.collection('restaurants').doc(restaurantId).collection('tables').doc(resolvedTableId);
+                tSnap = await transaction.get(nestedTableRef);
+              }
+              if (tSnap.exists) {
+                targetTableRef = tSnap.ref;
+                targetTableData = tSnap.data() || {};
+              }
+            }
+          } else if (rawTableId) {
+            // Free table selected
+            const rootTableRef = db.collection('tables').doc(rawTableId);
+            let tSnap = await transaction.get(rootTableRef);
+            if (!tSnap.exists) {
+              const nestedTableRef = db.collection('restaurants').doc(restaurantId).collection('tables').doc(rawTableId);
+              tSnap = await transaction.get(nestedTableRef);
+            }
+            if (!tSnap.exists) {
+              return {
+                error: 'TABLE_NOT_FOUND',
+                status: 404,
+                message: 'Mesa selecionada não foi encontrada.'
+              };
+            }
+            targetTableRef = tSnap.ref;
+            targetTableData = tSnap.data() || {};
+
+            // REGRA: Não criar uma segunda comanda! Verificar se já existe comanda ativa para esta mesa
+            const activeStatuses = ['OPEN', 'open', 'WAITING_ITEMS', 'waiting_items', 'WAITING_PAYMENT', 'waiting_payment', 'PARTIALLY_PAID', 'partially_paid'];
+            const activeTabsQuery = db.collection('tabs')
+              .where('restaurantId', '==', restaurantId)
+              .where('tableId', '==', rawTableId)
+              .where('status', 'in', activeStatuses);
+            const activeTabsSnap = await transaction.get(activeTabsQuery);
+
+            if (!activeTabsSnap.empty) {
+              const existingTabDoc = activeTabsSnap.docs[0];
+              targetTabRef = existingTabDoc.ref;
+              targetTabData = existingTabDoc.data() || {};
+              isNewTab = false;
+            } else {
+              targetTabRef = db.collection('tabs').doc();
+              const tblName = targetTableData.name || targetTableData.nome || (targetTableData.number !== undefined ? `Mesa ${targetTableData.number}` : `Mesa ${rawTableId}`);
+              const tblNum = targetTableData.number !== undefined ? targetTableData.number : (targetTableData.numero !== undefined ? targetTableData.numero : null);
+              targetTabData = {
+                id: targetTabRef.id,
+                restaurantId,
+                tableId: rawTableId,
+                tableName: tblName,
+                tableNumber: tblNum,
+                hallId: targetTableData.hallId || null,
+                waiterId: operatorId,
+                waiterName: operatorName,
+                customerName: finalClientName || '',
+                observation: '',
+                peopleCount: 1,
+                status: 'OPEN',
+                origin: 'COUNTER',
+                openedBy: operatorId,
+                openedAt: nowIso,
+                createdAt: nowIso,
+                updatedAt: nowIso,
+                items: [],
+                totalInCents: 0,
+                paidInCents: 0
+              };
+              isNewTab = true;
+            }
+
+            resolvedTabId = targetTabRef.id;
+            resolvedTableId = rawTableId;
+            resolvedTableName = targetTabData.tableName || targetTableData.name || targetTableData.nome || (targetTableData.number !== undefined ? `Mesa ${targetTableData.number}` : `Mesa ${rawTableId}`);
+            resolvedTableNumber = targetTabData.tableNumber !== undefined ? targetTabData.tableNumber : (targetTableData.number !== undefined ? targetTableData.number : null);
+          }
+        }
+
+        // WRITE phase
         transaction.set(counterRef, { value: nextNumber }, { merge: true });
 
         const newOrderRef = db.collection('restaurants').doc(restaurantId).collection('orders').doc();
 
+        if (targetTabRef) {
+          if (isNewTab) {
+            transaction.set(targetTabRef, targetTabData);
+          }
+          if (targetTableRef) {
+            transaction.update(targetTableRef, {
+              status: 'OCCUPIED',
+              comandaId: resolvedTabId,
+              tabId: resolvedTabId,
+              updatedAt: nowIso
+            });
+          }
+
+          const newRoundTabItems = formattedItems.map((item: any) => ({
+            id: db.collection('dummy').doc().id,
+            orderId: newOrderRef.id,
+            produtoId: item.id || item.productId,
+            produtoNome: item.nome,
+            quantidade: item.quantidade,
+            precoUnitario: item.precoUnitario,
+            unitPriceCents: item.unitPriceCents,
+            total: item.valorTotal,
+            totalPriceCents: Math.round(item.valorTotal * 100),
+            status: 'em_preparo',
+            observacoes: item.observacao || '',
+            pedidosAdicionais: {
+              size: item.tamanhoSelecionado || null,
+              options: item.adicionaisSelecionados || []
+            },
+            sentAt: nowIso
+          }));
+
+          const currentTabItems = Array.isArray(targetTabData.items) ? targetTabData.items : [];
+          const updatedTabItems = [...currentTabItems, ...newRoundTabItems];
+          const prevTotalCents = targetTabData.totalInCents ?? Math.round((targetTabData.total || 0) * 100);
+          const newTotalCents = prevTotalCents + totalCents;
+          const prevPaidCents = targetTabData.paidInCents ?? Math.round((targetTabData.paidAmount || 0) * 100);
+          const newRemainingCents = Math.max(0, newTotalCents - prevPaidCents);
+
+          transaction.update(targetTabRef, {
+            items: updatedTabItems,
+            totalInCents: newTotalCents,
+            subtotal: newTotalCents / 100,
+            total: newTotalCents / 100,
+            totalInBrl: newTotalCents / 100,
+            remainingInCents: newRemainingCents,
+            status: 'OPEN',
+            lastOrderId: newOrderRef.id,
+            updatedAt: nowIso
+          });
+        }
+
         let tipoEntrega = 'balcao';
         if (serviceMode === 'DINE_IN') tipoEntrega = 'consumo_local';
         else if (serviceMode === 'PICKUP') tipoEntrega = 'retirada';
+        else if (tipoAtendimento === 'ENTREGA') tipoEntrega = 'entrega';
+
+        const rawStreet = deliveryAddress?.street || deliveryAddress?.rua || deliveryAddress?.endereco || '';
+        const rawNumber = deliveryAddress?.number || deliveryAddress?.numero || '';
+        const rawNeighborhood = deliveryAddress?.neighborhood || deliveryAddress?.bairro || '';
+        const rawComplement = deliveryAddress?.complement || deliveryAddress?.complemento || '';
+        const rawReference = deliveryAddress?.reference || deliveryAddress?.referencia || deliveryAddress?.ponto_referencia || '';
+
+        const formattedDeliveryAddress = tipoAtendimento === 'ENTREGA' ? {
+          street: normalizeText(rawStreet, 150),
+          rua: normalizeText(rawStreet, 150),
+          endereco: normalizeText(rawStreet, 150),
+          number: normalizeText(rawNumber, 30),
+          numero: normalizeText(rawNumber, 30),
+          neighborhood: normalizeText(rawNeighborhood, 80),
+          bairro: normalizeText(rawNeighborhood, 80),
+          complement: normalizeText(rawComplement, 100),
+          complemento: normalizeText(rawComplement, 100),
+          reference: normalizeText(rawReference, 150),
+          referencia: normalizeText(rawReference, 150),
+          ponto_referencia: normalizeText(rawReference, 150),
+          fullAddress: deliveryAddress?.fullAddress || [
+            `${normalizeText(rawStreet, 150)}, ${normalizeText(rawNumber, 30)}`,
+            normalizeText(rawNeighborhood, 80),
+            normalizeText(rawComplement, 100) ? `Compl: ${normalizeText(rawComplement, 100)}` : '',
+            normalizeText(rawReference, 150) ? `Ref: ${normalizeText(rawReference, 150)}` : ''
+          ].filter(Boolean).join(' - ')
+        } : (deliveryAddress || null);
+
+        const calculatedAtendimento = (tipoAtendimento || (serviceMode === 'DINE_IN' ? 'MESA' : serviceMode === 'PICKUP' ? 'RETIRADA' : 'BALCAO')).toUpperCase();
 
         const orderDocData: any = {
           origem: 'BALCAO',
@@ -574,12 +840,37 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
           orderStatus: 'PREPARING',
           status: 'cozinha',
           tipo_entrega: tipoEntrega,
+          tipo_atendimento: calculatedAtendimento,
+          atendimento: calculatedAtendimento,
+          tipoAtendimento: calculatedAtendimento,
 
           restaurante_id: restaurantId,
           restaurantId,
           cliente_id: null,
           cliente_nome: finalClientName,
-          cliente_telefone: '',
+          cliente_telefone: clientPhone ? normalizeText(clientPhone, 30) : '',
+          cliente_telefone_whatsapp: clientPhone ? normalizeText(clientPhone, 30) : '',
+          tableId: resolvedTableId || null,
+          tableName: resolvedTableName || null,
+          tableNumber: resolvedTableNumber !== null && resolvedTableNumber !== undefined ? resolvedTableNumber : (tableNumber ? normalizeText(tableNumber, 50) : null),
+          tabId: resolvedTabId || null,
+          comandaId: resolvedTabId || null,
+          comanda_id: resolvedTabId || null,
+          mesa: resolvedTableNumber !== null && resolvedTableNumber !== undefined 
+            ? (String(resolvedTableNumber).toLowerCase().startsWith('mesa') ? String(resolvedTableNumber) : `Mesa ${resolvedTableNumber}`) 
+            : (resolvedTableName || (tableNumber ? normalizeText(tableNumber, 50) : null)),
+          mesa_numero: resolvedTableNumber !== null && resolvedTableNumber !== undefined 
+            ? resolvedTableNumber 
+            : (tableNumber ? normalizeText(tableNumber, 50) : null),
+          endereco_entrega: formattedDeliveryAddress,
+          endereco: formattedDeliveryAddress?.fullAddress || (typeof deliveryAddress === 'string' ? deliveryAddress : null),
+          rua: tipoAtendimento === 'ENTREGA' ? normalizeText(rawStreet, 150) : null,
+          numero_endereco: tipoAtendimento === 'ENTREGA' ? normalizeText(rawNumber, 30) : null,
+          endereco_numero: tipoAtendimento === 'ENTREGA' ? normalizeText(rawNumber, 30) : null,
+          bairro: tipoAtendimento === 'ENTREGA' ? normalizeText(rawNeighborhood, 80) : null,
+          complemento: tipoAtendimento === 'ENTREGA' ? normalizeText(rawComplement, 100) : null,
+          ponto_referencia: tipoAtendimento === 'ENTREGA' ? normalizeText(rawReference, 150) : null,
+          referencia: tipoAtendimento === 'ENTREGA' ? normalizeText(rawReference, 150) : null,
 
           createdBy: {
             type: 'RESTAURANT',
@@ -598,15 +889,17 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
           valor_desconto: 0,
           valor_total: fromCents(totalCents),
 
-          payments: normalizedPayments,
-          forma_pagamento: normalizedPayments.length > 0 
-            ? normalizedPayments.reduce((prev: any, current: any) => (current.amount > prev.amount) ? current : prev, normalizedPayments[0]).paymentMethodId 
-            : 'dinheiro',
-          pago: finalPago,
-          amountReceived: fromCents(finalAmountReceivedCents),
-          changeAmount: fromCents(finalChangeAmountCents),
-          troco: fromCents(finalChangeAmountCents),
-          financialSettlementStatus: settlementStatus,
+          payments: (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') ? [] : normalizedPayments,
+          forma_pagamento: (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN')
+            ? 'comanda'
+            : (normalizedPayments.length > 0 
+                ? normalizedPayments.reduce((prev: any, current: any) => (current.amount > prev.amount) ? current : prev, normalizedPayments[0]).paymentMethodId 
+                : 'dinheiro'),
+          pago: (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') ? false : finalPago,
+          amountReceived: (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') ? 0 : fromCents(finalAmountReceivedCents),
+          changeAmount: (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') ? 0 : fromCents(finalChangeAmountCents),
+          troco: (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') ? 0 : fromCents(finalChangeAmountCents),
+          financialSettlementStatus: (tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') ? 'NOT_REQUIRED' : settlementStatus,
 
           driverId: null,
           assignedDriverId: null,

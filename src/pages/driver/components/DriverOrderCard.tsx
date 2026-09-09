@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Phone, MapPin, Navigation, CheckCircle, XCircle, DollarSign, MessageSquare, AlertTriangle, ArrowUp, ArrowDown, Clock } from 'lucide-react';
+import { Phone, MapPin, Navigation, CheckCircle, XCircle, DollarSign, MessageSquare, AlertTriangle, ArrowUp, ArrowDown, Clock, Package, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { AssignedOrder, LatLng } from '../types';
@@ -45,6 +45,7 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
   const [showFailModal, setShowFailModal] = useState(false);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [failReason, setFailReason] = useState('');
+  const [showItems, setShowItems] = useState(false);
 
   const [customerName, setCustomerName] = useState<string>(
     order.cliente_nome || order.customerName || order.nome_cliente || order.cliente?.nome || 'Cliente'
@@ -71,14 +72,19 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
   }, [order.cliente_id, order.cliente_nome, order.customerName, order.nome_cliente, order.cliente?.nome]);
 
   const formattedAddress = buildOrderAddressFormatted(order);
-  const customerPhone = order.customerPhone || order.telefone_cliente || order.cliente?.telefone || '';
+  const customerPhone = order.cliente_telefone_whatsapp || order.cliente_telefone || order.customerPhone || order.telefone_cliente || order.telefone || order.cliente?.telefone || '';
   const cleanPhone = customerPhone.replace(/\D/g, '');
 
   const paymentMethod = order.paymentMethod || order.forma_pagamento || order.metodo_pagamento || 'Não informado';
   const totalValue = Number(order.total || order.valor_total || order.totalValue || 0);
-  const isCollectPayment = order.paymentCollectedByDriver || !order.pago;
+  const isPaid = Boolean(order.pago || order.paymentStatus === 'PAID' || order.paymentStatus === 'SETTLED');
+  const isCollectPayment = order.paymentCollectedByDriver || !isPaid;
 
-  const orderNumber = (order.id || '').slice(-6).toUpperCase();
+  const orderNumber = order.numero_pedido || order.orderNumber || (typeof order.numero === 'number' || (typeof order.numero === 'string' && /^\d+$/.test(order.numero)) ? order.numero : (order.id || '').slice(-6).toUpperCase());
+
+  const orderItems = Array.isArray(order.items) ? order.items : (Array.isArray(order.itens) ? order.itens : []);
+  const orderNotes = order.observacoes || order.observacao || order.notes || order.observation || '';
+  const orderReference = order.ponto_referencia || order.referencia || (typeof order.endereco_entrega === 'object' ? (order.endereco_entrega?.ponto_referencia || order.endereco_entrega?.referencia) : '');
 
   const getStatusBadge = () => {
     switch (canonicalStatus) {
@@ -111,6 +117,11 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
           <span className="text-xs font-black text-stone-900 tracking-tight">
             #{orderNumber}
           </span>
+          {order.origem && (
+            <span className="text-[10px] font-semibold text-stone-500 bg-stone-100 px-2 py-0.5 rounded-md uppercase">
+              {order.origem}
+            </span>
+          )}
           {order.distancia_km && (
             <span className="text-[11px] font-medium text-stone-500 bg-stone-100 px-2 py-0.5 rounded-full">
               {order.distancia_km} km
@@ -157,21 +168,81 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
       <div className="p-4 space-y-3">
         {/* Customer & Address */}
         <div>
-          <h3 className="text-sm font-bold text-stone-900 tracking-tight">
-            {customerName}
-          </h3>
-          <div className="flex items-start gap-1.5 mt-1 text-xs text-stone-600 leading-snug">
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-sm font-bold text-stone-900 tracking-tight">
+              {customerName}
+            </h3>
+            {customerPhone && (
+              <span className="text-[11px] text-stone-500 font-medium">{customerPhone}</span>
+            )}
+          </div>
+
+          <div className="flex items-start gap-1.5 mt-1.5 text-xs text-stone-600 leading-snug">
             <MapPin className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div>
+            <div className="flex-1">
               <p className="font-medium text-stone-800">{formattedAddress}</p>
-              {(order.ponto_referencia || order.referencia) && (
-                <p className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md inline-block mt-1 border border-amber-200/60">
-                  Ref: {order.ponto_referencia || order.referencia}
+              {orderReference && (
+                <p className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md inline-block mt-1 border border-amber-200/60 font-medium">
+                  Ref: {orderReference}
                 </p>
               )}
             </div>
           </div>
         </div>
+
+        {/* Order Observations */}
+        {orderNotes && (
+          <div className="p-2.5 bg-amber-50/80 rounded-xl border border-amber-200/70 text-xs text-amber-900 flex items-start gap-1.5">
+            <FileText className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Obs:</span> {orderNotes}
+            </div>
+          </div>
+        )}
+
+        {/* Order Items Expandable */}
+        {orderItems.length > 0 && (
+          <div className="pt-2 border-t border-stone-100">
+            <button
+              type="button"
+              onClick={() => setShowItems(prev => !prev)}
+              className="flex items-center justify-between w-full text-xs font-bold text-stone-700 hover:text-stone-900 py-0.5"
+            >
+              <span className="flex items-center gap-1.5">
+                <Package className="w-3.5 h-3.5 text-stone-500" />
+                Itens do Pedido ({orderItems.reduce((acc: number, i: any) => acc + (Number(i.quantity || i.quantidade || 1)), 0)})
+              </span>
+              <span className="text-[11px] text-stone-500 font-semibold flex items-center gap-0.5">
+                {showItems ? <>Ocultar <ChevronUp className="w-3.5 h-3.5" /></> : <>Ver itens <ChevronDown className="w-3.5 h-3.5" /></>}
+              </span>
+            </button>
+
+            {showItems && (
+              <div className="mt-2 space-y-1.5 bg-stone-50 p-2.5 rounded-xl border border-stone-100 text-xs text-stone-700">
+                {orderItems.map((item: any, idx: number) => {
+                  const qty = item.quantity || item.quantidade || 1;
+                  const name = item.name || item.productName || item.nome || item.nome_produto || 'Item';
+                  const itemNotes = item.notes || item.observacoes || item.observacao || '';
+                  const itemPrice = Number(item.price || item.preco || item.unitPrice || 0);
+
+                  return (
+                    <div key={idx} className="flex flex-col border-b border-stone-200/50 pb-1.5 last:border-b-0 last:pb-0">
+                      <div className="flex justify-between items-baseline">
+                        <span className="font-semibold text-stone-900">{qty}x {name}</span>
+                        {itemPrice > 0 && (
+                          <span className="text-stone-500 text-[11px]">R$ {(itemPrice * qty).toFixed(2)}</span>
+                        )}
+                      </div>
+                      {itemNotes && (
+                        <span className="text-[11px] text-stone-500 italic pl-3">Obs: {itemNotes}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Payment details & phone controls */}
         <div className="pt-2 border-t border-stone-100 flex items-center justify-between gap-2 flex-wrap text-xs">
@@ -179,11 +250,15 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
             <DollarSign className="w-4 h-4 text-stone-400 shrink-0" />
             <div>
               <span className="font-semibold text-stone-800">{paymentMethod}</span>
-              {isCollectPayment && totalValue > 0 && (
-                <span className="ml-1.5 font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+              {isPaid ? (
+                <span className="ml-1.5 font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 text-[11px]">
+                  Pago Online
+                </span>
+              ) : isCollectPayment && totalValue > 0 ? (
+                <span className="ml-1.5 font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-[11px]">
                   Cobrar R$ {totalValue.toFixed(2)}
                 </span>
-              )}
+              ) : null}
             </div>
           </div>
 
@@ -223,23 +298,33 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
         {/* Action buttons by Status */}
         <div className="pt-2 border-t border-stone-100">
           {canonicalStatus === 'ASSIGNED' && (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => setShowRejectConfirm(true)}
+                  className="min-h-[44px] py-2.5 px-3 rounded-xl border border-stone-300 bg-stone-50 hover:bg-stone-100 text-stone-700 text-xs font-bold transition-all active:scale-95 text-center"
+                >
+                  Recusar
+                </button>
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => onAccept?.(order)}
+                  className="min-h-[44px] py-2.5 px-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold transition-all active:scale-95 text-center flex items-center justify-center gap-1.5 shadow-xs"
+                >
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  Aceitar
+                </button>
+              </div>
               <button
                 type="button"
-                disabled={isLoading}
-                onClick={() => setShowRejectConfirm(true)}
-                className="min-h-[44px] py-2.5 px-3 rounded-xl border border-stone-300 bg-stone-50 hover:bg-stone-100 text-stone-700 text-xs font-bold transition-all active:scale-95 text-center"
+                onClick={() => openSingleOrderInMaps(order, currentLocation)}
+                className="w-full min-h-[40px] py-2 px-3 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-stone-700 text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5"
               >
-                Recusar
-              </button>
-              <button
-                type="button"
-                disabled={isLoading}
-                onClick={() => onAccept?.(order)}
-                className="min-h-[44px] py-2.5 px-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold transition-all active:scale-95 text-center flex items-center justify-center gap-1.5 shadow-xs"
-              >
-                <CheckCircle className="w-4 h-4 text-emerald-400" />
-                Aceitar
+                <Navigation className="w-4 h-4 text-emerald-600" />
+                Ver no Maps
               </button>
             </div>
           )}
@@ -319,84 +404,99 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
       <DriverConfirmDeliveryModal
         order={order}
         isOpen={showCompleteModal}
-        isLoading={isLoading}
         onClose={() => setShowCompleteModal(false)}
+        isLoading={isLoading}
         onConfirm={(paymentReport) => {
           setShowCompleteModal(false);
           onCompleteDelivery?.(order, paymentReport);
         }}
       />
 
-      {/* Reject Confirmation Modal */}
-      {showRejectConfirm && (
+      {/* Fail Modal */}
+      {showFailModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl">
-            <h3 className="text-base font-bold text-stone-900">Confirmar Recusa</h3>
-            <p className="text-xs text-stone-600">
-              Tem certeza que deseja recusar o pedido #{orderNumber}? Ele retornará para atribuição.
-            </p>
-            <div className="flex items-center justify-end gap-2 pt-2">
+          <div className="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="p-2 bg-red-100 rounded-xl">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-stone-900 text-sm">Não foi possível entregar</h4>
+                <p className="text-xs text-stone-500">Informe o motivo da não entrega</p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-stone-700 uppercase tracking-wider block">
+                Motivo *
+              </label>
+              <textarea
+                value={failReason}
+                onChange={(e) => setFailReason(e.target.value)}
+                placeholder="Ex: Cliente ausente, endereço não localizado, recusado pelo cliente..."
+                rows={3}
+                className="w-full bg-stone-50 border border-stone-300 rounded-xl text-xs text-stone-900 p-3 focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white"
+              />
+            </div>
+
+            <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setShowRejectConfirm(false)}
-                className="px-4 py-2.5 rounded-xl border border-stone-300 text-xs font-bold text-stone-700 hover:bg-stone-50 min-h-[44px]"
+                disabled={isLoading}
+                onClick={() => setShowFailModal(false)}
+                className="flex-1 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition-colors"
               >
-                Cancelar
+                Voltar
               </button>
               <button
                 type="button"
+                disabled={isLoading || !failReason.trim()}
                 onClick={() => {
-                  setShowRejectConfirm(false);
-                  onReject?.(order);
+                  setShowFailModal(false);
+                  onFailDelivery?.(order, failReason.trim());
                 }}
-                className="px-4 py-2.5 rounded-xl bg-red-600 text-white text-xs font-bold hover:bg-red-700 min-h-[44px]"
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-colors disabled:opacity-50"
               >
-                Recusar Pedido
+                Confirmar
               </button>
             </div>
           </div>
         </div>
       )}
 
-
-
-      {/* Fail Reason Modal */}
-      {showFailModal && (
+      {/* Reject Confirmation Modal */}
+      {showRejectConfirm && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl">
-            <h3 className="text-base font-bold text-stone-900">Motivo de Não Entrega</h3>
-            <p className="text-xs text-stone-600">
-              Informe o motivo pelo qual o pedido #{orderNumber} não pôde ser entregue:
-            </p>
-            <textarea
-              value={failReason}
-              onChange={(e) => setFailReason(e.target.value)}
-              placeholder="Ex: Cliente ausente, Endereço incorreto..."
-              className="w-full h-24 p-3 rounded-xl border border-stone-300 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <div className="flex items-center justify-end gap-2 pt-2">
+          <div className="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 text-stone-900">
+              <div className="p-2 bg-stone-100 rounded-xl text-stone-600">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-bold text-stone-900 text-sm">Recusar Entrega</h4>
+                <p className="text-xs text-stone-500">Deseja realmente recusar esta entrega?</p>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setShowFailModal(false);
-                  setFailReason('');
-                }}
-                className="px-4 py-2.5 rounded-xl border border-stone-300 text-xs font-bold text-stone-700 hover:bg-stone-50 min-h-[44px]"
+                disabled={isLoading}
+                onClick={() => setShowRejectConfirm(false)}
+                className="flex-1 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition-colors"
               >
-                Cancelar
+                Voltar
               </button>
               <button
                 type="button"
-                disabled={!failReason.trim()}
+                disabled={isLoading}
                 onClick={() => {
-                  if (!failReason.trim()) return;
-                  setShowFailModal(false);
-                  onFailDelivery?.(order, failReason.trim());
-                  setFailReason('');
+                  setShowRejectConfirm(false);
+                  onReject?.(order);
                 }}
-                className="px-4 py-2.5 rounded-xl bg-red-600 text-white text-xs font-bold hover:bg-red-700 disabled:opacity-50 min-h-[44px]"
+                className="flex-1 py-2.5 bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs rounded-xl transition-colors"
               >
-                Registrar Insucesso
+                Sim, Recusar
               </button>
             </div>
           </div>
@@ -405,3 +505,4 @@ export const DriverOrderCard: React.FC<DriverOrderCardProps> = ({
     </div>
   );
 };
+

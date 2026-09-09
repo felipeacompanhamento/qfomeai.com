@@ -2,18 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { Clock } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
+import { isGarcomOrder } from '../orders/utils/orderSource';
 
-const getRestaurantStatusText = (status: string) => {
+const getRestaurantStatusText = (status: string, isGarcom: boolean = false) => {
   switch (status) {
     case 'pendente': return 'Novo pedido';
     case 'aceito': return 'Aceito';
     case 'preparo': return 'Em preparo';
     case 'pronto': return 'Pronto';
-    case 'entrega': return 'Saiu para entrega';
-    case 'entregue': return 'Entregue';
+    case 'entrega': return isGarcom ? 'Servindo' : 'Saiu para entrega';
+    case 'entregue':
+    case 'delivered':
+    case 'servido': return isGarcom ? 'Servido' : 'Entregue';
     case 'cancelado': return 'Cancelado';
     case 'rejeitado': return 'Cancelado';
-    case 'finalizado': return 'Entregue';
+    case 'finalizado': return isGarcom ? 'Finalizado' : 'Entregue';
     default: return status;
   }
 };
@@ -92,7 +95,7 @@ const OrderListItem = React.memo(({ order, isSelected, onClick }: OrderListItemP
           </span>
         </div>
         <span className={`text-[10px] font-bold px-2 py-1 rounded-lg uppercase tracking-wider ${getStatusColor(order.status)}`}>
-          {getRestaurantStatusText(order.status)}
+          {getRestaurantStatusText(order.status, isGarcomOrder(order))}
         </span>
       </div>
       

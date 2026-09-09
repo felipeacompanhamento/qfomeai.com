@@ -11,6 +11,7 @@ interface OrdersKanbanProps {
   onUpdateStatus?: (orderId: string, status: string) => void;
   onCancelOrder?: (order: any) => void;
   onPrintOrder?: (order: any) => void;
+  onAssignDriver?: (order: any) => void;
 }
 
 const KANBAN_COLUMNS: ColumnConfig[] = [
@@ -56,7 +57,8 @@ export const OrdersKanban: React.FC<OrdersKanbanProps> = ({
   onOrderClick,
   onUpdateStatus,
   onCancelOrder,
-  onPrintOrder
+  onPrintOrder,
+  onAssignDriver
 }) => {
   // Group orders into the 4 operational columns using canonical state rules
   const groupedOrders: Record<string, any[]> = {
@@ -87,6 +89,7 @@ export const OrdersKanban: React.FC<OrdersKanbanProps> = ({
           onUpdateStatus={onUpdateStatus}
           onCancelOrder={onCancelOrder}
           onPrintOrder={onPrintOrder}
+          onAssignDriver={onAssignDriver}
         />
       ))}
     </div>

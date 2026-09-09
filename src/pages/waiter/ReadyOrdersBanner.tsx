@@ -21,9 +21,12 @@ export function ReadyOrdersBanner() {
       const ordersList: any[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
-        const orig = String(data.origem || data.source || data.origin || '').toUpperCase();
-        // Consider order if origin is GARCOM/WAITER/TABLE or has waiter details
-        const isGarcom = orig === 'GARCOM' || orig === 'GARÇOM' || orig === 'WAITER' || orig === 'TABLE' || orig === 'MESA' || Boolean(data.waiterName || data.garcom_nome);
+        const orig = String(data.origem || data.source || data.origin || data.origem_pedido || '').toUpperCase();
+        const isDelivery = orig === 'DELIVERY' || data.delivery_type === 'DELIVERY' || data.tipo_entrega === 'delivery';
+        if (isDelivery) return;
+
+        // Consider order if origin is GARCOM/WAITER/TABLE or has waiter/table/tab details
+        const isGarcom = orig === 'GARCOM' || orig === 'GARÇOM' || orig === 'WAITER' || orig === 'TABLE' || orig === 'MESA' || Boolean(data.tabId || data.comanda_id || data.comandaId || data.mesa || data.tableNumber || data.num_mesa || data.mesa_numero || data.waiterName || data.garcom_nome);
         if (isGarcom) {
           ordersList.push({ id: docSnap.id, ...data });
         }
@@ -100,8 +103,8 @@ export function ReadyOrdersBanner() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {readyOrders.map((order) => {
           const orderNum = order.numero_pedido || order.numeroPedido || (order.id ? order.id.substring(0, 6).toUpperCase() : '');
-          const tableNum = order.mesa_numero || order.tableNumber || order.tableName || order.mesa || '--';
-          const comandaNum = order.comanda_id || order.tabId || order.comandaId || order.comandaNumero || '';
+          const tableNum = order.mesa_numero || order.tableNumber || order.tableName || order.mesa || order.num_mesa || '--';
+          const comandaNum = order.comanda_id || order.tabId || order.comandaId || order.comandaNumero || order.comanda_numero || order.comanda || order.tabNumber || '';
           const waiter = order.waiterName || order.garcom_nome || order.sentBy?.name || '';
           const roundNum = order.roundNumber || order.numero_rodada;
           const itemsList = Array.isArray(order.items) ? order.items : (Array.isArray(order.itens) ? order.itens : []);

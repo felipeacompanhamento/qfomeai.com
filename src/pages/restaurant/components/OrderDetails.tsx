@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RestaurantSettlementModal } from './RestaurantSettlementModal';
 import { 
-  ShoppingBag, Clock, User, MapPin, CreditCard, Save, Edit2, ArrowLeft, Printer, X, Check, RefreshCcw, Bike, DollarSign, AlertCircle, ShieldCheck, FileText, CheckCircle2
+  ShoppingBag, Clock, User, MapPin, CreditCard, Save, Edit2, ArrowLeft, Printer, X, Check, RefreshCcw, Bike, DollarSign, AlertCircle, ShieldCheck, FileText, CheckCircle2, Navigation, Store, Utensils, Monitor, MessageSquare
 } from 'lucide-react';
 import { getRestaurantStatusText, getStatusColor } from './OrderListItem';
 import { db } from '../../../firebase';
@@ -19,7 +19,7 @@ import {
 import { PaymentsManager, PaymentItem } from './PaymentsManager';
 import { processOrderPaymentsApi, processOrderRefundApi } from '../../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
-import { isGarcomOrder } from '../orders/utils/orderSource';
+import { isGarcomOrder, getOrderModality, getOrderModalityDetails, OrderModality } from '../orders/utils/orderSource';
 import { 
   extractOrderTableDisplay, 
   extractOrderComandaDisplay, 
@@ -48,43 +48,12 @@ interface OrderDetailsProps {
   onRefund?: (orderId: string, amount?: number, reason?: string) => void;
   isUpdating?: boolean;
   restaurantProfile?: any;
+  initialOpenAssignDriver?: boolean;
 }
 
 const isDeliveryOrder = (order: any): boolean => {
   if (!order) return false;
-
-  if (isGarcomOrder(order)) return false;
-
-  const rawOrigem = String(
-    order.origem || 
-    order.origin || 
-    order.source || 
-    order.tipo_pedido || 
-    order.orderType || 
-    ''
-  ).toUpperCase().trim();
-
-  if (['GARCOM', 'GARÇOM', 'WAITER', 'TABLE', 'MESA', 'BALCAO', 'BALCÃO', 'COUNTER', 'TAKEAWAY', 'PICKUP', 'RETIRADA', 'TOTEM', 'KIOSK'].includes(rawOrigem)) {
-    return false;
-  }
-
-  const rawFulfillment = String(
-    order.tipo_entrega || 
-    order.tipo_atendimento || 
-    order.fulfillment_type || 
-    order.fulfillmentType || 
-    ''
-  ).toLowerCase().trim();
-
-  if (['retirada', 'pickup', 'takeaway', 'balcao', 'counter', 'consumo_local', 'dine_in', 'mesa', 'garcom', 'sem_entrega', 'no_delivery'].includes(rawFulfillment)) {
-    return false;
-  }
-
-  if (Boolean(order.mesa || order.tableNumber || order.num_mesa || order.tabId || order.comanda_id || order.counterContext)) {
-    return false;
-  }
-
-  return rawFulfillment === 'delivery' || rawOrigem === 'DELIVERY' || (!rawFulfillment && !rawOrigem);
+  return getOrderModalityDetails(order).isDeliveryFlow;
 };
 
 const OrderDetails = ({
@@ -103,7 +72,8 @@ const OrderDetails = ({
   handleTogglePaid,
   onRefund,
   isUpdating = false,
-  restaurantProfile
+  restaurantProfile,
+  initialOpenAssignDriver
 }: OrderDetailsProps) => {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [refundAmount, setRefundAmount] = useState('');
@@ -200,6 +170,13 @@ const OrderDetails = ({
   const [assigningDriverId, setAssigningDriverId] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (initialOpenAssignDriver && isDeliveryOrder(selectedOrder)) {
+      setIsAssignModalOpen(true);
+      fetchDrivers();
+    }
+  }, [initialOpenAssignDriver, selectedOrder?.id]);
+
   const paymentInfo = getPaymentStatusInfo(
     selectedOrder?.paymentStatus,
     selectedOrder?.pago
@@ -266,7 +243,8 @@ const OrderDetails = ({
   };
 
   const fetchDrivers = async () => {
-    if (!selectedOrder?.restaurant_id) return;
+    const restId = selectedOrder?.restaurant_id || selectedOrder?.restaurante_id || selectedOrder?.restaurantId || profile?.restaurantId;
+    if (!restId) return;
     setLoadingDrivers(true);
     setAssignError(null);
     try {
@@ -292,7 +270,8 @@ const OrderDetails = ({
   };
 
   const handleAssignDriver = async (driver: any) => {
-    if (!selectedOrder?.restaurant_id || !selectedOrder?.id) return;
+    const restId = selectedOrder?.restaurant_id || selectedOrder?.restaurante_id || selectedOrder?.restaurantId || profile?.restaurantId;
+    if (!restId || !selectedOrder?.id) return;
     setAssigningDriverId(driver.id);
     setAssignError(null);
     try {
@@ -403,11 +382,19 @@ const OrderDetails = ({
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-stone-800 truncate">Pedido #{String(selectedOrder.id || selectedOrder._id || '').slice(-6).toUpperCase() || '------'}</h2>
+              <h2 className="text-lg sm:text-xl font-bold text-stone-800 truncate">Pedido #{selectedOrder.numero_pedido || selectedOrder.numeroPedido || String(selectedOrder.id || selectedOrder._id || '').slice(-6).toUpperCase() || '------'}</h2>
               <p className="text-xs sm:text-sm text-stone-500 truncate">Feito em {selectedOrder.data_criacao || selectedOrder.createdAt ? new Date(selectedOrder.data_criacao || selectedOrder.createdAt).toLocaleString('pt-BR') : 'Data não informada'}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {(() => {
+              const modDetails = getOrderModalityDetails(selectedOrder);
+              return (
+                <span className={`text-[10px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 rounded-xl uppercase tracking-wider border ${modDetails.badgeBg} ${modDetails.badgeText} ${modDetails.badgeBorder}`}>
+                  {modDetails.label}
+                </span>
+              );
+            })()}
             <div className="relative group">
               <button className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs sm:text-sm font-bold transition-colors min-h-[34px]" onClick={() => handlePrint(selectedOrder)}>
                 <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span>Imprimir</span>
@@ -419,7 +406,7 @@ const OrderDetails = ({
               </div>
             </div>
             <span className={`text-[10px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 rounded-xl uppercase tracking-wider ${getStatusColor(selectedOrder.status)}`}>
-              {getRestaurantStatusText(selectedOrder.status)}
+              {getRestaurantStatusText(selectedOrder.status, isGarcomOrder(selectedOrder))}
             </span>
           </div>
         </div>
@@ -427,18 +414,18 @@ const OrderDetails = ({
         {/* Status Badges Breakdown */}
         {(() => {
           const canonicalState = getCanonicalOrderState(selectedOrder);
-          const pendingSettlement = !isGarcomOrder(selectedOrder) && canRestaurantSettleOrder(selectedOrder);
-          const isGarcom = isGarcomOrder(selectedOrder);
+          const modDetails = getOrderModalityDetails(selectedOrder);
+          const pendingSettlement = modDetails.isDeliveryFlow && canRestaurantSettleOrder(selectedOrder);
 
           return (
             <>
-              <div className={`grid grid-cols-1 ${isGarcom ? 'sm:grid-cols-1' : 'sm:grid-cols-3'} gap-2 text-xs pt-1 border-t border-stone-200/60`}>
+              <div className={`grid grid-cols-1 ${modDetails.isDeliveryFlow ? 'sm:grid-cols-3' : 'sm:grid-cols-1'} gap-2 text-xs pt-1 border-t border-stone-200/60`}>
                 <div className="bg-white p-2 sm:p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
                   <span className="text-stone-400 font-bold uppercase text-[10px]">Status Pedido:</span>
                   <span className="font-extrabold text-stone-800 uppercase">{getOrderStatusLabel(selectedOrder)}</span>
                 </div>
 
-                {!isGarcom && (
+                {modDetails.isDeliveryFlow && (
                   <>
                     <div className="bg-white p-2 sm:p-2.5 rounded-xl border border-stone-200/80 flex items-center justify-between">
                       <span className="text-stone-400 font-bold uppercase text-[10px]">Entrega:</span>
@@ -489,193 +476,276 @@ const OrderDetails = ({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto min-h-0 p-3.5 sm:p-6 pr-2 space-y-6 sm:space-y-8 custom-scrollbar">
-        {/* Delivery / Garçom Info */}
-        {isGarcomOrder(selectedOrder) ? (
-          <div className="bg-stone-50 p-4 sm:p-5 rounded-2xl border border-stone-200/80 space-y-3">
-            <h3 className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-2">
-              <User className="w-4 h-4 text-emerald-600" /> Detalhes do Pedido (Garçom)
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div className="bg-white p-3 rounded-xl border border-stone-200/80">
-                <span className="text-stone-400 font-semibold text-[11px] block">Mesa</span>
-                <span className="font-black text-stone-900 text-sm mt-0.5 block">
-                  {extractOrderTableDisplay(selectedOrder)}
-                </span>
+        {/* Modality Specific Panels */}
+        {(() => {
+          const modDetails = getOrderModalityDetails(selectedOrder);
+          const modality = modDetails.modality;
+
+          if (modality === 'GARCOM_MESA') {
+            return (
+              <div className="bg-stone-50 p-4 sm:p-5 rounded-2xl border border-stone-200/80 space-y-3">
+                <h3 className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-2">
+                  <Utensils className="w-4 h-4 text-emerald-600" /> Detalhes do Pedido (Garçom • Mesa)
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                    <span className="text-stone-400 font-semibold text-[11px] block">Mesa</span>
+                    <span className="font-black text-stone-900 text-sm mt-0.5 block">
+                      {extractOrderTableDisplay(selectedOrder)}
+                    </span>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                    <span className="text-stone-400 font-semibold text-[11px] block">Comanda</span>
+                    <span className="font-black text-stone-900 text-sm mt-0.5 block">
+                      {extractOrderComandaDisplay(selectedOrder)}
+                    </span>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                    <span className="text-stone-400 font-semibold text-[11px] block">Garçom</span>
+                    <span className="font-black text-stone-900 text-sm mt-0.5 block truncate">
+                      {extractOrderWaiterDisplay(selectedOrder)}
+                    </span>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                    <span className="text-stone-400 font-semibold text-[11px] block">Rodada</span>
+                    <span className="font-black text-stone-900 text-sm mt-0.5 block">
+                      {extractOrderRoundDisplay(selectedOrder)}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-stone-500 italic mt-1">
+                  * Pedido de consumo em mesa. O pagamento é gerenciado diretamente pela comanda do cliente.
+                </p>
               </div>
-              <div className="bg-white p-3 rounded-xl border border-stone-200/80">
-                <span className="text-stone-400 font-semibold text-[11px] block">Comanda</span>
-                <span className="font-black text-stone-900 text-sm mt-0.5 block">
-                  {extractOrderComandaDisplay(selectedOrder)}
-                </span>
+            );
+          }
+
+          if (modality === 'BALCAO_MESA') {
+            return (
+              <div className="bg-stone-50 p-4 sm:p-5 rounded-2xl border border-stone-200/80 space-y-3">
+                <h3 className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-2">
+                  <Store className="w-4 h-4 text-amber-600" /> Detalhes do Pedido (Balcão • Mesa)
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                    <span className="text-stone-400 font-semibold text-[11px] block">Mesa</span>
+                    <span className="font-black text-stone-900 text-sm mt-0.5 block">
+                      {extractOrderTableDisplay(selectedOrder)}
+                    </span>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                    <span className="text-stone-400 font-semibold text-[11px] block">Comanda</span>
+                    <span className="font-black text-stone-900 text-sm mt-0.5 block">
+                      {extractOrderComandaDisplay(selectedOrder)}
+                    </span>
+                  </div>
+                  {customerData?.nome && customerData?.nome !== 'Cliente' && (
+                    <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                      <span className="text-stone-400 font-semibold text-[11px] block">Cliente</span>
+                      <span className="font-black text-stone-900 text-sm mt-0.5 block truncate">
+                        {customerData.nome}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <p className="text-[11px] text-stone-500 italic mt-1">
+                  * Pedido lançado no balcão para consumo em mesa. O pagamento pertence à comanda.
+                </p>
               </div>
-              <div className="bg-white p-3 rounded-xl border border-stone-200/80">
-                <span className="text-stone-400 font-semibold text-[11px] block">Garçom</span>
-                <span className="font-black text-stone-900 text-sm mt-0.5 block truncate">
-                  {extractOrderWaiterDisplay(selectedOrder)}
-                </span>
+            );
+          }
+
+          if (modality === 'TOTEM') {
+            return (
+              <div className="bg-stone-50 p-4 sm:p-5 rounded-2xl border border-stone-200/80 space-y-3">
+                <h3 className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-2">
+                  <Monitor className="w-4 h-4 text-indigo-600" /> Detalhes do Pedido (Totem Autoatendimento)
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                    <span className="text-stone-400 font-semibold text-[11px] block">Origem</span>
+                    <span className="font-black text-stone-900 text-sm mt-0.5 block">Totem Autoatendimento</span>
+                  </div>
+                  {(selectedOrder.pickupNumber || selectedOrder.senha || selectedOrder.numero_retirada) && (
+                    <div className="bg-white p-3 rounded-xl border border-stone-200/80">
+                      <span className="text-stone-400 font-semibold text-[11px] block">Número de Retirada / Senha</span>
+                      <span className="font-black text-indigo-700 text-base mt-0.5 block">
+                        #{selectedOrder.pickupNumber || selectedOrder.senha || selectedOrder.numero_retirada}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="bg-white p-3 rounded-xl border border-stone-200/80">
-                <span className="text-stone-400 font-semibold text-[11px] block">Rodada</span>
-                <span className="font-black text-stone-900 text-sm mt-0.5 block">
-                  {extractOrderRoundDisplay(selectedOrder)}
-                </span>
+            );
+          }
+
+          if (modality === 'BALCAO_RETIRADA') {
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
+                    <User className="w-4 h-4" /> Cliente
+                  </h3>
+                  <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                    <p className="font-bold text-stone-800">{customerData?.nome || selectedOrder.cliente_nome || 'Cliente no Balcão'}</p>
+                    {(customerData?.telefone || selectedOrder.cliente_telefone) && (
+                      <p className="text-sm text-stone-500 mt-1">{customerData?.telefone || selectedOrder.cliente_telefone}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2 mb-2">
+                    <CreditCard className="w-4 h-4" /> Pagamento
+                  </h3>
+                  {selectedOrder?.mercadopago_payment_id && isPixPaymentMethod(selectedOrder?.forma_pagamento) ? (
+                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                      <p className="font-bold text-stone-800 uppercase mb-2">Pix Mercado Pago</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <div className={`w-3 h-3 rounded-full ${selectedOrder.pago ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                        <span className="text-sm font-bold text-stone-700">{selectedOrder.pago ? 'Pedido Pago' : 'Pendente'}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <PaymentsManager
+                      order={selectedOrder}
+                      configuredMethods={restaurantProfile?.formas_pagamento || restaurantProfile?.payment_methods}
+                      restaurantProfile={restaurantProfile}
+                      restaurantId={profile?.restaurantId || restaurantProfile?.id || selectedOrder?.restaurantId}
+                      onUpdatePayments={handleUpdatePayments}
+                      onRefundPayment={handleRefundPaymentItem}
+                    />
+                  )}
+                </div>
               </div>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-2">
-              <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
-                <User className="w-4 h-4" /> Cliente
-              </h3>
-              {loadingDetails ? (
-                <div className="animate-pulse h-10 bg-stone-100 rounded-xl"></div>
-              ) : (
+            );
+          }
+
+          /* BALCAO_ENTREGA & DELIVERY */
+          const cleanPhone = (customerData?.telefone || selectedOrder.cliente_telefone || '').replace(/\D/g, '');
+          const rawAddr = addressData?.rua || selectedOrder.endereco?.rua || (typeof selectedOrder.endereco === 'string' ? selectedOrder.endereco : '');
+          const addrNum = addressData?.numero || selectedOrder.endereco?.numero || '';
+          const addrBairro = addressData?.bairro || selectedOrder.endereco?.bairro || '';
+          const addrCidade = addressData?.cidade || selectedOrder.endereco?.cidade || '';
+          const addrState = addressData?.estado || selectedOrder.endereco?.estado || '';
+          const fullMapsAddr = `${rawAddr}, ${addrNum}, ${addrBairro}, ${addrCidade} - ${addrState}`.trim();
+
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Customer */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
+                  <User className="w-4 h-4" /> Cliente
+                </h3>
                 <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                  <p className="font-bold text-stone-800">{customerData?.nome || customerData?.displayName || selectedOrder.cliente_nome || 'Cliente não encontrado'}</p>
-                  {(customerData?.telefone || selectedOrder.cliente_telefone) && (
+                  <p className="font-bold text-stone-800">{customerData?.nome || customerData?.displayName || selectedOrder.cliente_nome || 'Cliente'}</p>
+                  {cleanPhone && (
                     <div className="flex items-center gap-2 mt-1">
                       <p className="text-sm text-stone-500">{customerData?.telefone || selectedOrder.cliente_telefone}</p>
                       <a 
-                        href={`https://wa.me/55${(customerData?.telefone || selectedOrder.cliente_telefone || '').replace(/\D/g, '')}?text=Ol%C3%A1%20${encodeURIComponent(customerData?.nome || customerData?.displayName || selectedOrder.cliente_nome || '')},%20somos%20do%20restaurante%20e%20gostar%C3%ADamos%20de%20falar%20sobre%20o%20seu%20pedido%20%23${String(selectedOrder.id || selectedOrder._id || '').slice(-6).toUpperCase()}.`}
+                        href={`https://wa.me/55${cleanPhone}`}
                         target="_blank" 
                         rel="noopener noreferrer"
                         className="text-emerald-500 hover:text-emerald-600 transition-colors bg-emerald-50 p-1.5 rounded-lg"
                         title="Chamar no WhatsApp"
                       >
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                        <MessageSquare className="w-4 h-4" />
                       </a>
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
-                  <MapPin className="w-4 h-4" /> {selectedOrder.tipo_entrega === 'retirada' ? 'Retirada' : 'Entrega'}
-                </h3>
-                {selectedOrder.tipo_entrega !== 'retirada' && !['entregue', 'finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) && (
-                  <button 
-                    onClick={isEditingAddress ? handleSaveAddress : handleEditAddress}
-                    className="text-emerald-600 hover:text-emerald-700 p-1"
-                  >
-                    {isEditingAddress ? <Save className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
-                  </button>
-                )}
               </div>
-              {loadingDetails ? (
-                <div className="animate-pulse h-16 bg-stone-100 rounded-xl"></div>
-              ) : (
-                <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                  {selectedOrder.tipo_entrega === 'retirada' ? (
-                    <p className="text-sm font-bold text-emerald-600">Cliente irá retirar no local</p>
-                  ) : isEditingAddress ? (
-                    <div className="space-y-2">
-                      <input 
-                        type="text" 
-                        placeholder="Rua" 
-                        value={editAddress.rua || ''} 
-                        onChange={e => setEditAddress({...editAddress, rua: e.target.value})}
-                        className="w-full p-2 text-sm border border-stone-200 rounded-lg"
-                      />
-                      <div className="flex gap-2">
-                        <input 
-                          type="text" 
-                          placeholder="Número" 
-                          value={editAddress.numero || ''} 
-                          onChange={e => setEditAddress({...editAddress, numero: e.target.value})}
-                          className="w-1/3 p-2 text-sm border border-stone-200 rounded-lg"
-                        />
-                        <input 
-                          type="text" 
-                          placeholder="Bairro" 
-                          value={editAddress.bairro || ''} 
-                          onChange={e => setEditAddress({...editAddress, bairro: e.target.value})}
-                          className="w-2/3 p-2 text-sm border border-stone-200 rounded-lg"
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <input 
-                          type="text" 
-                          placeholder="Cidade" 
-                          value={editAddress.cidade || ''} 
-                          onChange={e => setEditAddress({...editAddress, cidade: e.target.value})}
-                          className="w-2/3 p-2 text-sm border border-stone-200 rounded-lg"
-                        />
-                        <input 
-                          type="text" 
-                          placeholder="UF" 
-                          value={editAddress.estado || ''} 
-                          onChange={e => setEditAddress({...editAddress, estado: e.target.value})}
-                          className="w-1/3 p-2 text-sm border border-stone-200 rounded-lg"
-                        />
-                      </div>
-                      <input 
-                        type="text" 
-                        placeholder="Complemento" 
-                        value={editAddress.complemento || ''} 
-                        onChange={e => setEditAddress({...editAddress, complemento: e.target.value})}
-                        className="w-full p-2 text-sm border border-stone-200 rounded-lg"
-                      />
-                    </div>
-                  ) : addressData ? (
-                    <>
-                      <p className="font-bold text-stone-800">{addressData.rua}, {addressData.numero}</p>
-                      <p className="text-sm text-stone-500">{addressData.bairro}, {addressData.cidade} - {addressData.estado}</p>
-                      {addressData.complemento && <p className="text-sm text-stone-500">Comp: {addressData.complemento}</p>}
-                      {addressData.referencia && (
-                        <p className="text-sm text-emerald-600 font-bold mt-1 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100">
-                          Ponto de Referência: {addressData.referencia}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-sm text-stone-500">Endereço não encontrado.</p>
+
+              {/* Address */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2">
+                    <MapPin className="w-4 h-4" /> Endereço de Entrega
+                  </h3>
+                  {!['entregue', 'finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) && (
+                    <button 
+                      onClick={isEditingAddress ? handleSaveAddress : handleEditAddress}
+                      className="text-emerald-600 hover:text-emerald-700 p-1"
+                    >
+                      {isEditingAddress ? <Save className="w-4 h-4" /> : <Edit2 className="w-4 h-4" />}
+                    </button>
                   )}
                 </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2 mb-2">
-                <CreditCard className="w-4 h-4" /> Pagamento
-              </h3>
-              
-              {selectedOrder?.mercadopago_payment_id && isPixPaymentMethod(selectedOrder?.forma_pagamento) ? (
                 <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                  <p className="font-bold text-stone-800 uppercase mb-2">Pix Mercado Pago</p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <div className={`w-3 h-3 rounded-full ${selectedOrder.pago ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                    <span className="text-sm font-bold text-stone-700">{selectedOrder.pago ? 'Pedido Pago' : 'Pendente'}</span>
-                  </div>
-                </div>
-              ) : (
-                <PaymentsManager
-                  order={selectedOrder}
-                  configuredMethods={restaurantProfile?.formas_pagamento || restaurantProfile?.payment_methods}
-                  restaurantProfile={restaurantProfile}
-                  restaurantId={profile?.restaurantId || restaurantProfile?.id || selectedOrder?.restaurantId}
-                  onUpdatePayments={handleUpdatePayments}
-                  onRefundPayment={handleRefundPaymentItem}
-                />
-              )}
-              
-              {/* Botão de Estorno Mercado Pago */}
-                    {selectedOrder?.mercadopago_payment_id && selectedOrder?.pago && !selectedOrder?.estornado && onRefund && (
-                      <button
-                        onClick={() => setShowRefundModal(true)}
-                        className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-bold transition-colors"
-                      >
-                        <RefreshCcw className="w-4 h-4" /> Estornar Pagamento
-                      </button>
-                    )}
-            </div>
-          </div>
-        )}
+                  {isEditingAddress ? (
+                    <div className="space-y-2">
+                      <input type="text" placeholder="Rua" value={editAddress.rua || ''} onChange={e => setEditAddress({...editAddress, rua: e.target.value})} className="w-full p-2 text-sm border border-stone-200 rounded-lg" />
+                      <div className="flex gap-2">
+                        <input type="text" placeholder="Número" value={editAddress.numero || ''} onChange={e => setEditAddress({...editAddress, numero: e.target.value})} className="w-1/3 p-2 text-sm border border-stone-200 rounded-lg" />
+                        <input type="text" placeholder="Bairro" value={editAddress.bairro || ''} onChange={e => setEditAddress({...editAddress, bairro: e.target.value})} className="w-2/3 p-2 text-sm border border-stone-200 rounded-lg" />
+                      </div>
+                      <div className="flex gap-2">
+                        <input type="text" placeholder="Cidade" value={editAddress.cidade || ''} onChange={e => setEditAddress({...editAddress, cidade: e.target.value})} className="w-2/3 p-2 text-sm border border-stone-200 rounded-lg" />
+                        <input type="text" placeholder="UF" value={editAddress.estado || ''} onChange={e => setEditAddress({...editAddress, estado: e.target.value})} className="w-1/3 p-2 text-sm border border-stone-200 rounded-lg" />
+                      </div>
+                      <input type="text" placeholder="Complemento" value={editAddress.complemento || ''} onChange={e => setEditAddress({...editAddress, complemento: e.target.value})} className="w-full p-2 text-sm border border-stone-200 rounded-lg" />
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="font-bold text-stone-800">
+                        {rawAddr}{addrNum ? `, ${addrNum}` : ''}
+                      </p>
+                      {(addrBairro || addrCidade) && (
+                        <p className="text-sm text-stone-500">{addrBairro}{addrCidade ? `, ${addrCidade}` : ''} {addrState ? `- ${addrState}` : ''}</p>
+                      )}
+                      {(addressData?.complemento || selectedOrder.endereco?.complemento) && (
+                        <p className="text-sm text-stone-500">Comp: {addressData?.complemento || selectedOrder.endereco?.complemento}</p>
+                      )}
+                      {(addressData?.referencia || addressData?.ponto_referencia || selectedOrder.ponto_referencia) && (
+                        <p className="text-sm text-emerald-600 font-bold mt-1 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100">
+                          Ref: {addressData?.referencia || addressData?.ponto_referencia || selectedOrder.ponto_referencia}
+                        </p>
+                      )}
 
-        {!isGarcomOrder(selectedOrder) && selectedOrder.tipo_entrega !== 'retirada' && (() => {
+                      {/* Botão de abrir no Google Maps */}
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullMapsAddr)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 mt-2.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200/80 transition-colors"
+                      >
+                        <Navigation className="w-3.5 h-3.5 text-emerald-600" />
+                        Abrir no Google Maps
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Payment */}
+              <div className="space-y-2">
+                <h3 className="text-sm font-bold text-stone-400 uppercase tracking-wider flex items-center gap-2 mb-2">
+                  <CreditCard className="w-4 h-4" /> Pagamento
+                </h3>
+                {selectedOrder?.mercadopago_payment_id && isPixPaymentMethod(selectedOrder?.forma_pagamento) ? (
+                  <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                    <p className="font-bold text-stone-800 uppercase mb-2">Pix Mercado Pago</p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <div className={`w-3 h-3 rounded-full ${selectedOrder.pago ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                      <span className="text-sm font-bold text-stone-700">{selectedOrder.pago ? 'Pedido Pago' : 'Pendente'}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <PaymentsManager
+                    order={selectedOrder}
+                    configuredMethods={restaurantProfile?.formas_pagamento || restaurantProfile?.payment_methods}
+                    restaurantProfile={restaurantProfile}
+                    restaurantId={profile?.restaurantId || restaurantProfile?.id || selectedOrder?.restaurantId}
+                    onUpdatePayments={handleUpdatePayments}
+                    onRefundPayment={handleRefundPaymentItem}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {isDeliveryOrder(selectedOrder) && (() => {
 
           const canonicalState = getCanonicalOrderState(selectedOrder);
           const driverName = selectedOrder.deliveredByDriverName || selectedOrder.assignedDriverName || selectedOrder.driverName || 'Entregador';
@@ -1000,16 +1070,29 @@ const OrderDetails = ({
         {(['pronto', 'ready'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'READY') && (
           <button 
             onClick={() => {
-              const isGarcom = isGarcomOrder(selectedOrder);
-              const isOnSite = isGarcom || ['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega);
-              const nextStatus = isOnSite ? 'finalizado' : 'despachado';
-              onUpdate(selectedOrder.id, nextStatus);
+              const mod = getOrderModalityDetails(selectedOrder).modality;
+              if (mod === 'GARCOM_MESA' || mod === 'BALCAO_MESA') {
+                onUpdate(selectedOrder.id, 'entregue');
+                return;
+              }
+              if (mod === 'BALCAO_RETIRADA' || mod === 'TOTEM') {
+                onUpdate(selectedOrder.id, 'finalizado');
+                return;
+              }
+              onUpdate(selectedOrder.id, 'despachado');
             }}
             disabled={isUpdating}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm"
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            {isUpdating ? 'Processando...' : (isGarcomOrder(selectedOrder) ? 'MARCAR COMO SERVIDO' : (['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) ? 'Entregar e Finalizar' : 'Despachar / Saiu para Entrega'))}
+            {isUpdating ? 'Processando...' : (() => {
+              const mod = getOrderModalityDetails(selectedOrder).modality;
+              if (mod === 'GARCOM_MESA') return 'MARCAR COMO SERVIDO';
+              if (mod === 'BALCAO_MESA') return 'Entregar na Mesa';
+              if (mod === 'BALCAO_RETIRADA') return 'Entregar e Finalizar';
+              if (mod === 'TOTEM') return 'Chamar Senha / Entregar';
+              return 'Despachar / Saiu para Entrega';
+            })()}
           </button>
         )}
 

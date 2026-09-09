@@ -52,9 +52,32 @@ export interface CreateCounterOrderInput {
   operatorId: string;
   operatorName: string;
   clientName: string;
+  clientPhone?: string;
+  tableId?: string;
+  tableName?: string;
+  tableNumber?: string | number;
+  tabId?: string;
+  comandaId?: string;
+  deliveryAddress?: {
+    street?: string;
+    rua?: string;
+    endereco?: string;
+    number?: string;
+    numero?: string;
+    neighborhood?: string;
+    bairro?: string;
+    complement?: string;
+    complemento?: string;
+    reference?: string;
+    referencia?: string;
+    ponto_referencia?: string;
+    fullAddress?: string;
+  };
+  tipoAtendimento?: 'RETIRADA' | 'MESA' | 'ENTREGA';
   serviceMode: 'COUNTER' | 'PICKUP' | 'DINE_IN';
   items: CounterCartItem[];
-  forma_pagamento: string; payments?: any[];
+  forma_pagamento: string;
+  payments?: any[];
   pago: boolean;
   amountReceived?: number;
   clientActionId: string;
@@ -89,6 +112,11 @@ export interface CounterCreatedOrder {
   orderStatus: 'PREPARING';
   status: 'cozinha';
   cliente_nome: string;
+  tableId?: string | null;
+  tableName?: string | null;
+  tableNumber?: string | number | null;
+  tabId?: string | null;
+  comandaId?: string | null;
   items: CounterCreatedOrderItem[];
   valor_produtos: number;
   valor_total: number;
@@ -98,7 +126,8 @@ export interface CounterCreatedOrder {
   changeAmount: number;
   financialSettlementStatus:
     | 'SETTLED'
-    | 'PENDING_RESTAURANT_CONFIRMATION';
+    | 'PENDING_RESTAURANT_CONFIRMATION'
+    | 'NOT_REQUIRED';
   clientActionId: string;
 }
 
@@ -115,6 +144,14 @@ export const counterOrderService = {
       restaurantId,
       operatorId,
       clientName,
+      clientPhone,
+      tableId,
+      tableName,
+      tableNumber,
+      tabId,
+      comandaId,
+      deliveryAddress,
+      tipoAtendimento,
       serviceMode,
       items,
       forma_pagamento,
@@ -191,6 +228,14 @@ export const counterOrderService = {
         clientActionId,
         serviceMode,
         clientName,
+        clientPhone,
+        tableId,
+        tableName,
+        tableNumber,
+        tabId,
+        comandaId,
+        deliveryAddress,
+        tipoAtendimento,
         items: normalizedItems,
         forma_pagamento,
         paymentMethod: forma_pagamento,
@@ -223,7 +268,7 @@ export const counterOrderService = {
       typeof data.order.valor_total !== 'number' ||
       !Number.isFinite(data.order.valor_total) ||
       data.order.valor_total < 0 ||
-      !['dinheiro', 'pix', 'credito', 'debito'].includes(data.order.forma_pagamento)
+      !['dinheiro', 'pix', 'credito', 'debito', 'comanda'].includes(data.order.forma_pagamento)
     ) {
       throw new CounterOrderError('A resposta do servidor está incompleta. Confira o pedido no painel antes de tentar novamente.', 'INVALID_SERVER_RESPONSE', response.status);
     }

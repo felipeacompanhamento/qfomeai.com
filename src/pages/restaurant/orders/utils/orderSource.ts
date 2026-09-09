@@ -1,13 +1,113 @@
 /**
- * Definição e utilitários para origem do pedido (Delivery, Balcão, Garçom, Mesa, Retirada)
- * Preparado para futuras expansões do Qfomeai
+ * Definição e utilitários para origem e modalidade do pedido (Delivery, Balcão, Garçom, Mesa, Retirada, Totem)
  */
 
-import { OrderSource, OrderOrigem, normalizeOrderOrigem, isGarcomOrder } from '../../../../domain/order/orderSource';
+import { OrderSource, OrderOrigem, OrderModality, normalizeOrderOrigem, isGarcomOrder, getOrderModality } from '../../../../domain/order/orderSource';
 
-export type { OrderSource, OrderOrigem };
-export { normalizeOrderOrigem, isGarcomOrder };
+export type { OrderSource, OrderOrigem, OrderModality };
+export { normalizeOrderOrigem, isGarcomOrder, getOrderModality };
 
+export interface OrderModalityDetails {
+  modality: OrderModality;
+  label: string;
+  shortLabel: string;
+  badgeBg: string;
+  badgeText: string;
+  badgeBorder: string;
+  iconName: 'Utensils' | 'Store' | 'Bike' | 'Monitor';
+  isDeliveryFlow: boolean;
+  isTableModality: boolean;
+  hasIndividualPayment: boolean;
+}
+
+/**
+ * Retorna as configurações visuais e comportamentais da modalidade do pedido
+ */
+export function getOrderModalityDetails(order: any): OrderModalityDetails {
+  const modality = getOrderModality(order);
+
+  switch (modality) {
+    case 'GARCOM_MESA':
+      return {
+        modality,
+        label: 'GARÇOM • MESA',
+        shortLabel: 'Garçom • Mesa',
+        badgeBg: 'bg-emerald-700 text-white',
+        badgeText: 'text-white',
+        badgeBorder: 'border-emerald-700',
+        iconName: 'Utensils',
+        isDeliveryFlow: false,
+        isTableModality: true,
+        hasIndividualPayment: false
+      };
+    case 'BALCAO_RETIRADA':
+      return {
+        modality,
+        label: 'BALCÃO • RETIRADA',
+        shortLabel: 'Balcão • Retirada',
+        badgeBg: 'bg-amber-600 text-white',
+        badgeText: 'text-white',
+        badgeBorder: 'border-amber-600',
+        iconName: 'Store',
+        isDeliveryFlow: false,
+        isTableModality: false,
+        hasIndividualPayment: true
+      };
+    case 'BALCAO_ENTREGA':
+      return {
+        modality,
+        label: 'BALCÃO • ENTREGA',
+        shortLabel: 'Balcão • Entrega',
+        badgeBg: 'bg-blue-600 text-white',
+        badgeText: 'text-white',
+        badgeBorder: 'border-blue-600',
+        iconName: 'Bike',
+        isDeliveryFlow: true,
+        isTableModality: false,
+        hasIndividualPayment: true
+      };
+    case 'BALCAO_MESA':
+      return {
+        modality,
+        label: 'BALCÃO • MESA',
+        shortLabel: 'Balcão • Mesa',
+        badgeBg: 'bg-teal-700 text-white',
+        badgeText: 'text-white',
+        badgeBorder: 'border-teal-700',
+        iconName: 'Utensils',
+        isDeliveryFlow: false,
+        isTableModality: true,
+        hasIndividualPayment: false
+      };
+    case 'TOTEM':
+      return {
+        modality,
+        label: 'TOTEM',
+        shortLabel: 'Totem',
+        badgeBg: 'bg-stone-800 text-white',
+        badgeText: 'text-white',
+        badgeBorder: 'border-stone-800',
+        iconName: 'Monitor',
+        isDeliveryFlow: false,
+        isTableModality: false,
+        hasIndividualPayment: true
+      };
+    case 'DELIVERY':
+    default:
+      return {
+        modality: 'DELIVERY',
+        label: 'DELIVERY',
+        shortLabel: 'Delivery',
+        badgeBg: 'bg-sky-600 text-white',
+        badgeText: 'text-white',
+        badgeBorder: 'border-sky-600',
+        iconName: 'Bike',
+        isDeliveryFlow: true,
+        isTableModality: false,
+        hasIndividualPayment: true
+      };
+  }
+}
 
 export interface OrderSourceDetails {
   source: OrderSource;
@@ -20,93 +120,25 @@ export interface OrderSourceDetails {
 }
 
 /**
- * Mapeia e normaliza a origem do pedido a partir dos campos do Firestore
+ * Mapeia a origem do pedido garantindo retrocompatibilidade
  */
 export function getOrderSourceDetails(order: any): OrderSourceDetails {
-  const orig = String(
-    order.origem || 
-    order.origin || 
-    order.source || 
-    order.tipo_pedido || 
-    order.orderType || 
-    ''
-  ).toLowerCase().trim();
+  const modDetails = getOrderModalityDetails(order);
 
-  const isTotem = orig.includes('totem') || orig.includes('kiosk') || orig.includes('autoatendimento');
-  const isTable = Boolean(order.mesa || order.tableNumber || order.num_mesa);
-  const isCounter = orig.includes('balcao') || orig.includes('counter') || orig === 'balcão';
-  const isWaiter = orig.includes('garcom') || orig.includes('waiter') || orig === 'garçom';
-  const isTakeaway = orig.includes('retirada') || orig.includes('takeaway') || orig.includes('pickup');
+  let source: OrderSource = 'DELIVERY';
+  if (modDetails.modality === 'GARCOM_MESA') source = 'WAITER';
+  else if (modDetails.modality === 'BALCAO_RETIRADA') source = 'TAKEAWAY';
+  else if (modDetails.modality === 'BALCAO_ENTREGA') source = 'COUNTER';
+  else if (modDetails.modality === 'BALCAO_MESA') source = 'TABLE';
+  else if (modDetails.modality === 'TOTEM') source = 'TOTEM';
 
-  if (isTotem) {
-    return {
-      source: 'TOTEM',
-      label: 'Totem',
-      shortLabel: 'Totem',
-      badgeBg: 'bg-purple-50',
-      badgeText: 'text-purple-700',
-      badgeBorder: 'border-purple-200',
-      iconName: 'Tablet'
-    };
-  }
-
-  if (isTable || orig.includes('mesa')) {
-    const tableNum = order.mesa || order.tableNumber || order.num_mesa || '';
-    return {
-      source: 'TABLE',
-      label: tableNum ? `Mesa ${tableNum}` : 'Mesa',
-      shortLabel: tableNum ? `Mesa ${tableNum}` : 'Mesa',
-      badgeBg: 'bg-stone-100',
-      badgeText: 'text-stone-700',
-      badgeBorder: 'border-stone-200',
-      iconName: 'UtensilsCrossed'
-    };
-  }
-
-  if (isWaiter) {
-    return {
-      source: 'WAITER',
-      label: 'Garçom',
-      shortLabel: 'Garçom',
-      badgeBg: 'bg-stone-100',
-      badgeText: 'text-stone-700',
-      badgeBorder: 'border-stone-200',
-      iconName: 'UserCheck'
-    };
-  }
-
-  if (isCounter) {
-    return {
-      source: 'COUNTER',
-      label: 'Balcão',
-      shortLabel: 'Balcão',
-      badgeBg: 'bg-stone-100',
-      badgeText: 'text-stone-700',
-      badgeBorder: 'border-stone-200',
-      iconName: 'Store'
-    };
-  }
-
-  if (isTakeaway) {
-    return {
-      source: 'TAKEAWAY',
-      label: 'Para Retirada',
-      shortLabel: 'Retirada',
-      badgeBg: 'bg-blue-50',
-      badgeText: 'text-blue-700',
-      badgeBorder: 'border-blue-200',
-      iconName: 'ShoppingBag'
-    };
-  }
-
-  // Padrão: Delivery do App do Cliente
   return {
-    source: 'DELIVERY',
-    label: 'Delivery (App)',
-    shortLabel: 'Delivery',
-    badgeBg: 'bg-emerald-50',
-    badgeText: 'text-emerald-700',
-    badgeBorder: 'border-emerald-200',
-    iconName: 'Truck'
+    source,
+    label: modDetails.label,
+    shortLabel: modDetails.label,
+    badgeBg: modDetails.badgeBg,
+    badgeText: modDetails.badgeText,
+    badgeBorder: modDetails.badgeBorder,
+    iconName: modDetails.iconName
   };
 }

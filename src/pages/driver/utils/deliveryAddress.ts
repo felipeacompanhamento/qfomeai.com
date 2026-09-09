@@ -28,32 +28,45 @@ export const extractAddressComponents = (order: AssignedOrder): AddressComponent
   }
 
   const addrObj =
-    order.deliveryAddress ||
-    order.endereco_entrega ||
-    order.enderecoEntrega ||
-    order.endereco ||
+    (typeof order.deliveryAddress === 'object' && order.deliveryAddress) ||
+    (typeof order.endereco_entrega === 'object' && order.endereco_entrega) ||
+    (typeof order.enderecoEntrega === 'object' && order.enderecoEntrega) ||
+    (typeof order.endereco === 'object' && order.endereco) ||
     {};
 
   const street =
     addrObj.rua ||
     addrObj.street ||
     addrObj.logradouro ||
+    addrObj.endereco ||
     order.rua ||
     order.street ||
+    (typeof order.endereco === 'string' ? order.endereco : '') ||
     '';
 
-  const number =
+  const isOrderSeqNumber = (val: any) => {
+    if (val === undefined || val === null || val === '') return false;
+    return val === order.numero_pedido || val === order.orderNumber || val === order.id;
+  };
+
+  const rawNumber =
     addrObj.numero ||
     addrObj.number ||
     addrObj.número ||
-    order.numero ||
-    order.number ||
+    addrObj.numero_endereco ||
+    addrObj.endereco_numero ||
+    order.numero_endereco ||
+    order.endereco_numero ||
+    order.streetNumber ||
+    (!isOrderSeqNumber(order.number) ? order.number : '') ||
+    (!isOrderSeqNumber(order.numero) ? order.numero : '') ||
     'S/N';
 
   const complement =
     addrObj.complemento ||
     addrObj.complement ||
     order.complemento ||
+    order.complement ||
     '';
 
   const reference =
@@ -69,12 +82,14 @@ export const extractAddressComponents = (order: AssignedOrder): AddressComponent
     addrObj.bairro ||
     addrObj.neighborhood ||
     order.bairro ||
+    order.neighborhood ||
     '';
 
   const city =
     addrObj.cidade ||
     addrObj.city ||
     order.cidade ||
+    order.city ||
     '';
 
   const state =
@@ -90,17 +105,19 @@ export const extractAddressComponents = (order: AssignedOrder): AddressComponent
     addrObj.zipCode ||
     addrObj.zip_code ||
     order.cep ||
+    order.zipCode ||
     '';
 
   const country =
     addrObj.pais ||
     addrObj.país ||
     addrObj.country ||
+    order.pais ||
     'Brasil';
 
   return {
     street: String(street).trim(),
-    number: String(number).trim(),
+    number: String(rawNumber).trim() || 'S/N',
     complement: String(complement).trim(),
     reference: String(reference).trim(),
     neighborhood: String(neighborhood).trim(),

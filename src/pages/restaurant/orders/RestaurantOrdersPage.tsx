@@ -48,6 +48,7 @@ export function RestaurantOrdersPage({
   const nowMs = useSharedClock(30000);
 
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [openAssignForOrder, setOpenAssignForOrder] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
   const [activeMobileTab, setActiveMobileTab] = useState<string>('novo');
   const [searchTerm, setSearchTerm] = useState('');
@@ -407,10 +408,17 @@ export function RestaurantOrdersPage({
               nowMs={nowMs}
               selectedOrder={selectedOrder}
               updatingOrderId={updatingOrderId}
-              onOrderClick={setSelectedOrder}
+              onOrderClick={(order) => {
+                setOpenAssignForOrder(false);
+                setSelectedOrder(order);
+              }}
               onUpdateStatus={onUpdate}
               onCancelOrder={setOrderToCancel}
               onPrintOrder={handlePrint}
+              onAssignDriver={(order) => {
+                setSelectedOrder(order);
+                setOpenAssignForOrder(true);
+              }}
             />
           ) : (
             /* Desktop List View Fallback */
@@ -429,10 +437,17 @@ export function RestaurantOrdersPage({
                     nowMs={nowMs}
                     isSelected={selectedOrder?.id === order.id}
                     isUpdating={updatingOrderId === order.id}
-                    onOrderClick={setSelectedOrder}
+                    onOrderClick={(ord) => {
+                      setOpenAssignForOrder(false);
+                      setSelectedOrder(ord);
+                    }}
                     onUpdateStatus={onUpdate}
                     onCancelOrder={setOrderToCancel}
                     onPrintOrder={handlePrint}
+                    onAssignDriver={(ord) => {
+                      setSelectedOrder(ord);
+                      setOpenAssignForOrder(true);
+                    }}
                   />
                 ))
               )}
@@ -456,10 +471,17 @@ export function RestaurantOrdersPage({
                 nowMs={nowMs}
                 isSelected={selectedOrder?.id === order.id}
                 isUpdating={updatingOrderId === order.id}
-                onOrderClick={setSelectedOrder}
+                onOrderClick={(ord) => {
+                  setOpenAssignForOrder(false);
+                  setSelectedOrder(ord);
+                }}
                 onUpdateStatus={onUpdate}
                 onCancelOrder={setOrderToCancel}
                 onPrintOrder={handlePrint}
+                onAssignDriver={(ord) => {
+                  setSelectedOrder(ord);
+                  setOpenAssignForOrder(true);
+                }}
               />
             ))
           )}
@@ -493,7 +515,10 @@ export function RestaurantOrdersPage({
             <IconButton
               variant="ghost"
               aria-label="Fechar detalhes"
-              onClick={() => setSelectedOrder(null)}
+              onClick={() => {
+                setSelectedOrder(null);
+                setOpenAssignForOrder(false);
+              }}
               className="absolute top-3 right-3 sm:top-4 sm:right-4 z-20 bg-stone-100 hover:bg-stone-200 rounded-full"
             >
               <X className="w-5 h-5 text-stone-600" />
@@ -514,6 +539,7 @@ export function RestaurantOrdersPage({
               handleTogglePaid={handleTogglePaid}
               isUpdating={updatingOrderId === selectedOrder.id}
               restaurantProfile={restaurantProfile}
+              initialOpenAssignDriver={openAssignForOrder}
             />
           </div>
         </div>

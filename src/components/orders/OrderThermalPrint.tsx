@@ -1,5 +1,5 @@
 import React from 'react';
-import { normalizeOrderOrigem, OrderOrigem } from '../../domain/order/orderSource';
+import { normalizeOrderOrigem, OrderOrigem, getOrderModality, OrderModality } from '../../domain/order/orderSource';
 import { getPaymentMethodLabel } from '../../services/paymentMethodsService';
 
 // Simple HTML escape helper to prevent injection
@@ -506,6 +506,9 @@ function formatGarcomItemsHtml(items: any[]): string {
 function generateGarcomReceiptHtml(order: any, restaurant?: any, profile?: any): string {
   const restName = escapeHtml(restaurant?.nome_fantasia || restaurant?.nome || profile?.nome || '');
 
+  const rawOrderNum = order.number || order.numero || order.numero_pedido || order.orderNumber || order.displayId || order.id || '';
+  const orderCode = escapeHtml(String(rawOrderNum).length > 8 ? String(rawOrderNum).slice(-6).toUpperCase() : String(rawOrderNum));
+
   const rawDate = order.data_criacao || order.createdAt ? new Date(order.data_criacao || order.createdAt) : new Date();
   const horarioStr = rawDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -522,7 +525,8 @@ function generateGarcomReceiptHtml(order: any, restaurant?: any, profile?: any):
   const rawTab = order.tabId || order.comandaId || order.comanda_id || order.tabNumber || order.tab_id;
   const tabDisplay = rawTab ? escapeHtml(String(rawTab).startsWith('#') ? rawTab : `#${String(rawTab).slice(-6).toUpperCase()}`) : 'Comanda';
 
-  const waiterName = escapeHtml(order.waiterName || order.garcom_nome || order.garcom || order.nome_garcom || profile?.nome || 'Garçom');
+  const rawWaiter = order.waiterName || order.garcom_nome || order.garcom || order.nome_garcom || '';
+  const waiterName = rawWaiter ? escapeHtml(rawWaiter) : '';
 
   const roundNum = order.roundNumber || order.numero_rodada || order.round || order.rodada;
   const roundDisplay = roundNum ? `${escapeHtml(String(roundNum))}ª Rodada` : '1ª Rodada';
@@ -537,13 +541,14 @@ function generateGarcomReceiptHtml(order: any, restaurant?: any, profile?: any):
 
     <!-- Top Highlight -->
     <div class="text-center font-bold" style="font-size: 14pt; border-bottom: 2px solid #000; padding-bottom: 4px; margin-bottom: 6px; letter-spacing: 0.5px;">
-      GARÇOM / MESA
+      PEDIDO DE MESA
     </div>
 
     <!-- Header Details -->
+    <div class="info-row" style="font-size: 12pt; font-weight: bold;"><b>Pedido:</b> #${orderCode}</div>
     <div class="info-row" style="font-size: 12pt; font-weight: bold;"><b>Mesa:</b> ${tableName}</div>
     <div class="info-row" style="font-size: 10.5pt;"><b>Comanda:</b> ${tabDisplay}</div>
-    <div class="info-row" style="font-size: 10.5pt;"><b>Garçom:</b> ${waiterName}</div>
+    ${waiterName ? `<div class="info-row" style="font-size: 10.5pt;"><b>Garçom:</b> ${waiterName}</div>` : ''}
     <div class="info-row" style="font-size: 10.5pt;"><b>Rodada:</b> ${roundDisplay}</div>
     <div class="info-row" style="font-size: 10.5pt;"><b>Horário:</b> ${horarioStr}</div>
 
@@ -569,7 +574,8 @@ function generateGarcomReceiptHtml(order: any, restaurant?: any, profile?: any):
 function generateBalcaoReceiptHtml(order: any, restaurant?: any, profile?: any): string {
   const restName = escapeHtml(restaurant?.nome_fantasia || restaurant?.nome || profile?.nome || '');
 
-  const orderCode = escapeHtml((order.id || '').slice(-6).toUpperCase());
+  const rawOrderNum = order.number || order.numero || order.numero_pedido || order.orderNumber || order.displayId || order.id || '';
+  const orderCode = escapeHtml(String(rawOrderNum).length > 8 ? String(rawOrderNum).slice(-6).toUpperCase() : String(rawOrderNum));
   const rawDate = order.data_criacao || order.createdAt ? new Date(order.data_criacao || order.createdAt) : new Date();
   const horarioStr = rawDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -591,7 +597,7 @@ function generateBalcaoReceiptHtml(order: any, restaurant?: any, profile?: any):
 
     <!-- Top Highlight -->
     <div class="text-center font-bold" style="font-size: 14pt; border-bottom: 2px solid #000; padding-bottom: 4px; margin-bottom: 6px; letter-spacing: 0.5px;">
-      BALCÃO
+      BALCÃO / RETIRADA
     </div>
 
     <!-- Header Details -->
@@ -623,7 +629,8 @@ function generateBalcaoReceiptHtml(order: any, restaurant?: any, profile?: any):
 function generateTotemReceiptHtml(order: any, restaurant?: any, profile?: any): string {
   const restName = escapeHtml(restaurant?.nome_fantasia || restaurant?.nome || profile?.nome || '');
 
-  const orderCode = escapeHtml((order.id || '').slice(-6).toUpperCase());
+  const rawOrderNum = order.number || order.numero || order.numero_pedido || order.orderNumber || order.displayId || order.id || '';
+  const orderCode = escapeHtml(String(rawOrderNum).length > 8 ? String(rawOrderNum).slice(-6).toUpperCase() : String(rawOrderNum));
   const rawDate = order.data_criacao || order.createdAt ? new Date(order.data_criacao || order.createdAt) : new Date();
   const horarioStr = rawDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -667,7 +674,7 @@ function generateTotemReceiptHtml(order: any, restaurant?: any, profile?: any): 
 }
 
 // ============================================================================
-// MAIN GENERATOR: Automatic Model Dispatcher by source/origem
+// MAIN GENERATOR: Automatic Model Dispatcher by source/origem + service mode
 // ============================================================================
 export function generateThermalReceiptHtml(order: any, restaurant?: any, profile?: any): string {
   if (!order) return '';
@@ -676,28 +683,31 @@ export function generateThermalReceiptHtml(order: any, restaurant?: any, profile
     return generatePreContaReceiptHtml(order, restaurant, profile);
   }
 
-  // Automatically resolve the order origin model (GARCOM, DELIVERY, BALCAO, TOTEM)
-  const modelType: OrderOrigem = normalizeOrderOrigem(order);
+  // Identifica automaticamente a modalidade operacional do pedido
+  const modality: OrderModality = getOrderModality(order);
   const paperSize = restaurant?.defaultPaperSize || restaurant?.paperSize || '80mm';
 
   let bodyContent = '';
-  switch (modelType) {
-    case 'GARCOM':
+  switch (modality) {
+    case 'GARCOM_MESA':
+    case 'BALCAO_MESA':
       bodyContent = generateGarcomReceiptHtml(order, restaurant, profile);
       break;
-    case 'BALCAO':
+    case 'BALCAO_RETIRADA':
       bodyContent = generateBalcaoReceiptHtml(order, restaurant, profile);
       break;
     case 'TOTEM':
       bodyContent = generateTotemReceiptHtml(order, restaurant, profile);
       break;
+    case 'BALCAO_ENTREGA':
     case 'DELIVERY':
     default:
       bodyContent = generateDeliveryReceiptHtml(order, restaurant, profile);
       break;
   }
 
-  const orderCode = escapeHtml((order.id || '').slice(-6).toUpperCase());
+  const rawOrderNum = order.number || order.numero || order.numero_pedido || order.orderNumber || order.displayId || order.id || '';
+  const orderCode = escapeHtml(String(rawOrderNum).length > 8 ? String(rawOrderNum).slice(-6).toUpperCase() : String(rawOrderNum));
 
   // Complete HTML document containing the adapted styles and cut spacer
   return `
@@ -705,7 +715,7 @@ export function generateThermalReceiptHtml(order: any, restaurant?: any, profile
     <html>
     <head>
       <meta charset="utf-8">
-      <title>Comprovante #${orderCode} - ${modelType}</title>
+      <title>Comprovante #${orderCode} - ${modality}</title>
       <style>
         ${getThermalStyles(paperSize)}
       </style>
@@ -739,6 +749,8 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
   let roundsHtml = '';
   let totalSubtotalCents = 0;
 
+  const formatBrlCents = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
+
   let groups: Array<{
     roundNumber: number;
     sentAt?: string;
@@ -768,7 +780,7 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
       });
 
       let rIndex = 1;
-      groupMap.forEach((itemsInGroup, _key) => {
+      groupMap.forEach((itemsInGroup) => {
         groups.push({
           roundNumber: rIndex++,
           items: itemsInGroup
@@ -787,7 +799,7 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
   groups.forEach((group) => {
     roundsHtml += `
       <div class="divider-solid"></div>
-      <div class="font-bold mb-1" style="font-size: 10.5pt;">RODADA ${group.roundNumber}${group.sentAt ? ` (${group.sentAt})` : ''}:</div>
+      <div class="font-bold mb-1" style="font-size: 10.5pt; text-transform: uppercase;">RODADA ${group.roundNumber}${group.sentAt ? ` (${group.sentAt})` : ''}</div>
     `;
 
     group.items.forEach((item: any) => {
@@ -823,8 +835,8 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
         totalSubtotalCents += totalCents;
       }
 
-      const unitFormatted = (unitCents / 100).toFixed(2);
-      const totalFormatted = (totalCents / 100).toFixed(2);
+      const unitFormatted = formatBrlCents(unitCents);
+      const totalFormatted = formatBrlCents(totalCents);
 
       let sizeStr = '';
       if (item.size) {
@@ -838,7 +850,7 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
       }
 
       const optionsList: Array<{ name: string; priceFormatted?: string }> = [];
-      const rawOptions = item.options || item.adicionais || item.extras || [];
+      const rawOptions = item.options || item.adicionais || item.extras || item.adicionaisSelecionados || [];
       if (Array.isArray(rawOptions)) {
         rawOptions.forEach((opt: any) => {
           const name = opt.optionName || opt.itemNome || opt.nome || opt.name;
@@ -846,7 +858,7 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
           if (name) {
             optionsList.push({
               name: escapeHtml(name),
-              priceFormatted: pCents > 0 ? (pCents / 100).toFixed(2) : undefined
+              priceFormatted: pCents > 0 ? formatBrlCents(pCents) : undefined
             });
           }
         });
@@ -860,10 +872,10 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
             <span class="font-bold ${isCancelled ? 'line-through' : ''}">${qty}x ${productName} ${isCancelled ? '<b>[CANCELADO]</b>' : ''}</span>
             <span class="item-price ${isCancelled ? 'line-through' : ''}">R$ ${totalFormatted}</span>
           </div>
-          <div class="item-sub-info">• Valor unitário: R$ ${unitFormatted}</div>
-          ${sizeStr ? `<div class="item-sub-info">• Tamanho/Variação: ${sizeStr}</div>` : ''}
+          ${sizeStr ? `<div class="item-sub-info">• Tamanho: ${sizeStr}</div>` : ''}
           ${optionsList.map(o => `<div class="item-extra flex"><span>+ ${o.name}</span>${o.priceFormatted ? `<span>R$ ${o.priceFormatted}</span>` : ''}</div>`).join('')}
           ${obs ? `<div class="item-obs">Obs: ${obs}</div>` : ''}
+          <div class="item-sub-info">• Valor unitário: R$ ${unitFormatted}</div>
         </div>
       `;
     });
@@ -878,6 +890,8 @@ function formatPreContaItemsByRound(data: any): { roundsHtml: string; totalSubto
 export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile?: any): string {
   if (!data) return '';
 
+  const formatBrlCents = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
+
   const tab = data.tab || data;
   const table = data.table || tab.table;
   const rest = restaurant || data.restaurant;
@@ -885,29 +899,51 @@ export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile
 
   const restName = escapeHtml(rest?.nome_fantasia || rest?.nome || profile?.nome || '');
 
-  // Header Details
-  const tableName = escapeHtml(
-    table?.name ||
-    table?.nome ||
-    tab?.tableName ||
-    (tab?.tableNumber !== undefined && tab?.tableNumber !== null ? `Mesa ${tab.tableNumber}` : '') ||
-    (table?.number !== undefined && table?.number !== null ? `Mesa ${table.number}` : '') ||
-    'Mesa'
-  );
+  // Mesa format: Mesa: 04
+  let rawMesa = table?.number !== undefined && table?.number !== null
+    ? String(table.number)
+    : (tab?.tableNumber !== undefined && tab?.tableNumber !== null
+        ? String(tab.tableNumber)
+        : (table?.name || tab?.tableName || ''));
 
-  const rawTab = tab?.id || tab?.comandaId || tab?.number || data?.tabId || '';
-  const tabDisplay = rawTab ? escapeHtml(String(rawTab).startsWith('#') ? rawTab : `#${String(rawTab).slice(-6).toUpperCase()}`) : 'Comanda';
+  if (!rawMesa) {
+    rawMesa = '01';
+  } else if (/^\d+$/.test(rawMesa)) {
+    rawMesa = rawMesa.padStart(2, '0');
+  } else {
+    rawMesa = rawMesa.replace(/^mesa\s*/i, '');
+    if (/^\d+$/.test(rawMesa)) {
+      rawMesa = rawMesa.padStart(2, '0');
+    }
+  }
+  const tableName = escapeHtml(rawMesa);
 
+  // Comanda format: Comanda: 23
+  let rawTab = tab?.number !== undefined && tab?.number !== null
+    ? String(tab.number)
+    : (tab?.id || tab?.comandaId || tab?.comandaNumero || data?.tabId || '');
+
+  if (!rawTab) {
+    rawTab = '--';
+  } else if (typeof rawTab === 'string') {
+    rawTab = rawTab.replace(/^#/, '');
+    if (rawTab.length > 8) {
+      rawTab = rawTab.slice(-4).toUpperCase();
+    }
+  }
+  const tabDisplay = escapeHtml(String(rawTab));
+
+  // Garçom: Must come from waiterName on comanda
   const waiterName = escapeHtml(
-    data?.waiterName ||
     tab?.waiterName ||
+    tab?.garcomNome ||
+    tab?.waiter_name ||
+    data?.waiterName ||
     (Array.isArray(data?.orders) && data.orders[0]?.waiterName) ||
-    tab?.openedBy ||
-    profile?.nome ||
-    'Garçom'
+    'Não informado'
   );
 
-  const peopleCount = Number(tab?.peopleCount || tab?.quantidade_pessoas || table?.peopleCount || 1);
+  const peopleCount = Number(tab?.peopleCount || tab?.quantidade_pessoas || table?.peopleCount || table?.capacity || 1);
 
   const openedAtRaw = tab?.openedAt || tab?.createdAt || tab?.data_abertura;
   const openedAtDate = openedAtRaw ? new Date(openedAtRaw) : new Date();
@@ -917,16 +953,15 @@ export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
-  });
+  }).replace(',', '');
 
   const printDateStr = new Date().toLocaleString('pt-BR', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
+    minute: '2-digit'
+  }).replace(',', '');
 
   // Body: Grouped by rounds
   const { roundsHtml, totalSubtotalCents } = formatPreContaItemsByRound(data);
@@ -948,28 +983,28 @@ export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile
     </div>
 
     <!-- Header Info Block -->
-    <div class="info-row" style="font-size: 11.5pt; font-weight: bold;"><b>Mesa:</b> ${tableName}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Mesa:</b> ${tableName}</div>
     <div class="info-row" style="font-size: 10.5pt;"><b>Comanda:</b> ${tabDisplay}</div>
     <div class="info-row" style="font-size: 10.5pt;"><b>Garçom:</b> ${waiterName}</div>
-    <div class="info-row" style="font-size: 10.5pt;"><b>Quantidade de pessoas:</b> ${peopleCount}</div>
-    <div class="info-row" style="font-size: 10.5pt;"><b>Data/hora de abertura:</b> ${openedAtStr}</div>
-    <div class="info-row" style="font-size: 10.5pt;"><b>Data/hora da impressão:</b> ${printDateStr}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Pessoas:</b> ${peopleCount}</div>
+    <div class="info-row mt-1" style="font-size: 10.5pt;"><b>Abertura:</b> ${openedAtStr}</div>
+    <div class="info-row" style="font-size: 10.5pt;"><b>Impressão:</b> ${printDateStr}</div>
 
     <!-- Items Grouped by Round -->
     ${roundsHtml}
 
     <!-- Summary / Resumo -->
     <div class="divider-solid"></div>
-    <div class="font-bold mb-1 text-center" style="font-size: 11pt; text-transform: uppercase;">RESUMO DA COMANDA</div>
-    <div class="flex"><span>Subtotal:</span><span>R$ ${(subtotalCents / 100).toFixed(2)}</span></div>
-    ${discountCents > 0 ? `<div class="flex"><span>Desconto:</span><span>- R$ ${(discountCents / 100).toFixed(2)}</span></div>` : ''}
-    ${serviceFeeCents > 0 ? `<div class="flex"><span>Taxa de Serviço:</span><span>R$ ${(serviceFeeCents / 100).toFixed(2)}</span></div>` : ''}
+    <div class="font-bold mb-1 text-center" style="font-size: 11pt; text-transform: uppercase;">RESUMO</div>
+    <div class="flex"><span>Subtotal:</span><span>R$ ${formatBrlCents(subtotalCents)}</span></div>
+    ${discountCents > 0 ? `<div class="flex"><span>Desconto:</span><span>- R$ ${formatBrlCents(discountCents)}</span></div>` : ''}
+    ${serviceFeeCents > 0 ? `<div class="flex"><span>Taxa de Serviço:</span><span>R$ ${formatBrlCents(serviceFeeCents)}</span></div>` : ''}
     <div class="flex font-bold" style="font-size: 11pt; margin-top: 4px; border-top: 1px dashed #000; padding-top: 4px;">
-      <span>TOTAL DA COMANDA:</span><span>R$ ${(totalCents / 100).toFixed(2)}</span>
+      <span>Total da comanda:</span><span>R$ ${formatBrlCents(totalCents)}</span>
     </div>
-    ${paidCents > 0 ? `<div class="flex" style="margin-top: 2px;"><span>Valor Já Pago:</span><span>R$ ${(paidCents / 100).toFixed(2)}</span></div>` : ''}
+    ${paidCents > 0 ? `<div class="flex" style="margin-top: 2px;"><span>Valor pago:</span><span>R$ ${formatBrlCents(paidCents)}</span></div>` : ''}
     <div class="flex font-bold" style="font-size: 12pt; margin-top: 4px; border-top: 1px solid #000; padding-top: 4px;">
-      <span>SALDO A PAGAR:</span><span>R$ ${(balanceDueCents / 100).toFixed(2)}</span>
+      <span>SALDO A PAGAR:</span><span>R$ ${formatBrlCents(balanceDueCents)}</span>
     </div>
 
     <!-- Footer -->
@@ -984,7 +1019,7 @@ export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile
     <html>
     <head>
       <meta charset="utf-8">
-      <title>Pré-Conta ${tabDisplay} - ${tableName}</title>
+      <title>Pré-Conta ${tabDisplay} - Mesa ${tableName}</title>
       <style>
         ${getThermalStyles(paperSize)}
       </style>

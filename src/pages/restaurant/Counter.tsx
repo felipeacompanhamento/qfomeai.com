@@ -30,13 +30,23 @@ import {
   Utensils, 
   User, 
   ShoppingBag, 
+  Truck,
+  Phone,
+  MapPin,
   Coins,
   CreditCard,
   QrCode,
   ArrowRight,
-  AlertCircle
+  AlertCircle,
+  Receipt,
+  Users
 } from 'lucide-react';
 import { FormField, TextInput, SelectInput, FormModal } from '../../components/ui/FormComponents';
+import { tableRepository } from '../../domain/table/tableRepository';
+import { tabRepository } from '../../domain/tab/tabRepository';
+import { Table, Tab, TableStatus } from '../../types/mesas';
+
+export type BalcaoTipoAtendimento = 'RETIRADA' | 'MESA' | 'ENTREGA';
 
 export default function CounterPage({ restaurantProfile }: { restaurantProfile: any }) {
   const { user, profile } = useAuth();
@@ -57,10 +67,37 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
   // Mobile View Switcher ('catalog' | 'cart')
   const [mobileTab, setMobileTab] = useState<'catalog' | 'cart'>('catalog');
 
-  // Service Mode
-  const [serviceMode, setServiceMode] = useState<'DINE_IN' | 'COUNTER' | 'PICKUP'>('COUNTER');
+  // Tipo de Atendimento: Retirada | Consumir na Mesa | Entrega
+  const [tipoAtendimento, setTipoAtendimento] = useState<BalcaoTipoAtendimento>('RETIRADA');
+  const [serviceMode, setServiceMode] = useState<'DINE_IN' | 'COUNTER' | 'PICKUP'>('PICKUP');
+
+  // Screen states for the selected Atendimento
   const [clientName, setClientName] = useState<string>('');
+  const [clientPhone, setClientPhone] = useState<string>('');
+  const [tableNumber, setTableNumber] = useState<string>('');
+  const [deliveryStreet, setDeliveryStreet] = useState<string>('');
+  const [deliveryNumber, setDeliveryNumber] = useState<string>('');
+  const [deliveryNeighborhood, setDeliveryNeighborhood] = useState<string>('');
+  const [deliveryComplement, setDeliveryComplement] = useState<string>('');
+  const [deliveryReference, setDeliveryReference] = useState<string>('');
+
+  // Field validation errors
   const [clientNameError, setClientNameError] = useState<string | null>(null);
+  const [clientPhoneError, setClientPhoneError] = useState<string | null>(null);
+  const [tableNumberError, setTableNumberError] = useState<string | null>(null);
+  const [deliveryStreetError, setDeliveryStreetError] = useState<string | null>(null);
+  const [deliveryNumberError, setDeliveryNumberError] = useState<string | null>(null);
+  const [deliveryNeighborhoodError, setDeliveryNeighborhoodError] = useState<string | null>(null);
+
+  // Available restaurant tables for quick selection
+  const [restaurantTables, setRestaurantTables] = useState<any[]>([]);
+
+  // Table / Comanda selection states for "Consumir na Mesa"
+  const [activeTabs, setActiveTabs] = useState<Tab[]>([]);
+  const [mesaSelectionMode, setMesaSelectionMode] = useState<'FREE_TABLE' | 'ACTIVE_TAB'>('FREE_TABLE');
+  const [selectedTable, setSelectedTable] = useState<Table | null>(null);
+  const [selectedTab, setSelectedTab] = useState<Tab | null>(null);
+  const [tableFilterQuery, setTableFilterQuery] = useState<string>('');
 
   // Stable clientActionId ref for idempotency
   const clientActionIdRef = useRef<string | null>(null);
@@ -109,16 +146,18 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
           }
           loadedRestIdRef.current = currentRestId;
 
-          const [cats, prods, options] = await Promise.all([
+          const [cats, prods, options, tablesData] = await Promise.all([
             productService.getCategoriesByRestaurant(currentRestId),
             productService.getProducts(currentRestId),
-            optionService.getAllOptions(currentRestId)
+            optionService.getAllOptions(currentRestId),
+            tableRepository.listTablesByRestaurant(currentRestId).catch(() => [])
           ]);
           
           if (isMounted) {
             setCategories(cats || []);
             setProducts((prods || []).filter(p => p.ativo !== false && isProductAvailableForChannel(p, 'counter')));
             setAllOptionItems(options || []);
+            setRestaurantTables((tablesData || []).filter((t: any) => t.active !== false));
           }
         }
       } catch (err) {
@@ -133,6 +172,71 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
     
     return () => { isMounted = false; };
   }, [user?.uid, profile?.restaurantId, restaurantProfile?.id]);
+
+  // Real-time synchronization for tables and active tabs in Counter
+  useEffect(() => {
+    if (!restaurantId) return;
+    const unsubTabs = tabRepository.subscribeActiveTabs(
+      restaurantId,
+      (tabs) => {
+        setActiveTabs(tabs || []);
+      },
+      (err) => {
+        console.error("Error subscribing active tabs in Counter:", err);
+      }
+    );
+    const unsubTables = tableRepository.subscribeTablesByRestaurant(
+      restaurantId,
+      (tables) => {
+        setRestaurantTables((tables || []).filter((t: any) => t.active !== false));
+      },
+      (err) => {
+        console.error("Error subscribing tables in Counter:", err);
+      }
+    );
+    return () => {
+      unsubTabs();
+      unsubTables();
+    };
+  }, [restaurantId]);
+
+  // Set of table IDs with active tabs
+  const activeTabTableIds = useMemo(() => {
+    return new Set(activeTabs.map(t => t.tableId).filter(Boolean));
+  }, [activeTabs]);
+
+  // Free tables (no active comanda and status is not occupied or disabled)
+  const freeTables = useMemo(() => {
+    return restaurantTables.filter(t => {
+      if (t.active === false) return false;
+      if (activeTabTableIds.has(t.id)) return false;
+      const st = String(t.status || '').toUpperCase();
+      if (st === 'OCCUPIED' || st === 'OCUPADA' || st === 'DISABLED' || st === 'INATIVA' || st === 'WAITING_PAYMENT') return false;
+      return true;
+    });
+  }, [restaurantTables, activeTabTableIds]);
+
+  const filteredFreeTables = useMemo(() => {
+    if (!tableFilterQuery.trim()) return freeTables;
+    const q = tableFilterQuery.toLowerCase().trim();
+    return freeTables.filter(t => {
+      const name = String(t.name || '').toLowerCase();
+      const num = String(t.number ?? '').toLowerCase();
+      return name.includes(q) || num.includes(q);
+    });
+  }, [freeTables, tableFilterQuery]);
+
+  const filteredActiveTabs = useMemo(() => {
+    if (!tableFilterQuery.trim()) return activeTabs;
+    const q = tableFilterQuery.toLowerCase().trim();
+    return activeTabs.filter(t => {
+      const tName = String(t.tableName || '').toLowerCase();
+      const tNum = String(t.tableNumber ?? '').toLowerCase();
+      const cName = String(t.customerName || '').toLowerCase();
+      const tabId = String(t.id || '').toLowerCase();
+      return tName.includes(q) || tNum.includes(q) || cName.includes(q) || tabId.includes(q);
+    });
+  }, [activeTabs, tableFilterQuery]);
 
 
   // Cart total
@@ -306,19 +410,89 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
     setCustomizingProduct(null);
   };
 
+  const handleSelectTipoAtendimento = (tipo: BalcaoTipoAtendimento) => {
+    setTipoAtendimento(tipo);
+    setClientNameError(null);
+    setClientPhoneError(null);
+    setTableNumberError(null);
+    setDeliveryStreetError(null);
+    setDeliveryNumberError(null);
+    setDeliveryNeighborhoodError(null);
+
+    if (tipo === 'RETIRADA') {
+      setServiceMode('PICKUP');
+    } else if (tipo === 'MESA') {
+      setServiceMode('DINE_IN');
+    } else {
+      setServiceMode('COUNTER');
+    }
+  };
+
   const handleCheckout = async () => {
     setError(null);
-    if (!restaurantId || cart.length === 0) return;
-    
-    const totalPaymentsCents = payments.reduce((acc, p) => acc + p.amount, 0);
-    if (totalPaymentsCents !== cartTotalCents) {
-      setError('A soma dos pagamentos deve ser igual ao total do pedido.');
-      return;
-    }
+    setClientNameError(null);
+    setClientPhoneError(null);
+    setTableNumberError(null);
+    setDeliveryStreetError(null);
+    setDeliveryNumberError(null);
+    setDeliveryNeighborhoodError(null);
 
-    if (isCashAmountInsufficient) {
-      setError('O valor entregue em dinheiro é menor que a parcela em dinheiro.');
-      return;
+    if (!restaurantId || cart.length === 0) return;
+
+    // Field validations per selected Tipo de Atendimento
+    if (tipoAtendimento === 'RETIRADA') {
+      if (!clientName.trim()) {
+        setClientNameError('Informe o nome do cliente para retirada.');
+        return;
+      }
+    } else if (tipoAtendimento === 'MESA') {
+      if (mesaSelectionMode === 'FREE_TABLE') {
+        if (!selectedTable) {
+          setTableNumberError('Selecione uma mesa livre para este pedido.');
+          return;
+        }
+      } else {
+        if (!selectedTab) {
+          setTableNumberError('Selecione uma comanda ativa existente para este pedido.');
+          return;
+        }
+      }
+    } else if (tipoAtendimento === 'ENTREGA') {
+      let hasError = false;
+      if (!clientName.trim()) {
+        setClientNameError('Informe o nome do cliente.');
+        hasError = true;
+      }
+      if (!clientPhone.trim()) {
+        setClientPhoneError('Informe o telefone / WhatsApp.');
+        hasError = true;
+      }
+      if (!deliveryStreet.trim()) {
+        setDeliveryStreetError('Informe o endereço (rua/logradouro).');
+        hasError = true;
+      }
+      if (!deliveryNumber.trim()) {
+        setDeliveryNumberError('Informe o número.');
+        hasError = true;
+      }
+      if (!deliveryNeighborhood.trim()) {
+        setDeliveryNeighborhoodError('Informe o bairro.');
+        hasError = true;
+      }
+      if (hasError) return;
+    }
+    
+    if (tipoAtendimento !== 'MESA') {
+      const totalPaymentsCents = payments.reduce((acc, p) => acc + p.amount, 0);
+      if (totalPaymentsCents !== cartTotalCents) {
+        setError('A soma dos pagamentos deve ser igual ao total do pedido.');
+        return;
+      }
+
+      if (isCashAmountInsufficient) {
+        setError('O valor entregue em dinheiro é menor que a parcela em dinheiro.');
+        return;
+      }
     }
 
     setSaveLoading(true);
@@ -336,18 +510,79 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
         ? deliveredCashCents / 100
         : 0;
 
+      let formattedClientName = '';
+      let resolvedTableId: string | undefined = undefined;
+      let resolvedTableName: string | undefined = undefined;
+      let resolvedTableNumber: string | number | undefined = undefined;
+      let resolvedTabId: string | undefined = undefined;
+
+      if (tipoAtendimento === 'RETIRADA') {
+        formattedClientName = clientName.trim() || 'Cliente Balcão';
+      } else if (tipoAtendimento === 'MESA') {
+        if (mesaSelectionMode === 'FREE_TABLE' && selectedTable) {
+          resolvedTableId = selectedTable.id;
+          resolvedTableName = selectedTable.name || (selectedTable.number ? `Mesa ${selectedTable.number}` : undefined);
+          resolvedTableNumber = selectedTable.number;
+          const tableStr = resolvedTableName || (resolvedTableNumber ? `Mesa ${resolvedTableNumber}` : 'Mesa');
+          formattedClientName = clientName.trim() ? `${tableStr} - ${clientName.trim()}` : tableStr;
+        } else if (mesaSelectionMode === 'ACTIVE_TAB' && selectedTab) {
+          resolvedTabId = selectedTab.id;
+          resolvedTableId = selectedTab.tableId;
+          resolvedTableName = selectedTab.tableName;
+          resolvedTableNumber = selectedTab.tableNumber;
+          const tableStr = resolvedTableName || (resolvedTableNumber ? `Mesa ${resolvedTableNumber}` : `Comanda #${selectedTab.id.slice(0, 6)}`);
+          const custName = clientName.trim() || selectedTab.customerName || '';
+          formattedClientName = custName ? `${tableStr} - ${custName}` : tableStr;
+        }
+      } else if (tipoAtendimento === 'ENTREGA') {
+        formattedClientName = clientName.trim() || 'Cliente';
+      }
+
+      const mappedServiceMode = tipoAtendimento === 'RETIRADA'
+        ? 'PICKUP'
+        : (tipoAtendimento === 'MESA' ? 'DINE_IN' : 'COUNTER');
+
+      const fullDeliveryAddress = tipoAtendimento === 'ENTREGA' ? [
+        `${deliveryStreet.trim()}, ${deliveryNumber.trim()}`,
+        deliveryNeighborhood.trim(),
+        deliveryComplement.trim() ? `Compl: ${deliveryComplement.trim()}` : '',
+        deliveryReference.trim() ? `Ref: ${deliveryReference.trim()}` : ''
+      ].filter(Boolean).join(' - ') : undefined;
+
       const result = await counterOrderService.createCounterOrder({
         restaurantId,
         operatorId: profile?.uid || user?.uid || '',
         operatorName: profile?.nome || profile?.displayName || user?.displayName || 'Operador',
-        clientName,
-        serviceMode,
+        clientName: formattedClientName,
+        clientPhone: clientPhone.trim(),
+        tableId: resolvedTableId,
+        tableName: resolvedTableName,
+        tableNumber: resolvedTableNumber ?? (tipoAtendimento === 'MESA' ? tableNumber.trim() : undefined),
+        tabId: resolvedTabId,
+        comandaId: resolvedTabId,
+        deliveryAddress: tipoAtendimento === 'ENTREGA' ? {
+          street: deliveryStreet.trim(),
+          rua: deliveryStreet.trim(),
+          endereco: deliveryStreet.trim(),
+          number: deliveryNumber.trim(),
+          numero: deliveryNumber.trim(),
+          neighborhood: deliveryNeighborhood.trim(),
+          bairro: deliveryNeighborhood.trim(),
+          complement: deliveryComplement.trim() || undefined,
+          complemento: deliveryComplement.trim() || undefined,
+          reference: deliveryReference.trim() || undefined,
+          ponto_referencia: deliveryReference.trim() || undefined,
+          referencia: deliveryReference.trim() || undefined,
+          fullAddress: fullDeliveryAddress
+        } : undefined,
+        tipoAtendimento,
+        serviceMode: mappedServiceMode,
         items: cart,
         
-        forma_pagamento: primaryPaymentMethod,
-        payments: payments.map(p => ({ ...p, status: isPaid ? 'PAID' : 'PENDING' })),
-        pago: isPaid,
-        amountReceived: finalAmountReceivedReais,
+        forma_pagamento: tipoAtendimento === 'MESA' ? 'comanda' : primaryPaymentMethod,
+        payments: tipoAtendimento === 'MESA' ? [] : payments.map(p => ({ ...p, status: isPaid ? 'PAID' : 'PENDING' })),
+        pago: tipoAtendimento === 'MESA' ? false : isPaid,
+        amountReceived: tipoAtendimento === 'MESA' ? 0 : finalAmountReceivedReais,
         clientActionId: clientActionIdRef.current
       });
 
@@ -362,6 +597,22 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
       // Reset cart and inputs
       setCart([]);
       setClientName('');
+      setClientPhone('');
+      setTableNumber('');
+      setSelectedTable(null);
+      setSelectedTab(null);
+      setTableFilterQuery('');
+      setDeliveryStreet('');
+      setDeliveryNumber('');
+      setDeliveryNeighborhood('');
+      setDeliveryComplement('');
+      setDeliveryReference('');
+      setClientNameError(null);
+      setClientPhoneError(null);
+      setTableNumberError(null);
+      setDeliveryStreetError(null);
+      setDeliveryNumberError(null);
+      setDeliveryNeighborhoodError(null);
       setDeliveredCashCents(0);
       setMobileTab('catalog');
     } catch (err: any) {
@@ -550,54 +801,392 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
                 </span>
               </h2>
 
-              {/* Service Mode Selector */}
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-stone-600">Modalidade de Atendimento</label>
+              {/* Tipo de Atendimento: Retirada | Consumir na Mesa | Entrega */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-stone-700">Tipo de Atendimento</label>
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/50">
+                    Origem: Balcão
+                  </span>
+                </div>
                 <div className="grid grid-cols-3 gap-1.5 p-1 bg-stone-100 rounded-xl">
                   <button
                     type="button"
-                    onClick={() => setServiceMode('COUNTER')}
-                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      serviceMode === 'COUNTER' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500 hover:text-stone-800'
+                    onClick={() => handleSelectTipoAtendimento('RETIRADA')}
+                    className={`flex items-center justify-center gap-1 py-1.5 px-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      tipoAtendimento === 'RETIRADA' 
+                        ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20' 
+                        : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/50'
                     }`}
                   >
-                    Balcão
+                    <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Retirada</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setServiceMode('PICKUP')}
-                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      serviceMode === 'PICKUP' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500 hover:text-stone-800'
+                    onClick={() => handleSelectTipoAtendimento('MESA')}
+                    className={`flex items-center justify-center gap-1 py-1.5 px-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      tipoAtendimento === 'MESA' 
+                        ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20' 
+                        : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/50'
                     }`}
                   >
-                    Retirada
+                    <Utensils className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Consumir na Mesa</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setServiceMode('DINE_IN')}
-                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      serviceMode === 'DINE_IN' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500 hover:text-stone-800'
+                    onClick={() => handleSelectTipoAtendimento('ENTREGA')}
+                    className={`flex items-center justify-center gap-1 py-1.5 px-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      tipoAtendimento === 'ENTREGA' 
+                        ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20' 
+                        : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/50'
                     }`}
                   >
-                    Consumo Local
+                    <Truck className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Entrega</span>
                   </button>
                 </div>
               </div>
 
-              {/* Client Identification Input */}
-              <FormField 
-                label={`Nome do Cliente ${serviceMode === 'PICKUP' ? '*' : '(opcional)'}`}
-                error={clientNameError || undefined}
-              >
-                <TextInput
-                  placeholder={serviceMode === 'PICKUP' ? 'Nome do cliente para chamada' : 'Nome do cliente'}
-                  value={clientName}
-                  onChange={(e) => {
-                    setClientName(e.target.value);
-                    if (clientNameError) setClientNameError(null);
-                  }}
-                />
-              </FormField>
+              {/* Dynamic Screen States per Tipo de Atendimento */}
+              {tipoAtendimento === 'RETIRADA' && (
+                <div className="space-y-2 p-2.5 bg-stone-50/80 rounded-xl border border-stone-200/60">
+                  <div className="flex items-center justify-between text-[11px] text-stone-500 font-medium">
+                    <span>Retirada no balcão quando pronto</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <FormField 
+                      label="Nome do Cliente *"
+                      error={clientNameError || undefined}
+                    >
+                      <TextInput
+                        placeholder="Nome para chamada no balcão"
+                        value={clientName}
+                        onChange={(e) => {
+                          setClientName(e.target.value);
+                          if (clientNameError) setClientNameError(null);
+                        }}
+                      />
+                    </FormField>
+                    <FormField 
+                      label="Telefone / WhatsApp"
+                      error={clientPhoneError || undefined}
+                    >
+                      <TextInput
+                        placeholder="(00) 00000-0000"
+                        value={clientPhone}
+                        onChange={(e) => {
+                          setClientPhone(e.target.value);
+                          if (clientPhoneError) setClientPhoneError(null);
+                        }}
+                      />
+                    </FormField>
+                  </div>
+                </div>
+              )}
+
+              {tipoAtendimento === 'MESA' && (
+                <div className="space-y-3 p-3 bg-stone-50/90 rounded-xl border border-stone-200/80">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-stone-800">
+                      <Utensils className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Destino do Pedido (Consumir na Mesa)</span>
+                    </div>
+                    <span className="text-[10px] text-stone-500 font-medium">Lançamento em conta</span>
+                  </div>
+
+                  {/* Mode selector: Mesa Livre vs Comanda Ativa Existente */}
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-200/70 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMesaSelectionMode('FREE_TABLE');
+                        setSelectedTab(null);
+                        setTableNumberError(null);
+                      }}
+                      className={`py-1.5 px-2.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        mesaSelectionMode === 'FREE_TABLE'
+                          ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                      <span>Mesa Livre ({freeTables.length})</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMesaSelectionMode('ACTIVE_TAB');
+                        setSelectedTable(null);
+                        setTableNumberError(null);
+                      }}
+                      className={`py-1.5 px-2.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        mesaSelectionMode === 'ACTIVE_TAB'
+                          ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      <Receipt className="w-3 h-3 text-amber-600 shrink-0" />
+                      <span>Comanda Ativa ({activeTabs.length})</span>
+                    </button>
+                  </div>
+
+                  {/* Filter input */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400" />
+                    <input
+                      type="text"
+                      placeholder={mesaSelectionMode === 'FREE_TABLE' ? "Buscar mesa livre..." : "Buscar mesa, cliente ou comanda..."}
+                      value={tableFilterQuery}
+                      onChange={(e) => setTableFilterQuery(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 bg-white border border-stone-200 rounded-lg text-xs placeholder:text-stone-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  {/* Selection List */}
+                  {mesaSelectionMode === 'FREE_TABLE' ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-stone-500 font-medium">
+                        <span>Selecione a mesa disponível:</span>
+                        {selectedTable && (
+                          <span className="text-emerald-700 font-bold truncate max-w-[180px]">
+                            {selectedTable.name || (selectedTable.number ? `Mesa ${selectedTable.number}` : `Mesa ${selectedTable.id}`)}
+                          </span>
+                        )}
+                      </div>
+
+                      {filteredFreeTables.length === 0 ? (
+                        <div className="p-3 text-center bg-white rounded-lg border border-dashed border-stone-200 text-xs text-stone-500">
+                          {restaurantTables.length === 0 
+                            ? 'Nenhuma mesa cadastrada no salão.'
+                            : 'Nenhuma mesa livre encontrada. Selecione "Comanda Ativa".'}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-36 overflow-y-auto custom-scrollbar p-0.5">
+                          {filteredFreeTables.map((tbl: any) => {
+                            const isSelected = selectedTable?.id === tbl.id;
+                            const tblLabel = tbl.name || (tbl.number ? `Mesa ${tbl.number}` : `Mesa ${tbl.id}`);
+                            return (
+                              <button
+                                key={tbl.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTable(tbl);
+                                  setSelectedTab(null);
+                                  setTableNumber(tblLabel);
+                                  setTableNumberError(null);
+                                }}
+                                className={`p-2 rounded-lg text-left transition-all border cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                    : 'bg-white hover:bg-emerald-50/50 text-stone-800 border-stone-200 hover:border-emerald-300'
+                                }`}
+                              >
+                                <div className="font-extrabold text-xs truncate">{tblLabel}</div>
+                                {tbl.capacity ? (
+                                  <div className={`text-[10px] ${isSelected ? 'text-emerald-100' : 'text-stone-400'}`}>
+                                    {tbl.capacity} lugares
+                                  </div>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] text-stone-500 font-medium">
+                        <span>Selecione a comanda já aberta:</span>
+                        {selectedTab && (
+                          <span className="text-emerald-700 font-bold truncate max-w-[180px]">
+                            {selectedTab.tableName || (selectedTab.tableNumber !== undefined && selectedTab.tableNumber !== null ? `Mesa ${selectedTab.tableNumber}` : `Mesa ${selectedTab.tableId}`)}
+                          </span>
+                        )}
+                      </div>
+
+                      {filteredActiveTabs.length === 0 ? (
+                        <div className="p-3 text-center bg-white rounded-lg border border-dashed border-stone-200 text-xs text-stone-500">
+                          Nenhuma comanda ativa no momento.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto custom-scrollbar p-0.5">
+                          {filteredActiveTabs.map((tab: Tab) => {
+                            const isSelected = selectedTab?.id === tab.id;
+                            const tabLabel = tab.tableName || (tab.tableNumber !== undefined && tab.tableNumber !== null ? `Mesa ${tab.tableNumber}` : `Mesa ${tab.tableId}`);
+                            const currentTotal = (tab.totalInCents ? tab.totalInCents / 100 : (tab.total || 0));
+                            return (
+                              <button
+                                key={tab.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTab(tab);
+                                  setSelectedTable(null);
+                                  setTableNumber(tabLabel);
+                                  if (tab.customerName && !clientName) {
+                                    setClientName(tab.customerName);
+                                  }
+                                  setTableNumberError(null);
+                                }}
+                                className={`p-2 rounded-lg text-left transition-all border cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                                    : 'bg-white hover:bg-amber-50/40 text-stone-800 border-stone-200 hover:border-amber-300'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-extrabold text-xs truncate">{tabLabel}</span>
+                                  <span className={`text-[10px] font-bold ${isSelected ? 'text-white' : 'text-emerald-700'}`}>
+                                    {formatCurrency(currentTotal)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-[10px] mt-0.5">
+                                  <span className={`truncate ${isSelected ? 'text-emerald-100' : 'text-stone-500'}`}>
+                                    {tab.customerName ? `Cliente: ${tab.customerName}` : `Comanda #${tab.id.slice(0, 6)}`}
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {tableNumberError && (
+                    <p className="text-xs text-red-600 font-medium flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{tableNumberError}</span>
+                    </p>
+                  )}
+
+                  {/* Customer name input (optional) */}
+                  <FormField 
+                    label="Identificador / Nome do Cliente (opcional)"
+                    error={clientNameError || undefined}
+                  >
+                    <TextInput
+                      placeholder="Ex: Carlos (mesa) ou Convidado"
+                      value={clientName}
+                      onChange={(e) => {
+                        setClientName(e.target.value);
+                        if (clientNameError) setClientNameError(null);
+                      }}
+                    />
+                  </FormField>
+                </div>
+              )}
+
+              {tipoAtendimento === 'ENTREGA' && (
+                <div className="space-y-2.5 p-3 bg-stone-50/90 rounded-xl border border-stone-200/80">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-stone-800">
+                      <Truck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Dados para Entrega (Origem Balcão)</span>
+                    </div>
+                    <span className="text-[10px] text-stone-500 font-medium">Campos com * obrigatórios</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <FormField 
+                      label="Nome do Cliente *"
+                      error={clientNameError || undefined}
+                    >
+                      <TextInput
+                        placeholder="Nome completo do cliente"
+                        value={clientName}
+                        onChange={(e) => {
+                          setClientName(e.target.value);
+                          if (clientNameError) setClientNameError(null);
+                        }}
+                      />
+                    </FormField>
+                    <FormField 
+                      label="Telefone / WhatsApp *"
+                      error={clientPhoneError || undefined}
+                    >
+                      <TextInput
+                        placeholder="(00) 00000-0000"
+                        value={clientPhone}
+                        onChange={(e) => {
+                          setClientPhone(e.target.value);
+                          if (clientPhoneError) setClientPhoneError(null);
+                        }}
+                      />
+                    </FormField>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="sm:col-span-2">
+                      <FormField 
+                        label="Endereço (Rua / Logradouro) *"
+                        error={deliveryStreetError || undefined}
+                      >
+                        <TextInput
+                          placeholder="Ex: Rua das Flores, Av. Brasil"
+                          value={deliveryStreet}
+                          onChange={(e) => {
+                            setDeliveryStreet(e.target.value);
+                            if (deliveryStreetError) setDeliveryStreetError(null);
+                          }}
+                        />
+                      </FormField>
+                    </div>
+                    <div className="sm:col-span-1">
+                      <FormField 
+                        label="Número *"
+                        error={deliveryNumberError || undefined}
+                      >
+                        <TextInput
+                          placeholder="Ex: 120 ou S/N"
+                          value={deliveryNumber}
+                          onChange={(e) => {
+                            setDeliveryNumber(e.target.value);
+                            if (deliveryNumberError) setDeliveryNumberError(null);
+                          }}
+                        />
+                      </FormField>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <FormField 
+                      label="Bairro *"
+                      error={deliveryNeighborhoodError || undefined}
+                    >
+                      <TextInput
+                        placeholder="Ex: Centro"
+                        value={deliveryNeighborhood}
+                        onChange={(e) => {
+                          setDeliveryNeighborhood(e.target.value);
+                          if (deliveryNeighborhoodError) setDeliveryNeighborhoodError(null);
+                        }}
+                      />
+                    </FormField>
+                    <FormField 
+                      label="Complemento (se houver)"
+                    >
+                      <TextInput
+                        placeholder="Ex: Apto 101, Bloco B"
+                        value={deliveryComplement}
+                        onChange={(e) => setDeliveryComplement(e.target.value)}
+                      />
+                    </FormField>
+                  </div>
+
+                  <FormField 
+                    label="Ponto de Referência (se houver)"
+                  >
+                    <TextInput
+                      placeholder="Ex: Próximo ao supermercado, portão verde"
+                      value={deliveryReference}
+                      onChange={(e) => setDeliveryReference(e.target.value)}
+                    />
+                  </FormField>
+                </div>
+              )}
             </div>
 
             {/* Cart Items List - Independently Scrollable */}
@@ -666,60 +1255,90 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
               {/* Order Totals Summary */}
               <div className="bg-stone-50 p-2.5 rounded-xl space-y-1 border border-stone-200/60 text-xs">
                 <div className="flex justify-between font-extrabold text-stone-900 text-sm">
-                  <span>Total a Pagar</span>
+                  <span>{tipoAtendimento === 'MESA' ? 'Total dos Itens' : 'Total a Pagar'}</span>
                   <span className="text-emerald-700">{formatCurrency(cartTotal)}</span>
                 </div>
+                {tipoAtendimento === 'MESA' && (
+                  <div className="text-[11px] text-stone-500 flex items-center justify-between pt-1 border-t border-stone-200/60">
+                    <span>Destino:</span>
+                    <span className="font-bold text-stone-800 truncate max-w-[180px]">
+                      {mesaSelectionMode === 'FREE_TABLE'
+                        ? (selectedTable ? (selectedTable.name || (selectedTable.number ? `Mesa ${selectedTable.number}` : `Mesa ${selectedTable.id}`)) : 'Selecione uma mesa livre')
+                        : (selectedTab ? (selectedTab.tableName || (selectedTab.tableNumber !== undefined ? `Mesa ${selectedTab.tableNumber}` : `Comanda #${selectedTab.id.slice(0, 6)}`)) : 'Selecione uma comanda ativa')}
+                    </span>
+                  </div>
+                )}
               </div>
 
-              <PaymentsComposer 
-                totalOrderCents={cartTotalCents}
-                payments={payments}
-                setPayments={setPayments}
-                configuredMethods={activeRestaurantProfile?.formas_pagamento || activeRestaurantProfile?.payment_methods}
-                serviceMode={serviceMode}
-                isPaid={isPaid}
-                setIsPaid={setIsPaid}
-              />
-
-              {/* Cash Change Input */}
-              {cashPaymentsCents > 0 && isPaid && (
-                <div className="p-2.5 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-amber-900">Valor entregue em dinheiro</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="Ex: R$ 10,00"
-                      value={deliveredCashCents > 0 ? (deliveredCashCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00'}
-                      onChange={(e) => {
-                        const rawDigits = e.target.value.replace(/\D/g, '');
-                        const cents = rawDigits ? parseInt(rawDigits, 10) : 0;
-                        setDeliveredCashCents(cents);
-                      }}
-                      className="w-28 text-right px-2 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    />
+              {tipoAtendimento === 'MESA' ? (
+                <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200/80 space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
+                    <Receipt className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                    <span>Cobrança Integrada na Mesa/Comanda</span>
                   </div>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    O valor deste pedido pertence à comanda/mesa. O acerto financeiro será efetuado no fechamento da comanda, sem cobrança individual neste momento.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <PaymentsComposer 
+                    totalOrderCents={cartTotalCents}
+                    payments={payments}
+                    setPayments={setPayments}
+                    configuredMethods={activeRestaurantProfile?.formas_pagamento || activeRestaurantProfile?.payment_methods}
+                    serviceMode={serviceMode}
+                    isPaid={isPaid}
+                    setIsPaid={setIsPaid}
+                  />
 
-                  {isCashAmountInsufficient && (
-                    <p className="text-[11px] font-bold text-red-600">
-                      O valor entregue em dinheiro é menor que a parcela em dinheiro.
-                    </p>
-                  )}
+                  {/* Cash Change Input */}
+                  {cashPaymentsCents > 0 && isPaid && (
+                    <div className="p-2.5 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-amber-900">Valor entregue em dinheiro</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="Ex: R$ 10,00"
+                          value={deliveredCashCents > 0 ? (deliveredCashCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00'}
+                          onChange={(e) => {
+                            const rawDigits = e.target.value.replace(/\D/g, '');
+                            const cents = rawDigits ? parseInt(rawDigits, 10) : 0;
+                            setDeliveredCashCents(cents);
+                          }}
+                          className="w-28 text-right px-2 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
 
-                  {changeDueCents > 0 && (
-                    <div className="flex justify-between items-center text-xs font-extrabold text-emerald-800 pt-1 border-t border-amber-200/80">
-                      <span>Troco a devolver:</span>
-                      <span>{(changeDueCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                      {isCashAmountInsufficient && (
+                        <p className="text-[11px] font-bold text-red-600">
+                          O valor entregue em dinheiro é menor que a parcela em dinheiro.
+                        </p>
+                      )}
+
+                      {changeDueCents > 0 && (
+                        <div className="flex justify-between items-center text-xs font-extrabold text-emerald-800 pt-1 border-t border-amber-200/80">
+                          <span>Troco a devolver:</span>
+                          <span>{(changeDueCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
 
               {/* Confirm Order Button */}
               <button
                 type="button"
                 onClick={handleCheckout}
-                disabled={cart.length === 0 || saveLoading || isCashAmountInsufficient || availablePaymentMethods.length === 0 || payments.reduce((a,b)=>a+b.amount,0)!==cartTotalCents}
+                disabled={
+                  cart.length === 0 || 
+                  saveLoading || 
+                  (tipoAtendimento === 'MESA' 
+                    ? (mesaSelectionMode === 'FREE_TABLE' ? !selectedTable : !selectedTab)
+                    : (isCashAmountInsufficient || availablePaymentMethods.length === 0 || payments.reduce((a,b)=>a+b.amount,0)!==cartTotalCents))
+                }
                 className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 {saveLoading ? (
@@ -727,7 +1346,11 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
                 ) : (
                   <>
                     <Check className="w-4 h-4 sm:w-5 sm:h-5" />
-                    <span>Finalizar e enviar para cozinha ({formatCurrency(cartTotal)})</span>
+                    <span>
+                      {tipoAtendimento === 'MESA'
+                        ? `Lançar na Comanda/Mesa (${formatCurrency(cartTotal)})`
+                        : `Finalizar e enviar para cozinha (${formatCurrency(cartTotal)})`}
+                    </span>
                   </>
                 )}
               </button>
