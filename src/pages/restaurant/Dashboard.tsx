@@ -70,7 +70,7 @@ import OrderListItem, { getOrderCardStyle } from './components/OrderListItem';
 import OrderDetails from './components/OrderDetails';
 import RestaurantOrdersPage from './orders/RestaurantOrdersPage';
 import { RestaurantOrderCard } from './orders/components/RestaurantOrderCard';
-import { getOrderKanbanColumn } from '../../domain/order/orderLifecycle';
+import { getOrderKanbanColumn, isGarcomOrder, normalizeFinancialSettlementStatus } from '../../domain/order/orderLifecycle';
 import {
   OperacaoHubWrapper,
   CardapioHubWrapper,
@@ -430,9 +430,15 @@ export default function RestaurantDashboard() {
     }
   }, [orders]);
 
-  const [unpaidOrderDialog, setUnpaidOrderDialog] = useState<{ open: boolean; orderNumber?: string }>({ open: false });
+  const [unpaidOrderDialog, setUnpaidOrderDialog] = useState<{ open: boolean; orderId?: string; orderNumber?: string; isUpdating?: boolean }>({ open: false });
 
-  const handleUpdateStatus = React.useCallback(async (orderId: string, newStatus: string, motivo?: string, customClientActionId?: string) => {
+  const handleUpdateStatus = React.useCallback(async (
+    orderId: string, 
+    newStatus: string, 
+    motivo?: string, 
+    customClientActionId?: string,
+    options?: { markAsPaid?: boolean; bypassSettledCheck?: boolean }
+  ) => {
     if (!profile?.restaurantId || updatingOrdersRef.current.has(orderId)) return;
     
     // Busca o pedido atual para verificar o status de pagamento
@@ -441,16 +447,27 @@ export default function RestaurantDashboard() {
     // Se o status já for o mesmo, não faz nada
     if (currentOrder?.status === newStatus) return;
     
-    // Regra de negócio: Pedido só pode ser finalizado/entregue se estiver quitado financeiramente
-    const isSettled = currentOrder && (
-      currentOrder.pago === true ||
-      currentOrder.financialSettlementStatus === 'SETTLED'
+    // Regra de negócio: Validação de quitação financeira para finalização
+    const financialStatus = currentOrder ? normalizeFinancialSettlementStatus(currentOrder) : 'NOT_REQUIRED';
+    const isSettled = Boolean(
+      currentOrder && (
+        currentOrder.pago === true ||
+        currentOrder.paymentStatus === 'PAID' ||
+        currentOrder.paymentStatus === 'SETTLED' ||
+        currentOrder.financialSettlementStatus === 'SETTLED' ||
+        financialStatus === 'SETTLED' ||
+        financialStatus === 'NOT_REQUIRED' ||
+        isGarcomOrder(currentOrder)
+      )
     );
 
-    if ((newStatus === 'entregue' || newStatus === 'finalizado') && currentOrder && !isSettled) {
+    // Pedido para finalização se não estiver pago ainda
+    if (newStatus === 'finalizado' && currentOrder && !isSettled && !options?.bypassSettledCheck) {
       setUnpaidOrderDialog({
         open: true,
-        orderNumber: currentOrder.numero_pedido || currentOrder.id
+        orderId: orderId,
+        orderNumber: currentOrder.numero_pedido || currentOrder.id,
+        isUpdating: false
       });
       return;
     }
@@ -539,7 +556,9 @@ export default function RestaurantDashboard() {
           body: JSON.stringify({
             status: newStatus,
             motivo,
-            clientActionId
+            clientActionId,
+            markAsPaid: options?.markAsPaid || false,
+            pago: options?.markAsPaid || false
           })
         });
 
@@ -554,6 +573,12 @@ export default function RestaurantDashboard() {
           const resData = await res.json().catch(() => ({}));
           updatedOrderFromBackend = resData.order;
         }
+      }
+
+      if (options?.markAsPaid) {
+        updateData.pago = true;
+        updateData.paymentStatus = 'PAID';
+        updateData.financialSettlementStatus = 'SETTLED';
       }
 
       if (oldOrder) {
@@ -659,9 +684,9 @@ export default function RestaurantDashboard() {
           // Não interrompe o fluxo pois o status já foi atualizado
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error updating order:", error);
-      alert('Erro ao atualizar status do pedido. Verifique sua conexão.');
+      alert(error?.message || 'Erro ao atualizar status do pedido. Verifique sua conexão.');
     } finally {
       updatingOrdersRef.current.delete(orderId);
       setUpdatingOrderId(null);
@@ -675,7 +700,22 @@ export default function RestaurantDashboard() {
       <UnpaidOrderAlertDialog
         open={unpaidOrderDialog.open}
         orderNumber={unpaidOrderDialog.orderNumber}
+        isUpdating={unpaidOrderDialog.isUpdating}
         onClose={() => setUnpaidOrderDialog({ open: false })}
+        onConfirmAndFinalize={() => {
+          if (!unpaidOrderDialog.orderId) return;
+          const targetId = unpaidOrderDialog.orderId;
+          setUnpaidOrderDialog(prev => ({ ...prev, isUpdating: true }));
+          handleUpdateStatus(targetId, 'finalizado', undefined, undefined, { markAsPaid: true, bypassSettledCheck: true })
+            .finally(() => setUnpaidOrderDialog({ open: false }));
+        }}
+        onFinalizeAnyway={() => {
+          if (!unpaidOrderDialog.orderId) return;
+          const targetId = unpaidOrderDialog.orderId;
+          setUnpaidOrderDialog(prev => ({ ...prev, isUpdating: true }));
+          handleUpdateStatus(targetId, 'finalizado', undefined, undefined, { markAsPaid: false, bypassSettledCheck: true })
+            .finally(() => setUnpaidOrderDialog({ open: false }));
+        }}
       />
       {isLive && (
         <div className="fixed top-4 right-4 z-[9999]">

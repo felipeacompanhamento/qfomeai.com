@@ -19,6 +19,7 @@ interface OrdersKanbanColumnProps {
   updatingOrderId: string | null;
   onOrderClick: (order: any) => void;
   onUpdateStatus?: (orderId: string, status: string) => void;
+  onCancelOrder?: (order: any) => void;
   onPrintOrder?: (order: any) => void;
 }
 
@@ -30,6 +31,7 @@ export const OrdersKanbanColumn: React.FC<OrdersKanbanColumnProps> = ({
   updatingOrderId,
   onOrderClick,
   onUpdateStatus,
+  onCancelOrder,
   onPrintOrder
 }) => {
   const getBadgeVariant = (): 'info' | 'warning' | 'success' | 'neutral' => {
@@ -82,6 +84,7 @@ export const OrdersKanbanColumn: React.FC<OrdersKanbanColumnProps> = ({
               isUpdating={updatingOrderId === order.id}
               onOrderClick={onOrderClick}
               onUpdateStatus={onUpdateStatus}
+              onCancelOrder={onCancelOrder}
               onPrintOrder={onPrintOrder}
             />
           ))

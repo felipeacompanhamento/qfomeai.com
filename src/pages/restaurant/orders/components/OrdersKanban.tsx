@@ -9,6 +9,7 @@ interface OrdersKanbanProps {
   updatingOrderId: string | null;
   onOrderClick: (order: any) => void;
   onUpdateStatus?: (orderId: string, status: string) => void;
+  onCancelOrder?: (order: any) => void;
   onPrintOrder?: (order: any) => void;
 }
 
@@ -54,6 +55,7 @@ export const OrdersKanban: React.FC<OrdersKanbanProps> = ({
   updatingOrderId,
   onOrderClick,
   onUpdateStatus,
+  onCancelOrder,
   onPrintOrder
 }) => {
   // Group orders into the 4 operational columns using canonical state rules
@@ -83,6 +85,7 @@ export const OrdersKanban: React.FC<OrdersKanbanProps> = ({
           updatingOrderId={updatingOrderId}
           onOrderClick={onOrderClick}
           onUpdateStatus={onUpdateStatus}
+          onCancelOrder={onCancelOrder}
           onPrintOrder={onPrintOrder}
         />
       ))}

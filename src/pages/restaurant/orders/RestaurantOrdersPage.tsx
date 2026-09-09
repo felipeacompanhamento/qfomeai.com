@@ -18,6 +18,7 @@ import { cacheOrders } from '../../../utils/cacheOrders';
 import { processOrderPaymentsApi, processOrderRefundApi, normalizePaymentMethodId } from '../../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
 import { EmptyState, IconButton } from '../../../components/ui';
+import { CancelOrderModal } from '../../../components/orders/CancelOrderModal';
 
 interface RestaurantOrdersPageProps {
   orders: any[];
@@ -52,6 +53,7 @@ export function RestaurantOrdersPage({
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [orderToCancel, setOrderToCancel] = useState<any | null>(null);
 
   // Detail loading states
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -317,12 +319,13 @@ export function RestaurantOrdersPage({
     }
 
     if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase().trim();
+      const term = searchTerm.toLowerCase().replace('#', '').trim();
       result = result.filter(o => {
         const id = (o.id || '').toLowerCase();
-        const customer = (o.nome_cliente || o.customerName || '').toLowerCase();
-        const phone = (o.telefone_cliente || o.customerPhone || '').toLowerCase();
-        return id.includes(term) || customer.includes(term) || phone.includes(term);
+        const num = (o.numero_pedido || o.numeroPedido || '').toLowerCase();
+        const customer = (o.cliente_nome || o.nome_cliente || o.customerName || o.cliente?.nome || '').toLowerCase();
+        const phone = (o.cliente_telefone || o.telefone_cliente || o.customerPhone || o.cliente?.telefone || '').toLowerCase();
+        return id.includes(term) || num.includes(term) || customer.includes(term) || phone.includes(term);
       });
     }
 
@@ -406,6 +409,7 @@ export function RestaurantOrdersPage({
               updatingOrderId={updatingOrderId}
               onOrderClick={setSelectedOrder}
               onUpdateStatus={onUpdate}
+              onCancelOrder={setOrderToCancel}
               onPrintOrder={handlePrint}
             />
           ) : (
@@ -427,6 +431,7 @@ export function RestaurantOrdersPage({
                     isUpdating={updatingOrderId === order.id}
                     onOrderClick={setSelectedOrder}
                     onUpdateStatus={onUpdate}
+                    onCancelOrder={setOrderToCancel}
                     onPrintOrder={handlePrint}
                   />
                 ))
@@ -453,6 +458,7 @@ export function RestaurantOrdersPage({
                 isUpdating={updatingOrderId === order.id}
                 onOrderClick={setSelectedOrder}
                 onUpdateStatus={onUpdate}
+                onCancelOrder={setOrderToCancel}
                 onPrintOrder={handlePrint}
               />
             ))
@@ -466,6 +472,18 @@ export function RestaurantOrdersPage({
         restaurantId={profile?.restaurantId}
         onClose={() => setIsHistoryOpen(false)}
         onSelectOrder={setSelectedOrder}
+      />
+
+      {/* Cancellation Modal from Cards */}
+      <CancelOrderModal
+        isOpen={!!orderToCancel}
+        order={orderToCancel}
+        isUpdating={updatingOrderId === orderToCancel?.id}
+        onClose={() => setOrderToCancel(null)}
+        onConfirmCancel={(orderId, reason) => {
+          onUpdate(orderId, 'cancelado', reason);
+          setOrderToCancel(null);
+        }}
       />
 
       {/* Order Details Modal when clicked */}

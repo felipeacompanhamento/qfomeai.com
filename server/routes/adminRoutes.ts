@@ -66,6 +66,207 @@ export function createAdminRouter(authAdmin: Auth, db: Firestore): Router {
     }
   });
 
+  // Public API route for self-service restaurant registration
+  router.post('/auth/register-restaurant', async (req: any, res: any) => {
+    try {
+      const email = (req.body.email || '').trim().toLowerCase();
+      const password = req.body.password;
+      const nomeProprietario = (req.body.nomeProprietario || req.body.nome_proprietario || '').trim();
+      const nomeFantasia = (req.body.nomeFantasia || req.body.nome_fantasia || req.body.nome || '').trim();
+      let slug = (req.body.slug || '').trim().toLowerCase();
+      const cpfCnpj = (req.body.cpfCnpj || req.body.cpf_cnpj || '').trim();
+      const telefone = (req.body.telefone || req.body.phone || '').trim();
+      const whatsapp = (req.body.whatsapp || telefone).trim();
+      const instagram = (req.body.instagram || '').trim();
+      const personType = req.body.personType || 'PJ';
+      const endereco = req.body.endereco || {};
+
+      if (!email || !email.includes('@')) {
+        return res.status(400).json({ error: 'E-mail inválido ou não informado.' });
+      }
+      if (!nomeProprietario && !nomeFantasia) {
+        return res.status(400).json({ error: 'Nome do proprietário ou Razão Social é obrigatório.' });
+      }
+
+      if (!slug) {
+        slug = (nomeFantasia || nomeProprietario)
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^\w\s-]/g, '')
+          .trim()
+          .replace(/\s+/g, '-');
+      }
+
+      if (!slug) {
+        slug = `restaurante-${Date.now().toString(36)}`;
+      }
+
+      // Check if user is authenticated via Bearer token
+      let authenticatedUid: string | null = null;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const idToken = authHeader.split('Bearer ')[1];
+        try {
+          const decoded = await authAdmin.verifyIdToken(idToken);
+          authenticatedUid = decoded.uid;
+        } catch (tokenErr) {
+          // Token invalid/expired; continue as unauthenticated
+        }
+      }
+
+      // Check slug uniqueness
+      const slugSnap = await db.collection('restaurants').where('slug', '==', slug).get();
+      if (!slugSnap.empty) {
+        const isSelf = authenticatedUid && slugSnap.docs.some((d: any) => d.id === authenticatedUid);
+        if (!isSelf) {
+          return res.status(400).json({ error: 'Este link/slug já está em uso por outro restaurante. Por favor, escolha outro.' });
+        }
+      }
+
+      let uid = authenticatedUid;
+      let isExistingUser = false;
+      let userRecord: UserRecord | null = null;
+
+      if (!uid) {
+        try {
+          userRecord = await authAdmin.getUserByEmail(email);
+          uid = userRecord.uid;
+          isExistingUser = true;
+        } catch (err: any) {
+          if (err.code === 'auth/user-not-found') {
+            if (!password || password.length < 6) {
+              return res.status(400).json({ error: 'A senha deve conter no mínimo 6 caracteres.' });
+            }
+            userRecord = await authAdmin.createUser({
+              email,
+              password,
+              displayName: nomeProprietario || nomeFantasia,
+            });
+            uid = userRecord.uid;
+          } else {
+            console.error('[Register Restaurant] Erro ao buscar usuário no Auth:', err);
+            return res.status(500).json({ error: 'Erro ao processar autenticação do usuário.' });
+          }
+        }
+      }
+
+      if (isExistingUser && uid) {
+        // Check if this account already has a registered restaurant
+        const [existingRestDoc, existingUserDoc] = await Promise.all([
+          db.collection('restaurants').doc(uid).get(),
+          db.collection('users').doc(uid).get()
+        ]);
+
+        if (existingRestDoc.exists || existingUserDoc.data()?.accountType === 'RESTAURANT' || existingUserDoc.data()?.tipo_usuario === 'restaurant') {
+          return res.status(400).json({ error: 'Este e-mail já possui um restaurante cadastrado. Faça login para acessar o painel administrativo.' });
+        }
+
+        // Existing user (e.g. registered with Google or as customer) can set/update password for direct login
+        if (password && password.length >= 6) {
+          try {
+            await authAdmin.updateUser(uid, {
+              password,
+              displayName: nomeProprietario || nomeFantasia || userRecord?.displayName,
+            });
+          } catch (passErr: any) {
+            console.warn('[Register Restaurant] Não foi possível atualizar senha do usuário existente:', passErr?.message);
+          }
+        }
+      }
+
+      if (!uid) {
+        return res.status(500).json({ error: 'Não foi possível identificar ou criar a conta de usuário.' });
+      }
+
+      // Upsert user profile
+      await db.collection('users').doc(uid).set({
+        uid,
+        nome: nomeProprietario || nomeFantasia,
+        name: nomeProprietario || nomeFantasia,
+        email,
+        telefone,
+        phone: telefone,
+        whatsapp: whatsapp || telefone,
+        instagram: instagram || '',
+        accountType: 'RESTAURANT',
+        role: 'OWNER',
+        status: 'ACTIVE',
+        permissions: [],
+        _migratedAt: new Date().toISOString(),
+        _migrationVersion: '1.0.0',
+        tipo_usuario: 'restaurant',
+        restaurantId: uid,
+        status_conta: 'pendente_aprovacao',
+        onboarding_completo: true,
+        data_criacao: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        lgpdAccepted: true,
+        acceptedAt: FieldValue.serverTimestamp(),
+        termsVersion: "1.0"
+      }, { merge: true });
+
+      // Create restaurant profile
+      await db.collection('restaurants').doc(uid).set({
+        id: uid,
+        nome: nomeFantasia || nomeProprietario,
+        slug,
+        nome_fantasia: nomeFantasia || nomeProprietario,
+        nome_proprietario: nomeProprietario,
+        cpf_cnpj: cpfCnpj,
+        tipo_pessoa: personType,
+        status_aprovacao: 'pendente_aprovacao',
+        status_operacao_config: 'fechado',
+        data_criacao: new Date().toISOString(),
+        tipo_entrega: 'ambos',
+        tempo_max_aceite: 15,
+        owner_name: nomeProprietario,
+        owner_email: email,
+        owner_phone: telefone,
+        whatsapp: whatsapp || telefone,
+        instagram: instagram || '',
+        endereco: {
+          rua: endereco.rua || '',
+          numero: endereco.numero || '',
+          complemento: endereco.complemento || '',
+          bairro: endereco.bairro || '',
+          cidade: endereco.cidade || '',
+          estado: endereco.estado || ''
+        }
+      }, { merge: true });
+
+      // Increment public stats
+      try {
+        await db.collection('public_stats').doc('global').set({
+          restaurants: FieldValue.increment(1)
+        }, { merge: true });
+      } catch (statsErr) {
+        console.error('[Register Restaurant] Erro ao incrementar stats globais:', statsErr);
+      }
+
+      // Send custom activation email
+      try {
+        const host = req.headers['x-forwarded-host'] || req.get('host');
+        const protocol = host?.includes('localhost') ? 'http' : 'https';
+        const link = await authAdmin.generateEmailVerificationLink(email, {
+          url: `${protocol}://${host}/profile`,
+          handleCodeInApp: true
+        });
+        await sendActivationEmail(email, link);
+      } catch (emailErr) {
+        console.error('[Register Restaurant] Erro ao enviar e-mail de ativação:', emailErr);
+      }
+
+      // Generate custom token for auto-login
+      const customToken = await authAdmin.createCustomToken(uid);
+
+      res.json({ success: true, customToken, uid });
+    } catch (error: any) {
+      console.error('[Register Restaurant] Erro crítico no registro:', error);
+      res.status(500).json({ error: error.message || 'Erro ao registrar restaurante.' });
+    }
+  });
+
   // API route for user deletion by admin
   router.delete('/admin/users/:uid', async (req: any, res: any) => {
     const { uid } = req.params;

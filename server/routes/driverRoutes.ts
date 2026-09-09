@@ -202,8 +202,8 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
     if (normalizedAction === 'START' && currentStatus === 'IN_TRANSIT') {
       return res.json({ success: true, message: 'Entrega já iniciada anteriormente', status: 'IN_TRANSIT' });
     }
-    if (normalizedAction === 'DELIVER' && currentStatus === 'DELIVERED') {
-      return res.json({ success: true, message: 'Entrega já finalizada anteriormente', status: 'DELIVERED' });
+    if (normalizedAction === 'DELIVER' && (currentStatus === 'DELIVERED' || currentStatus === 'FINALIZED' || orderData.status === 'finalizado' || orderData.status === 'completed')) {
+      return res.json({ success: true, message: 'Entrega já finalizada anteriormente', status: orderData.status === 'finalizado' ? 'FINALIZED' : 'DELIVERED' });
     }
 
     // Status transition checks
@@ -450,11 +450,26 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
           driverUpdates.currentOrderId = orderId;
           driverUpdates.availabilityStatus = 'ON_DELIVERY';
         } else if (normalizedAction === 'DELIVER') {
-          newStatus = 'DELIVERED_PENDING_SETTLEMENT';
-          
           const orderTotal = Number(orderDataInsideTx.valor_total || orderDataInsideTx.total || 0);
-          const isPrepaid = orderDataInsideTx.pago === true || orderDataInsideTx.paymentStatus === 'PAID' || orderDataInsideTx.paymentStatus === 'SETTLED';
-          const amountAlreadyPaid = isPrepaid ? orderTotal : 0;
+
+          let sumPayments = 0;
+          if (Array.isArray(orderDataInsideTx.payments)) {
+            sumPayments = orderDataInsideTx.payments.reduce((acc: number, p: any) => acc + (Number(p.valor || p.amount) || 0), 0);
+          }
+
+          const isFullyPaid = 
+            orderDataInsideTx.pago === true ||
+            orderDataInsideTx.isPaid === true ||
+            orderDataInsideTx.paid === true ||
+            orderDataInsideTx.pagoOnline === true ||
+            orderDataInsideTx.forma_pagamento === 'pix_app' ||
+            orderDataInsideTx.paymentStatus === 'PAID' ||
+            orderDataInsideTx.paymentStatus === 'SETTLED' ||
+            orderDataInsideTx.financialSettlementStatus === 'SETTLED' ||
+            orderDataInsideTx.financialSettlementStatus === 'NOT_REQUIRED' ||
+            (orderTotal > 0 && sumPayments >= orderTotal);
+
+          const amountAlreadyPaid = isFullyPaid ? orderTotal : 0;
           const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
 
           // Parse payment report from driver
@@ -487,30 +502,70 @@ export function createDriverRouter(authAdmin: Auth, db: Firestore, messaging: Me
             reportedByDriverName: driver.nome || driver.name || 'Entregador'
           };
 
-          orderUpdates.deliveredAt = now;
-          orderUpdates.horario_entrega = now;
-          orderUpdates.deliveredByDriverId = driver.id;
-          orderUpdates.deliveredByDriverName = driver.nome || driver.name || 'Entregador';
-          orderUpdates.orderStatus = 'DELIVERED';
-          orderUpdates.deliveryStatus = 'DELIVERED';
-          orderUpdates.canonicalStatus = 'DELIVERED';
-          orderUpdates.status_entrega = 'delivered';
-          orderUpdates.status = 'entregue'; // Keeps in "entrega" column in Kanban while pending settlement
-          orderUpdates.financialSettlementStatus = isPrepaid ? 'SETTLED' : 'PENDING_RESTAURANT_CONFIRMATION';
-          orderUpdates.driverPaymentReport = driverPaymentReport;
+          if (isFullyPaid) {
+            // Automatically FINALIZE order if already paid
+            newStatus = 'FINALIZED';
+            orderUpdates.deliveredAt = now;
+            orderUpdates.horario_entrega = now;
+            orderUpdates.deliveredByDriverId = driver.id;
+            orderUpdates.deliveredByDriverName = driver.nome || driver.name || 'Entregador';
+            orderUpdates.orderStatus = 'FINALIZED';
+            orderUpdates.deliveryStatus = 'DELIVERED';
+            orderUpdates.canonicalStatus = 'FINALIZED';
+            orderUpdates.status_entrega = 'delivered';
+            orderUpdates.status = 'finalizado';
+            orderUpdates.financialSettlementStatus = 'SETTLED';
+            orderUpdates.financialSettledAt = now;
+            orderUpdates.pago = true;
+            orderUpdates.paymentStatus = 'SETTLED';
+            orderUpdates.data_finalizado = now;
+            orderUpdates.updated_at = now;
+            orderUpdates.driverPaymentReport = driverPaymentReport;
 
-          deliveryUpdates.deliveredAt = now;
-          deliveryUpdates.horario_entrega = now;
-          deliveryUpdates.completedByDriverId = driver.id;
-          deliveryUpdates.lastAssignedDriverId = driver.id;
-          deliveryUpdates.responsibleDriverId = driver.id;
-          deliveryUpdates.orderStatus = 'DELIVERED';
-          deliveryUpdates.deliveryStatus = 'DELIVERED';
-          deliveryUpdates.canonicalStatus = 'DELIVERED';
-          deliveryUpdates.status_entrega = 'delivered';
-          deliveryUpdates.status = 'entregue';
-          deliveryUpdates.financialSettlementStatus = isPrepaid ? 'SETTLED' : 'PENDING_RESTAURANT_CONFIRMATION';
-          deliveryUpdates.driverPaymentReport = driverPaymentReport;
+            deliveryUpdates.deliveredAt = now;
+            deliveryUpdates.horario_entrega = now;
+            deliveryUpdates.completedByDriverId = driver.id;
+            deliveryUpdates.lastAssignedDriverId = driver.id;
+            deliveryUpdates.responsibleDriverId = driver.id;
+            deliveryUpdates.orderStatus = 'FINALIZED';
+            deliveryUpdates.deliveryStatus = 'DELIVERED';
+            deliveryUpdates.canonicalStatus = 'FINALIZED';
+            deliveryUpdates.status_entrega = 'delivered';
+            deliveryUpdates.status = 'finalizado';
+            deliveryUpdates.financialSettlementStatus = 'SETTLED';
+            deliveryUpdates.financialSettledAt = now;
+            deliveryUpdates.pago = true;
+            deliveryUpdates.paymentStatus = 'SETTLED';
+            deliveryUpdates.driverPaymentReport = driverPaymentReport;
+            deliveryUpdates.updatedAt = now;
+          } else {
+            // Pending restaurant financial settlement confirmation
+            newStatus = 'DELIVERED_PENDING_SETTLEMENT';
+            orderUpdates.deliveredAt = now;
+            orderUpdates.horario_entrega = now;
+            orderUpdates.deliveredByDriverId = driver.id;
+            orderUpdates.deliveredByDriverName = driver.nome || driver.name || 'Entregador';
+            orderUpdates.orderStatus = 'DELIVERED';
+            orderUpdates.deliveryStatus = 'DELIVERED';
+            orderUpdates.canonicalStatus = 'DELIVERED';
+            orderUpdates.status_entrega = 'delivered';
+            orderUpdates.status = 'entregue'; // Keeps in "entrega" column in Kanban while pending settlement
+            orderUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
+            orderUpdates.driverPaymentReport = driverPaymentReport;
+
+            deliveryUpdates.deliveredAt = now;
+            deliveryUpdates.horario_entrega = now;
+            deliveryUpdates.completedByDriverId = driver.id;
+            deliveryUpdates.lastAssignedDriverId = driver.id;
+            deliveryUpdates.responsibleDriverId = driver.id;
+            deliveryUpdates.orderStatus = 'DELIVERED';
+            deliveryUpdates.deliveryStatus = 'DELIVERED';
+            deliveryUpdates.canonicalStatus = 'DELIVERED';
+            deliveryUpdates.status_entrega = 'delivered';
+            deliveryUpdates.status = 'entregue';
+            deliveryUpdates.financialSettlementStatus = 'PENDING_RESTAURANT_CONFIRMATION';
+            deliveryUpdates.driverPaymentReport = driverPaymentReport;
+          }
 
           // Audit events
           try {

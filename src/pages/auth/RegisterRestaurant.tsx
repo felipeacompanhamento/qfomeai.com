@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithCustomToken, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { doc, setDoc, collection, query, where, getDocs, serverTimestamp, getDoc, increment, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../firebase';
 import { useNavigate, Link } from 'react-router-dom';
-import { UserPlus, Mail, Lock, User, Phone, Store, FileText, Eye, EyeOff, Building2, Check, ArrowLeft, ArrowRight } from 'lucide-react';
+import { UserPlus, Mail, Lock, User, Phone, Store, FileText, Eye, EyeOff, Building2, Check, ArrowLeft, ArrowRight, Chrome } from 'lucide-react';
 import ConsentCheckbox from '../../components/ConsentCheckbox';
 import { useAuth } from '../../contexts/AuthContext';
 import { authApi } from '../../services/authApi';
@@ -159,11 +159,49 @@ export default function RegisterRestaurant() {
 
     if (!email.trim() || !email.includes('@')) return 'Por favor, informe um e-mail válido.';
     if (cleanPhone.length < 10) return 'Por favor, informe um telefone de contato válido.';
-    if (!password) return 'Por favor, informe uma senha.';
-    if (password.length < 6) return 'A senha deve conter no mínimo 6 caracteres.';
-    if (password !== confirmPassword) return 'As senhas não coincidem.';
+    
+    if (!authUser) {
+      if (!password) return 'Por favor, informe uma senha.';
+      if (password.length < 6) return 'A senha deve conter no mínimo 6 caracteres.';
+      if (password !== confirmPassword) return 'As senhas não coincidem.';
+    } else if (password) {
+      if (password.length < 6) return 'A senha deve conter no mínimo 6 caracteres.';
+      if (password !== confirmPassword) return 'As senhas não coincidem.';
+    }
     
     return null;
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      setError('');
+      setLoading(true);
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      if (user.email) setEmail(user.email);
+      if (user.displayName) {
+        setNomeProprietario(user.displayName);
+        if (!nomeFantasia) {
+          setNomeFantasia(user.displayName);
+          const generatedSlug = user.displayName
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s-]/g, '')
+            .trim()
+            .replace(/\s+/g, '-');
+          setSlug(generatedSlug);
+        }
+      }
+    } catch (err: any) {
+      if (err.code !== 'auth/popup-closed-by-user') {
+        console.error('Google Sign-In Error:', err);
+        setError('Erro ao autenticar com o Google. Preencha os campos manualmente.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const isStep2Valid = () => {
@@ -210,149 +248,77 @@ export default function RegisterRestaurant() {
     setError('');
 
     try {
-      const slugQuery = query(collection(db, 'restaurants'), where('slug', '==', slug.toLowerCase()));
-      const slugSnapshot = await getDocs(slugQuery);
-      if (!slugSnapshot.empty) {
-        setError('Este slug já está sendo usado por outro restaurante. Escolha outro.');
-        setLoading(false);
-        return;
-      }
+      const finalSlug = slug || (nomeFantasia || nomeProprietario)
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\w\s-]/g, '')
+        .trim()
+        .replace(/\s+/g, '-') || `restaurante-${Date.now().toString(36)}`;
 
-      let user = authUser;
-      if (!user) {
+      let token: string | undefined;
+      if (authUser) {
         try {
-          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-          user = userCredential.user;
-
-          await setDoc(doc(db, 'users', user.uid), {
-            uid: user.uid,
-            nome: nomeProprietario,
-            name: nomeProprietario,
-            email: email,
-            telefone: phone,
-            phone: phone,
-            whatsapp: whatsapp || phone,
-            instagram: instagram,
-            accountType: 'RESTAURANT',
-            role: 'OWNER',
-            status: 'ACTIVE',
-            permissions: [],
-            _migratedAt: new Date().toISOString(),
-            _migrationVersion: '1.0.0',
-            tipo_usuario: 'restaurant',
-            restaurantId: user.uid,
-            status_conta: 'pendente_aprovacao',
-            onboarding_completo: true,
-            data_criacao: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-            lgpdAccepted: true,
-            acceptedAt: serverTimestamp(),
-            termsVersion: "1.0"
-          });
-        } catch (err: any) {
-          if (err.code === 'auth/email-already-in-use') {
-            const userCredential = await signInWithEmailAndPassword(auth, email, password);
-            user = userCredential.user;
-            
-            const userDoc = await getDoc(doc(db, 'users', user.uid));
-            if (userDoc.exists() && (userDoc.data().accountType === 'RESTAURANT' || userDoc.data().tipo_usuario === 'restaurant')) {
-              setError('Este e-mail já está cadastrado como restaurante.');
-              setLoading(false);
-              return;
-            }
-
-            await setDoc(doc(db, 'users', user.uid), {
-              accountType: 'RESTAURANT',
-              role: 'OWNER',
-              status: 'ACTIVE',
-              _migratedAt: new Date().toISOString(),
-              tipo_usuario: 'restaurant',
-              restaurantId: user.uid,
-              status_conta: 'pendente_aprovacao',
-              onboarding_completo: true,
-            }, { merge: true });
-          } else {
-            throw err;
-          }
+          token = await authUser.getIdToken();
+        } catch (tokenErr) {
+          console.warn('Could not get auth token:', tokenErr);
         }
-      } else {
-        await setDoc(doc(db, 'users', user.uid), {
-          accountType: 'RESTAURANT',
-          role: 'OWNER',
-          status: 'ACTIVE',
-          _migratedAt: new Date().toISOString(),
-          tipo_usuario: 'restaurant',
-          restaurantId: user.uid,
-          status_conta: 'pendente_aprovacao',
-          onboarding_completo: true,
-        }, { merge: true });
       }
-      localStorage.setItem('lgpdAccepted', 'true');
 
-      await setDoc(doc(db, 'restaurants', user.uid), {
-        id: user.uid,
-        nome: nomeFantasia,
-        slug: slug.toLowerCase(),
-        nome_fantasia: nomeFantasia,
-        nome_proprietario: nomeProprietario,
-        cpf_cnpj: cpfCnpj,
-        status_aprovacao: 'pendente_aprovacao',
-        status_operacao_config: 'fechado',
-        data_criacao: new Date().toISOString(),
-        tipo_entrega: 'ambos',
-        tempo_max_aceite: 15,
-        owner_name: nomeProprietario,
-        owner_email: user.email || email,
-        owner_phone: phone,
-        whatsapp: whatsapp || phone,
-        instagram: instagram,
-        endereco: {
-          rua,
-          numero,
-          complemento,
-          bairro,
-          cidade,
-          estado
-        }
+      const response = await fetch('/api/auth/register-restaurant', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          email,
+          password: password || undefined,
+          nomeProprietario: nomeProprietario || nomeFantasia,
+          nomeFantasia: nomeFantasia || nomeProprietario,
+          slug: finalSlug.toLowerCase(),
+          cpfCnpj,
+          telefone: phone,
+          whatsapp: whatsapp || phone,
+          instagram,
+          personType,
+          endereco: {
+            rua,
+            numero,
+            complemento,
+            bairro,
+            cidade,
+            estado
+          },
+          acceptedTerms
+        })
       });
 
-      try {
-        await setDoc(doc(db, 'public_stats', 'global'), {
-          restaurants: increment(1)
-        }, { merge: true });
-      } catch (e) {
-        console.error("Error incrementing restaurants count:", e);
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Falha no cadastro do restaurante.');
       }
 
-      if (user && !user.emailVerified) {
+      if (data.customToken) {
         try {
-          const emailToSend = user.email || email;
-          if (emailToSend) {
-            await authApi.sendActivationEmail(emailToSend);
-            console.log("E-mail de ativação customizado enviado com sucesso.");
-          }
-        } catch (emailErr: any) {
-          console.error("Erro ao enviar e-mail de ativação via servidor:", emailErr);
+          await signInWithCustomToken(auth, data.customToken);
+        } catch (tokenSignErr) {
+          console.warn('Error signing in with custom token:', tokenSignErr);
         }
       }
+
+      localStorage.setItem('lgpdAccepted', 'true');
 
       await refreshProfile();
       await refreshUser();
       setSuccess(true);
-      
+
       setTimeout(() => {
         navigate('/profile');
       }, 5000);
     } catch (err: any) {
-      if (err.code === 'auth/email-already-in-use') {
-        setError('Este e-mail já está em uso. Tente fazer login ou use outro e-mail.');
-      } else if (err.code === 'auth/weak-password') {
-        setError('A senha é muito fraca. Use pelo menos 6 caracteres.');
-      } else if (err.code === 'auth/invalid-email') {
-        setError('O e-mail informado é inválido.');
-      } else {
-        setError('Falha no cadastro. ' + err.message);
-      }
+      console.error('Registration error:', err);
+      setError(err.message || 'Falha no cadastro. Verifique os dados informados.');
     } finally {
       setLoading(false);
     }
@@ -472,6 +438,26 @@ export default function RegisterRestaurant() {
             {currentStep === 1 && (
               <div className="space-y-4 animate-fadeIn">
                 
+                {/* Google Sign-in if not already logged in */}
+                {!authUser && (
+                  <div className="mb-2">
+                    <button
+                      type="button"
+                      onClick={handleGoogleLogin}
+                      disabled={loading}
+                      className="w-full py-3 px-4 bg-white border border-stone-200 hover:border-stone-300 rounded-xl text-xs font-bold text-stone-700 transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer hover:bg-stone-50"
+                    >
+                      <Chrome className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Continuar com Google</span>
+                    </button>
+                    <div className="flex items-center my-3 gap-2">
+                      <div className="flex-1 h-px bg-stone-200" />
+                      <span className="text-[10px] text-stone-400 uppercase font-bold tracking-wider">ou preencha os dados</span>
+                      <div className="flex-1 h-px bg-stone-200" />
+                    </div>
+                  </div>
+                )}
+
                 {/* Person Type Toggle Selector */}
                 <div className="grid grid-cols-2 gap-3 mb-2">
                   <button
@@ -601,11 +587,11 @@ export default function RegisterRestaurant() {
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 w-4 h-4" />
                     <input
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="Senha"
+                      placeholder={authUser ? "Nova senha (opcional)" : "Senha"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className="w-full pl-11 pr-10 py-3 bg-stone-50/50 border border-stone-200 rounded-xl text-xs font-bold text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-stone-800 transition-all"
-                      required
+                      required={!authUser}
                     />
                     <button
                       type="button"
@@ -620,11 +606,11 @@ export default function RegisterRestaurant() {
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-400 w-4 h-4" />
                     <input
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="Confirmar senha"
+                      placeholder={authUser ? "Confirmar senha (opcional)" : "Confirmar senha"}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       className="w-full pl-11 pr-10 py-3 bg-stone-50/50 border border-stone-200 rounded-xl text-xs font-bold text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-stone-800 transition-all"
-                      required
+                      required={!authUser && !!password}
                     />
                   </div>
                 </div>

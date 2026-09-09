@@ -1,16 +1,22 @@
 import React, { useEffect, useRef } from 'react';
-import { AlertTriangle, DollarSign, X } from 'lucide-react';
+import { DollarSign, X, Check, ArrowRight, Loader2 } from 'lucide-react';
 
 interface UnpaidOrderAlertDialogProps {
   open: boolean;
   orderNumber?: string;
+  isUpdating?: boolean;
   onClose: () => void;
+  onConfirmAndFinalize?: () => void;
+  onFinalizeAnyway?: () => void;
 }
 
 export const UnpaidOrderAlertDialog: React.FC<UnpaidOrderAlertDialogProps> = ({
   open,
   orderNumber,
-  onClose
+  isUpdating = false,
+  onClose,
+  onConfirmAndFinalize,
+  onFinalizeAnyway
 }) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -60,6 +66,7 @@ export const UnpaidOrderAlertDialog: React.FC<UnpaidOrderAlertDialogProps> = ({
       >
         <button
           onClick={onClose}
+          disabled={isUpdating}
           className="absolute top-4 right-4 p-2 text-stone-400 hover:text-stone-600 rounded-full hover:bg-stone-100 transition-colors"
           aria-label="Fechar"
         >
@@ -77,21 +84,52 @@ export const UnpaidOrderAlertDialog: React.FC<UnpaidOrderAlertDialogProps> = ({
             </h3>
             {orderNumber && (
               <p className="text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-full inline-block">
-                Pedido #{orderNumber.slice(-5).toUpperCase()}
+                Pedido #{orderNumber.slice(-6).toUpperCase()}
               </p>
             )}
             <p id="unpaid-order-desc" className="text-stone-600 text-sm leading-relaxed pt-1">
-              Este pedido ainda não foi marcado como pago. Confirme o pagamento antes de finalizar o pedido.
+              Este pedido ainda não consta como pago no sistema. Como deseja prosseguir com a finalização?
             </p>
           </div>
 
-          <div className="pt-2 w-full">
+          <div className="pt-2 w-full space-y-2.5">
+            {onConfirmAndFinalize && (
+              <button
+                ref={buttonRef}
+                onClick={onConfirmAndFinalize}
+                disabled={isUpdating}
+                className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isUpdating ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Check className="w-4 h-4" />
+                )}
+                Confirmar Recebimento e Finalizar
+              </button>
+            )}
+
+            {onFinalizeAnyway && (
+              <button
+                onClick={onFinalizeAnyway}
+                disabled={isUpdating}
+                className="w-full py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs sm:text-sm rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isUpdating ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ArrowRight className="w-4 h-4" />
+                )}
+                Finalizar Sem Confirmar Pagamento
+              </button>
+            )}
+
             <button
-              ref={buttonRef}
               onClick={onClose}
-              className="w-full py-3.5 bg-stone-900 hover:bg-stone-800 text-white font-extrabold text-sm rounded-2xl transition-all shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500 active:scale-[0.98]"
+              disabled={isUpdating}
+              className="w-full py-2.5 text-stone-500 hover:text-stone-700 font-medium text-xs rounded-xl transition-colors cursor-pointer"
             >
-              Entendi
+              Voltar aos Pedidos
             </button>
           </div>
         </div>

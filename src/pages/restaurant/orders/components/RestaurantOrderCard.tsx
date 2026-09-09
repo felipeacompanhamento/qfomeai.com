@@ -1,12 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Clock, MapPin, Phone, Printer, MoreVertical, DollarSign, User, Truck, 
-  Store, ShoppingBag, UtensilsCrossed, CheckCircle2, AlertTriangle, ArrowRight 
+  Store, ShoppingBag, UtensilsCrossed, CheckCircle2, AlertTriangle, ArrowRight,
+  Eye, Ban
 } from 'lucide-react';
 import { Button, IconButton } from '../../../../components/ui';
 import { getCanonicalOrderState, getOrderKanbanColumn, normalizeOrderStatus, normalizeDeliveryStatus, normalizeFinancialSettlementStatus } from '../../../../domain/order/orderLifecycle';
 import { getOrderSourceDetails, isGarcomOrder } from '../utils/orderSource';
-import { getOrderStageTimeInfo } from '../utils/orderPresentation';
+import { 
+  getOrderStageTimeInfo,
+  extractOrderTableDisplay,
+  extractOrderComandaDisplay,
+  extractOrderWaiterDisplay,
+  extractOrderRoundDisplay
+} from '../utils/orderPresentation';
 
 interface RestaurantOrderCardProps {
   order: any;
@@ -15,6 +22,7 @@ interface RestaurantOrderCardProps {
   isUpdating?: boolean;
   onOrderClick: (order: any) => void;
   onUpdateStatus?: (orderId: string, status: string) => void;
+  onCancelOrder?: (order: any) => void;
   onPrintOrder?: (order: any) => void;
 }
 
@@ -25,9 +33,25 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
   isUpdating = false,
   onOrderClick,
   onUpdateStatus,
+  onCancelOrder,
   onPrintOrder
 }) => {
   const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    if (showMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMenu]);
 
   const isGarcom = isGarcomOrder(order);
   const columnId = getOrderKanbanColumn(order);
@@ -37,10 +61,10 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
 
   const orderCode = String(order?.id || order?._id || '').slice(-6).toUpperCase() || '------';
   const orderNum = order?.numero_pedido || order?.numeroPedido || orderCode;
-  const mesaNum = order?.mesa_numero || order?.tableNumber || order?.tableName || order?.mesa || '--';
-  const comandaNum = order?.comanda_id || order?.tabId || order?.comandaId || order?.comandaNumero || order?.comanda_numero || '--';
-  const waiterName = order?.waiterName || order?.garcom_nome || order?.sentBy?.name || order?.garcom || '--';
-  const roundNum = order?.roundNumber || order?.numero_rodada || order?.rodada || order?.roundId || '--';
+  const mesaNum = extractOrderTableDisplay(order);
+  const comandaNum = extractOrderComandaDisplay(order);
+  const waiterName = extractOrderWaiterDisplay(order);
+  const roundNum = extractOrderRoundDisplay(order);
 
   const fullCustomerName = order?.cliente_nome || order?.nome_cliente || order?.customerName || order?.cliente?.nome || 'Cliente';
   const customerName = fullCustomerName.trim().split(' ')[0] || 'Cliente';
@@ -144,9 +168,17 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
 
     if (orderStatus === 'OUT_FOR_DELIVERY') {
       return {
-        label: 'Ver Detalhes',
-        isModalTrigger: true,
-        bg: 'bg-stone-800 hover:bg-stone-900 text-white'
+        label: 'Marcar Entregue',
+        nextStatus: 'entregue',
+        bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
+      };
+    }
+
+    if (orderStatus === 'DELIVERED') {
+      return {
+        label: 'Finalizar Pedido',
+        nextStatus: 'finalizado',
+        bg: 'bg-emerald-600 hover:bg-emerald-700 text-white'
       };
     }
 
@@ -218,6 +250,84 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
               <Printer className="w-3.5 h-3.5" />
             </IconButton>
           )}
+
+          {/* Action Menu (3 dots) */}
+          <div className="relative shrink-0" ref={menuRef}>
+            <IconButton
+              variant="ghost"
+              size="sm"
+              aria-label="Mais ações"
+              title="Mais ações"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMenu(prev => !prev);
+              }}
+              className="p-1 h-6 w-6 text-stone-400 hover:text-stone-800 hover:bg-stone-200/60 transition-colors shrink-0"
+            >
+              <MoreVertical className="w-3.5 h-3.5" />
+            </IconButton>
+
+            {showMenu && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-xl border border-stone-200 py-1 z-30 animate-in fade-in zoom-in-95 duration-100 text-xs font-semibold text-stone-700"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenu(false);
+                    onOrderClick(order);
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-stone-50 cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5 text-stone-500" />
+                  Ver Detalhes
+                </button>
+
+                {onUpdateStatus && !['finalizado', 'completed'].includes(order.status) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      onUpdateStatus(order.id, 'finalizado');
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-emerald-50 text-emerald-700 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Finalizar Pedido
+                  </button>
+                )}
+
+                {onCancelOrder && !['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(order.status) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      onCancelOrder(order);
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-rose-50 text-rose-600 cursor-pointer border-t border-stone-100"
+                  >
+                    <Ban className="w-3.5 h-3.5 text-rose-500" />
+                    Cancelar Pedido
+                  </button>
+                )}
+
+                {onPrintOrder && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      onPrintOrder(order);
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-stone-50 text-stone-600 cursor-pointer border-t border-stone-100"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-stone-500" />
+                    Imprimir Pedido
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

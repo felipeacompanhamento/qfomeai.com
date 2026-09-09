@@ -53,28 +53,23 @@ export default function MesasComandasHubPage() {
   };
 
   return (
-    <div className="space-y-6 w-full">
-      {/* Module Header */}
-      <PageHeader
-        title="Mesas e Comandas"
-        description="Gerencie o salão, as mesas e o atendimento em um só lugar."
-        icon={Utensils}
-      />
+    <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-full h-full overflow-hidden space-y-2 sm:space-y-3">
+      {/* Navigation Subtabs - Fixed at Top */}
+      <div className="shrink-0">
+        <Tabs
+          tabs={availableTabs.map(tab => ({
+            id: tab.id,
+            label: tab.label,
+            icon: tab.icon,
+          }))}
+          activeTab={activeSubTab}
+          onChange={handleSubTabChange}
+          variant="emerald"
+        />
+      </div>
 
-      {/* Navigation Subtabs */}
-      <Tabs
-        tabs={availableTabs.map(tab => ({
-          id: tab.id,
-          label: tab.label,
-          icon: tab.icon,
-        }))}
-        activeTab={activeSubTab}
-        onChange={handleSubTabChange}
-        variant="emerald"
-      />
-
-      {/* Render ONLY the Active Tab Component to avoid duplicate listeners & queries */}
-      <div>
+      {/* Scrollable Active Tab Content */}
+      <div className="w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 pb-6">
         {activeSubTab === 'mapa' && <OperationalTablesMap />}
         {activeSubTab === 'mesas' && <RestaurantTables />}
         {activeSubTab === 'saloes' && <RestaurantHalls />}

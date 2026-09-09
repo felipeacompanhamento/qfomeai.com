@@ -1,4 +1,5 @@
 import { isGarcomOrder } from './orderSource';
+export { isGarcomOrder };
 
 export type OrderStatus =
   | 'NEW'
@@ -163,7 +164,13 @@ export function normalizeOrderStatus(order: any): OrderStatus {
     Boolean(order.driverPaymentReport) ||
     Boolean(order.deliveredAt)
   ) {
-    if (order.status === 'finalizado' || order.status === 'completed' || order.status === 'finalized' || order.orderStatus === 'FINALIZED') {
+    if (
+      order.status === 'finalizado' ||
+      order.status === 'completed' ||
+      order.status === 'finalized' ||
+      order.orderStatus === 'FINALIZED' ||
+      (order.pago === true && (order.financialSettlementStatus === 'SETTLED' || order.paymentStatus === 'SETTLED' || order.status === 'finalizado'))
+    ) {
       return 'FINALIZED';
     }
     return 'DELIVERED';
@@ -236,23 +243,58 @@ export function normalizeDeliveryStatus(order: any): DeliveryStatus {
 export function normalizeFinancialSettlementStatus(order: any): FinancialSettlementStatus {
   if (!order) return 'PENDING_COLLECTION';
 
+  // Pedidos de Garçom / Mesa / Comanda: Quitação financeira é gerenciada na Comanda / Caixa do Salão
+  if (isGarcomOrder(order)) {
+    return (order.pago || order.financialSettlementStatus === 'SETTLED') ? 'SETTLED' : 'NOT_REQUIRED';
+  }
+
   const rawCanonical = order.financialSettlementStatus || order.paymentStatus;
   if (rawCanonical && ['NOT_REQUIRED', 'PENDING_COLLECTION', 'PENDING_RESTAURANT_CONFIRMATION', 'SETTLED', 'CANCELLED'].includes(rawCanonical)) {
+    // Se explicitamente finalizado ou pago, garanta SETTLED
+    if (rawCanonical === 'PENDING_RESTAURANT_CONFIRMATION' && (order.pago === true || order.status === 'finalizado')) {
+      return 'SETTLED';
+    }
     return rawCanonical as FinancialSettlementStatus;
   }
 
-  // Already settled check
-  if (order.pago === true && (order.status === 'finalizado' || order.status === 'completed' || order.financialSettlementStatus === 'SETTLED')) {
+  // Verifica pagamentos e histórico de parcelas
+  const existingPayments = Array.isArray(order.payments) ? order.payments : [];
+  const paidFromInstallments = existingPayments
+    .filter((p: any) => p.status === 'PAID')
+    .reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0);
+  const orderTotalCents = Math.round(Number(order.valor_total || order.total || order.valor_produtos || 0) * 100);
+  const isInstallmentsFullyPaid = orderTotalCents > 0 && paidFromInstallments >= orderTotalCents;
+
+  // Already settled or fully paid check
+  const isPrepaidOrFullyPaid =
+    order.pago === true ||
+    order.isPaid === true ||
+    order.paid === true ||
+    order.pagoOnline === true ||
+    order.forma_pagamento === 'pix_app' ||
+    order.paymentStatus === 'PAID' ||
+    order.paymentStatus === 'SETTLED' ||
+    order.financialSettlementStatus === 'SETTLED' ||
+    order.financialSettlementStatus === 'NOT_REQUIRED' ||
+    isInstallmentsFullyPaid;
+
+  if (isPrepaidOrFullyPaid && (order.status === 'finalizado' || order.status === 'completed' || order.financialSettlementStatus === 'SETTLED')) {
     return 'SETTLED';
   }
 
   const orderStatus = normalizeOrderStatus(order);
   const deliveryStatus = normalizeDeliveryStatus(order);
 
+  // If order is paid and has been delivered / finalized, mark as SETTLED
+  if (isPrepaidOrFullyPaid && (deliveryStatus === 'DELIVERED' || orderStatus === 'DELIVERED' || orderStatus === 'FINALIZED')) {
+    return 'SETTLED';
+  }
+
   // Is online payment where collection isn't required on delivery?
   const isOnlinePayment =
     order.forma_pagamento === 'pix_app' ||
     order.pagoOnline === true ||
+    isInstallmentsFullyPaid ||
     (order.pago === true && orderStatus !== 'DELIVERED' && !order.driverPaymentReport);
 
   if (isOnlinePayment && deliveryStatus !== 'DELIVERED') {
@@ -265,7 +307,7 @@ export function normalizeFinancialSettlementStatus(order: any): FinancialSettlem
     orderStatus === 'DELIVERED' ||
     Boolean(order.driverPaymentReport)
   ) {
-    if (order.settledAt || order.restaurantPaymentConfirmation || (order.pago === true && orderStatus === 'FINALIZED')) {
+    if (order.settledAt || order.restaurantPaymentConfirmation || (order.pago === true && orderStatus === 'FINALIZED') || isPrepaidOrFullyPaid) {
       return 'SETTLED';
     }
     return 'PENDING_RESTAURANT_CONFIRMATION';
@@ -410,6 +452,7 @@ export function canDriverConfirmDelivery(order: any): boolean {
   Helper checking if restaurant can perform financial settlement
  */
 export function canRestaurantSettleOrder(order: any): boolean {
+  if (isGarcomOrder(order)) return false;
   const { orderStatus, deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(order);
   return (
     (orderStatus === 'DELIVERED' || deliveryStatus === 'DELIVERED' || Boolean(order?.driverPaymentReport)) &&

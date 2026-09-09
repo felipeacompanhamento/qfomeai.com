@@ -128,13 +128,19 @@ export function createKitchenRouter(authAdmin: Auth, db: Firestore): Router {
       }
 
       // 3. Validate restaurantId
-      const restaurantId = userData.restaurantId || req.user.restaurantId;
+      const restaurantId = userData.restaurantId || req.user.restaurantId || req.user.uid;
       if (!restaurantId) {
         return res.status(400).json({ error: 'ID do restaurante não encontrado no cadastro do usuário.' });
       }
 
       // 4. Validate role and kitchen canonical permissions
-      const roleUpper = (userData.role || '').toUpperCase();
+      let roleUpper = (userData.role || userData.tipo_usuario || '').toUpperCase();
+      if (['RESTAURANTE', 'RESTAURANT', 'ADMIN', 'PLATFORM_ADMIN'].includes(roleUpper)) {
+        roleUpper = 'OWNER';
+      }
+      if (!roleUpper && (userData.restaurantId || req.user.restaurantId)) {
+        roleUpper = 'OWNER';
+      }
       const allowedRoles = ['OWNER', 'RESTAURANT_ADMIN', 'MANAGER', 'KITCHEN'];
       if (!allowedRoles.includes(roleUpper)) {
         await logKitchenAudit({

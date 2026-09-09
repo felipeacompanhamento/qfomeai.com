@@ -56,135 +56,141 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 w-full min-w-0 max-w-full">
-      {/* Header Banner */}
-      <div className="flex items-center justify-between bg-stone-900 text-white p-4 sm:p-6 rounded-3xl shadow-sm border border-stone-800">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center shrink-0">
-            <ChefHat className="w-6 h-6 sm:w-7 sm:h-7" />
+    <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-full h-full overflow-hidden space-y-2.5 sm:space-y-3 font-sans">
+      {/* Header Banner & Origin Filters - Fixed at Top */}
+      <div className="shrink-0 space-y-2 sm:space-y-2.5">
+        {/* Header Banner */}
+        <div className="flex items-center justify-between bg-stone-900 text-white p-3.5 sm:p-4 rounded-2xl shadow-xs border border-stone-800">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 sm:w-11 sm:h-11 bg-amber-500/20 text-amber-400 rounded-xl flex items-center justify-center shrink-0">
+              <ChefHat className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-base sm:text-lg font-bold tracking-tight truncate">KDS - Monitor da Cozinha</h3>
+              <p className="text-stone-400 text-xs truncate">
+                {kitchenOrders.length} {kitchenOrders.length === 1 ? 'pedido em preparo' : 'pedidos em preparo'}
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h3 className="text-lg sm:text-xl font-bold tracking-tight truncate">KDS - Monitor da Cozinha</h3>
-            <p className="text-stone-400 text-xs sm:text-sm truncate">
-              {kitchenOrders.length} {kitchenOrders.length === 1 ? 'pedido em preparo' : 'pedidos em preparo'}
-            </p>
-          </div>
+
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-stone-800 hover:bg-stone-700 active:scale-[0.98] text-stone-200 text-xs font-bold rounded-xl transition-all border border-stone-700 min-h-[38px] cursor-pointer shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">Atualizar</span>
+            </button>
+          )}
         </div>
 
-        {onRefresh && (
+        {/* Origin Filters */}
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar touch-pan-x w-full min-w-0 shrink-0">
           <button
             type="button"
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-stone-800 hover:bg-stone-700 active:scale-[0.98] text-stone-200 text-xs font-bold rounded-xl transition-all border border-stone-700 min-h-[38px] cursor-pointer shrink-0"
+            onClick={() => setSelectedOrigin('TODOS')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
+              selectedOrigin === 'TODOS'
+                ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
+                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
+            }`}
           >
-            <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Atualizar</span>
+            <span>TODOS</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
+                selectedOrigin === 'TODOS' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
+              }`}
+            >
+              {originCounts.TODOS}
+            </span>
           </button>
-        )}
+
+          <button
+            type="button"
+            onClick={() => setSelectedOrigin('DELIVERY')}
+            className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
+              selectedOrigin === 'DELIVERY'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
+            }`}
+          >
+            <Bike className="w-3.5 h-3.5" />
+            <span>DELIVERY</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
+                selectedOrigin === 'DELIVERY' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
+              }`}
+            >
+              {originCounts.DELIVERY}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedOrigin('GARCOM')}
+            className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
+              selectedOrigin === 'GARCOM'
+                ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
+            }`}
+          >
+            <Utensils className="w-3.5 h-3.5" />
+            <span>GARÇOM</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
+                selectedOrigin === 'GARCOM' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
+              }`}
+            >
+              {originCounts.GARCOM}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedOrigin('BALCAO')}
+            className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
+              selectedOrigin === 'BALCAO'
+                ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
+            }`}
+          >
+            <Store className="w-3.5 h-3.5" />
+            <span>BALCÃO</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
+                selectedOrigin === 'BALCAO' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
+              }`}
+            >
+              {originCounts.BALCAO}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedOrigin('TOTEM')}
+            className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
+              selectedOrigin === 'TOTEM'
+                ? 'bg-stone-800 text-white border-stone-800 shadow-2xs'
+                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
+            }`}
+          >
+            <Monitor className="w-3.5 h-3.5" />
+            <span>TOTEM</span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
+                selectedOrigin === 'TOTEM' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
+              }`}
+            >
+              {originCounts.TOTEM}
+            </span>
+          </button>
+        </div>
       </div>
 
-      {/* Origin Filters */}
-      <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar touch-pan-x w-full min-w-0 shrink-0">
-        <button
-          type="button"
-          onClick={() => setSelectedOrigin('TODOS')}
-          className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
-            selectedOrigin === 'TODOS'
-              ? 'bg-stone-900 text-white border-stone-900 shadow-2xs'
-              : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
-          }`}
-        >
-          <span>TODOS</span>
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
-              selectedOrigin === 'TODOS' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            {originCounts.TODOS}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedOrigin('DELIVERY')}
-          className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
-            selectedOrigin === 'DELIVERY'
-              ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
-              : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
-          }`}
-        >
-          <Bike className="w-3.5 h-3.5" />
-          <span>DELIVERY</span>
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
-              selectedOrigin === 'DELIVERY' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            {originCounts.DELIVERY}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedOrigin('GARCOM')}
-          className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
-            selectedOrigin === 'GARCOM'
-              ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
-              : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
-          }`}
-        >
-          <Utensils className="w-3.5 h-3.5" />
-          <span>GARÇOM</span>
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
-              selectedOrigin === 'GARCOM' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            {originCounts.GARCOM}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedOrigin('BALCAO')}
-          className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
-            selectedOrigin === 'BALCAO'
-              ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
-              : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
-          }`}
-        >
-          <Store className="w-3.5 h-3.5" />
-          <span>BALCÃO</span>
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
-              selectedOrigin === 'BALCAO' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            {originCounts.BALCAO}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedOrigin('TOTEM')}
-          className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 min-h-[38px] rounded-xl text-xs font-bold transition-all whitespace-nowrap border cursor-pointer shrink-0 active:scale-[0.98] ${
-            selectedOrigin === 'TOTEM'
-              ? 'bg-stone-800 text-white border-stone-800 shadow-2xs'
-              : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100 hover:text-stone-900'
-          }`}
-        >
-          <Monitor className="w-3.5 h-3.5" />
-          <span>TOTEM</span>
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-extrabold ${
-              selectedOrigin === 'TOTEM' ? 'bg-white/20 text-white' : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            {originCounts.TOTEM}
-          </span>
-        </button>
-      </div>
+      {/* Scrollable Kitchen Orders Grid Area */}
+      <div className="w-full flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 pb-6">
 
       {kitchenOrders.length === 0 ? (
         <div className="p-10 sm:p-16 bg-white rounded-3xl border border-stone-200 text-center text-stone-400 shadow-2xs">
@@ -468,6 +474,7 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }

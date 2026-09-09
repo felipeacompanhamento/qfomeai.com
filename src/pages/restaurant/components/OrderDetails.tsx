@@ -20,7 +20,15 @@ import { PaymentsManager, PaymentItem } from './PaymentsManager';
 import { processOrderPaymentsApi, processOrderRefundApi } from '../../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
 import { isGarcomOrder } from '../orders/utils/orderSource';
+import { 
+  extractOrderTableDisplay, 
+  extractOrderComandaDisplay, 
+  extractOrderWaiterDisplay, 
+  extractOrderRoundDisplay, 
+  extractOrderItemPriceInfo 
+} from '../orders/utils/orderPresentation';
 import { FormField, TextInput, SelectInput, FormModal } from '../../../components/ui/FormComponents';
+import { CancelOrderModal } from '../../../components/orders/CancelOrderModal';
 
 
 interface OrderDetailsProps {
@@ -101,6 +109,7 @@ const OrderDetails = ({
   const [refundAmount, setRefundAmount] = useState('');
   const [refundReason, setRefundReason] = useState('');
   const [isRefunding, setIsRefunding] = useState(false);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
 
   // Settlement modal state
   const [showSettlementModal, setShowSettlementModal] = useState(false);
@@ -490,25 +499,25 @@ const OrderDetails = ({
               <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                 <span className="text-stone-400 font-semibold text-[11px] block">Mesa</span>
                 <span className="font-black text-stone-900 text-sm mt-0.5 block">
-                  {selectedOrder.mesa_numero || selectedOrder.tableNumber || selectedOrder.tableName || selectedOrder.mesa || '--'}
+                  {extractOrderTableDisplay(selectedOrder)}
                 </span>
               </div>
               <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                 <span className="text-stone-400 font-semibold text-[11px] block">Comanda</span>
                 <span className="font-black text-stone-900 text-sm mt-0.5 block">
-                  {selectedOrder.comanda_id || selectedOrder.tabId || selectedOrder.comandaId || selectedOrder.comandaNumero || selectedOrder.comanda_numero || '--'}
+                  {extractOrderComandaDisplay(selectedOrder)}
                 </span>
               </div>
               <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                 <span className="text-stone-400 font-semibold text-[11px] block">Garçom</span>
                 <span className="font-black text-stone-900 text-sm mt-0.5 block truncate">
-                  {selectedOrder.waiterName || selectedOrder.garcom_nome || selectedOrder.sentBy?.name || selectedOrder.garcom || '--'}
+                  {extractOrderWaiterDisplay(selectedOrder)}
                 </span>
               </div>
               <div className="bg-white p-3 rounded-xl border border-stone-200/80">
                 <span className="text-stone-400 font-semibold text-[11px] block">Rodada</span>
                 <span className="font-black text-stone-900 text-sm mt-0.5 block">
-                  {selectedOrder.roundNumber || selectedOrder.numero_rodada || selectedOrder.rodada || selectedOrder.roundId || '--'}
+                  {extractOrderRoundDisplay(selectedOrder)}
                 </span>
               </div>
             </div>
@@ -737,6 +746,10 @@ const OrderDetails = ({
 
         {/* Seção Obrigatória de Conferência do Recebimento */}
         {(() => {
+          if (isGarcomOrder(selectedOrder)) {
+            return null;
+          }
+
           const canonicalState = getCanonicalOrderState(selectedOrder);
           const isSettled = canonicalState.financialSettlementStatus === 'SETTLED' ||
                             canonicalState.orderStatus === 'FINALIZED' ||
@@ -749,12 +762,27 @@ const OrderDetails = ({
           }
 
           const report = selectedOrder.driverPaymentReport || {};
-          const orderTotal = Number(selectedOrder.valor_total || selectedOrder.total || 0);
-          const amountAlreadyPaid = Number(report.amountAlreadyPaid || 0);
+          const orderTotal = Number(selectedOrder.valor_total || selectedOrder.total || selectedOrder.valor_produtos || 0);
+
+          // Histórico de parcelas / pagamentos registrados
+          const paymentsList = Array.isArray(selectedOrder.payments) ? selectedOrder.payments : [];
+          const installmentsPaidTotal = paymentsList
+            .filter((p: any) => p.status === 'PAID')
+            .reduce((acc: number, p: any) => acc + ((Number(p.amount) || 0) / 100), 0);
+
+          const isOrderPrepaid = selectedOrder.pago === true ||
+                                 selectedOrder.pagoOnline === true ||
+                                 selectedOrder.forma_pagamento === 'pix_app' ||
+                                 (installmentsPaidTotal >= orderTotal && orderTotal > 0);
+
+          const amountAlreadyPaid = isOrderPrepaid
+            ? orderTotal
+            : (installmentsPaidTotal > 0 ? installmentsPaidTotal : Number(report.amountAlreadyPaid || 0));
+
           const amountDue = Math.max(0, orderTotal - amountAlreadyPaid);
-          const reportedTotal = Number(report.totalReported || amountDue);
+          const reportedTotal = isOrderPrepaid ? 0 : Number(report.totalReported || amountDue);
           const changeAmount = Number(report.changeAmount || 0);
-          const netAmount = Number(report.netAmountReceived || (reportedTotal - changeAmount));
+          const netAmount = isOrderPrepaid ? 0 : Number(report.netAmountReceived || (reportedTotal - changeAmount));
 
           return (
             <div className={`rounded-2xl p-5 space-y-4 border-2 transition-all ${
@@ -788,11 +816,11 @@ const OrderDetails = ({
                   <span className="font-extrabold text-stone-800 text-sm">R$ {orderTotal.toFixed(2)}</span>
                 </div>
                 <div className="bg-white p-3 rounded-xl border border-stone-200/80">
-                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Já Pago (Online)</span>
+                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Já Pago (Parcelas/Online)</span>
                   <span className="font-extrabold text-emerald-600 text-sm">R$ {amountAlreadyPaid.toFixed(2)}</span>
                 </div>
                 <div className="bg-white p-3 rounded-xl border border-stone-200/80">
-                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Saldo Esperado</span>
+                  <span className="text-stone-400 font-semibold text-[10px] uppercase block">Saldo Pendente na Entrega</span>
                   <span className="font-extrabold text-amber-700 text-sm">R$ {amountDue.toFixed(2)}</span>
                 </div>
                 <div className="bg-white p-3 rounded-xl border border-stone-200/80">
@@ -801,7 +829,7 @@ const OrderDetails = ({
                 </div>
               </div>
 
-              {report.paymentMethods && report.paymentMethods.length > 0 && (
+              {report.paymentMethods && report.paymentMethods.length > 0 && !isOrderPrepaid && (
                 <div className="bg-white p-3 rounded-xl border border-stone-200/80 space-y-1 text-xs">
                   <span className="text-stone-400 font-semibold text-[10px] uppercase block mb-1">
                     Formas de Pagamento Informadas pelo Entregador:
@@ -822,7 +850,7 @@ const OrderDetails = ({
                   </span>
                 )}
                 <span className="bg-emerald-100 text-emerald-900 px-3 py-1.5 rounded-lg border border-emerald-200">
-                  Valor Líquido Recebido: <strong>R$ {netAmount.toFixed(2)}</strong>
+                  Valor Líquido Recebido na Entrega: <strong>R$ {netAmount.toFixed(2)}</strong>
                 </span>
               </div>
 
@@ -842,36 +870,53 @@ const OrderDetails = ({
           </h3>
           <div className="bg-stone-50 rounded-2xl border border-stone-100 overflow-hidden">
             {(selectedOrder.items || selectedOrder.itens)?.map((item: any, idx: number) => {
-              const extrasTotal = (item.adicionais || []).reduce((sum: number, extra: any) => sum + (extra.preco * extra.quantidade), 0);
-              const itemTotal = (item.preco + extrasTotal) * item.quantidade;
+              const priceInfo = extractOrderItemPriceInfo(item);
+              const { unitPrice, extrasTotal, quantity, totalPrice } = priceInfo;
+
+              const extrasList = item.adicionais || item.adicionaisSelecionados || item.options || [];
 
               return (
                 <div key={idx} className="p-4 border-b border-stone-100 last:border-0 flex justify-between items-start">
                   <div>
-                    <p className="font-bold text-stone-800"><span className="text-emerald-600 mr-2">{item.quantidade}x</span> {item.nome}</p>
-                    {item.desconto_aplicado && item.desconto_aplicado > 0 && (
-                      <p className="text-xs font-bold text-emerald-600 mt-0.5">
-                        Desconto de R$ {(item.desconto_aplicado * item.quantidade).toFixed(2)} aplicado
+                    <p className="font-bold text-stone-800">
+                      <span className="text-emerald-600 mr-2">{quantity}x</span> {item.nome || item.name || item.produtoNome || 'Item'}
+                    </p>
+                    {item.tamanhoSelecionado && (
+                      <p className="text-xs font-semibold text-stone-500 mt-0.5">
+                        Tamanho: {item.tamanhoSelecionado.nome || item.tamanhoSelecionado}
                       </p>
                     )}
-                    {item.adicionais && item.adicionais.length > 0 && (
+                    {item.desconto_aplicado && item.desconto_aplicado > 0 && (
+                      <p className="text-xs font-bold text-emerald-600 mt-0.5">
+                        Desconto de R$ {(Number(item.desconto_aplicado) * quantity).toFixed(2)} aplicado
+                      </p>
+                    )}
+                    {Array.isArray(extrasList) && extrasList.length > 0 && (
                       <div className="mt-1 space-y-0.5">
-                        {item.adicionais.map((extra: any, eIdx: number) => (
-                          <p key={eIdx} className="text-xs text-stone-500">
-                            + {extra.quantidade}x {extra.nome} (R$ {(extra.preco * extra.quantidade).toFixed(2)})
-                          </p>
-                        ))}
+                        {extrasList.map((extra: any, eIdx: number) => {
+                          const exPrice = Number(extra?.preco ?? extra?.price ?? extra?.valor ?? (extra?.priceCents ? Number(extra.priceCents) / 100 : 0) ?? 0);
+                          const exQty = Number(extra?.quantidade ?? extra?.qty ?? 1) || 1;
+                          return (
+                            <p key={eIdx} className="text-xs text-stone-500">
+                              + {exQty}x {extra.nome || extra.name || 'Adicional'} {exPrice > 0 ? `(R$ ${(exPrice * exQty).toFixed(2)})` : ''}
+                            </p>
+                          );
+                        })}
                       </div>
                     )}
-                    {item.observacao && <p className="text-xs text-stone-500 mt-1 italic">Obs: {item.observacao}</p>}
+                    {(item.observacao || item.observacoes || item.observation) && (
+                      <p className="text-xs text-stone-500 mt-1 italic">
+                        Obs: {item.observacao || item.observacoes || item.observation}
+                      </p>
+                    )}
                   </div>
                   <div className="flex flex-col items-end">
-                    {item.preco_original && item.preco_original > item.preco && (
+                    {item.preco_original && Number(item.preco_original) > unitPrice && (
                       <span className="text-xs text-stone-400 line-through font-light">
-                        R$ {((item.preco_original + extrasTotal) * item.quantidade).toFixed(2)}
+                        R$ {((Number(item.preco_original) + extrasTotal) * quantity).toFixed(2)}
                       </span>
                     )}
-                    <p className="font-bold text-stone-800">R$ {itemTotal.toFixed(2)}</p>
+                    <p className="font-bold text-stone-800">R$ {totalPrice.toFixed(2)}</p>
                   </div>
                 </div>
               );
@@ -903,26 +948,24 @@ const OrderDetails = ({
       </div>
 
       {/* Actions Footer */}
-      <div className="shrink-0 p-4 border-t border-stone-100 bg-white sticky bottom-0 z-10">
+      <div className="shrink-0 p-4 border-t border-stone-100 bg-white sticky bottom-0 z-10 space-y-2.5">
         {selectedOrder.status === 'pendente' && (
-          <div className="flex gap-4">
+          <div className="flex gap-3">
             <button 
-              onClick={() => {
-                onUpdate(selectedOrder.id, 'rejeitado', 'Pedido cancelado pelo restaurante');
-              }}
+              onClick={() => setIsCancelModalOpen(true)}
               disabled={isUpdating}
-              className="flex-1 py-3 bg-red-50 text-red-600 font-bold rounded-xl hover:bg-red-100 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+              className="flex-1 py-3 bg-red-50 text-red-600 font-bold rounded-xl hover:bg-red-100 disabled:opacity-50 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
             >
-              <X className="w-5 h-5" /> Rejeitar Pedido
+              <X className="w-4 h-4" /> Rejeitar Pedido
             </button>
             <button 
               onClick={() => {
                 onUpdate(selectedOrder.id, 'aceito');
               }}
               disabled={isUpdating}
-              className="flex-1 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:bg-emerald-400 shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2"
+              className="flex-1 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:bg-emerald-400 shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm"
             >
-              {isUpdating ? <Clock className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+              {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
               {isUpdating ? 'Processando...' : 'Aceitar Pedido'}
             </button>
           </div>
@@ -934,22 +977,22 @@ const OrderDetails = ({
               onUpdate(selectedOrder.id, 'preparo');
             }}
             disabled={isUpdating}
-            className="w-full py-3 bg-yellow-500 text-white font-bold rounded-xl hover:bg-yellow-600 disabled:bg-yellow-300 shadow-lg shadow-yellow-200 transition-all flex items-center justify-center gap-2"
+            className="w-full py-3 bg-yellow-500 text-white font-bold rounded-xl hover:bg-yellow-600 disabled:bg-yellow-300 shadow-lg shadow-yellow-200 transition-all flex items-center justify-center gap-2 text-sm"
           >
-            {isUpdating ? <Clock className="w-5 h-5 animate-spin" /> : <Clock className="w-5 h-5" />}
+            {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
             {isUpdating ? 'Processando...' : 'Iniciar Preparo'}
           </button>
         )}
 
-        {['preparo', 'cozinha'].includes(selectedOrder.status) && (
+        {['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               onUpdate(selectedOrder.id, 'pronto');
             }}
             disabled={isUpdating}
-            className="w-full py-3 bg-emerald-500 text-white font-bold rounded-xl hover:bg-emerald-600 disabled:bg-emerald-300 shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2"
+            className="w-full py-3 bg-emerald-500 text-white font-bold rounded-xl hover:bg-emerald-600 disabled:bg-emerald-300 shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm"
           >
-            {isUpdating ? <Clock className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+            {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
             {isUpdating ? 'Processando...' : 'Marcar como Pronto'}
           </button>
         )}
@@ -959,79 +1002,109 @@ const OrderDetails = ({
             onClick={() => {
               const isGarcom = isGarcomOrder(selectedOrder);
               const isOnSite = isGarcom || ['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega);
-              const nextStatus = isOnSite ? 'entregue' : 'entrega';
+              const nextStatus = isOnSite ? 'finalizado' : 'despachado';
               onUpdate(selectedOrder.id, nextStatus);
             }}
-            disabled={isUpdating || (!isGarcomOrder(selectedOrder) && ['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) && !selectedOrder.pago)}
-            title={!isGarcomOrder(selectedOrder) && ['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) && !selectedOrder.pago ? 'Marque o pedido como pago antes de finalizar' : ''}
-            className={`w-full py-3 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${
-              (isUpdating || (!isGarcomOrder(selectedOrder) && ['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) && !selectedOrder.pago))
-                ? 'bg-stone-300 cursor-not-allowed' 
-                : 'bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-200'
-            }`}
+            disabled={isUpdating}
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm"
           >
-            {isUpdating ? <Clock className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-            {isUpdating ? 'Processando...' : (isGarcomOrder(selectedOrder) ? 'MARCAR COMO SERVIDO' : (['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) ? 'Marcar como Entregue' : 'Saiu para Entrega'))}
+            {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            {isUpdating ? 'Processando...' : (isGarcomOrder(selectedOrder) ? 'MARCAR COMO SERVIDO' : (['retirada', 'balcao', 'consumo_local'].includes(selectedOrder.tipo_entrega) ? 'Entregar e Finalizar' : 'Despachar / Saiu para Entrega'))}
           </button>
         )}
 
-
-        {selectedOrder.status === 'entrega' && (
+        {['entrega', 'saiu_entrega', 'saiu para entrega', 'saiu_para_entrega', 'despachado', 'em_entrega', 'out_for_delivery'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               onUpdate(selectedOrder.id, 'entregue');
             }}
-            disabled={isUpdating || !selectedOrder.pago}
-            title={!selectedOrder.pago ? 'Marque o pedido como pago antes de finalizar' : ''}
-            className={`w-full py-3 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 ${
-              (isUpdating || !selectedOrder.pago)
-                ? 'bg-stone-300 cursor-not-allowed' 
-                : 'bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-200'
-            }`}
+            disabled={isUpdating}
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm"
           >
-            {isUpdating ? <Clock className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+            {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
             {isUpdating ? 'Processando...' : 'Marcar como Entregue'}
           </button>
         )}
 
-        {['aceito', 'preparo', 'cozinha', 'pronto', 'entrega'].includes(selectedOrder.status) && (
-          <button 
-            onClick={() => {
-              onUpdate(selectedOrder.id, 'cancelado', 'Cancelado pelo restaurante');
-            }}
-            disabled={isUpdating}
-            className="w-full mt-3 py-3 bg-red-50 text-red-600 font-bold rounded-xl hover:bg-red-100 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
-          >
-            <X className="w-5 h-5" /> Cancelar Pedido
-          </button>
-        )}
-
-        {isDeliveryOrder(selectedOrder) && ['aceito', 'preparo', 'cozinha', 'pronto', 'entrega'].includes(selectedOrder.status) && (
+        {isDeliveryOrder(selectedOrder) && ['aceito', 'preparo', 'cozinha', 'pronto'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               fetchDrivers();
               setIsAssignModalOpen(true);
             }}
-            className="w-full mt-3 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2"
+            className="w-full py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 transition-all flex items-center justify-center gap-2 text-xs"
           >
-            <Bike className="w-5 h-5" /> Enviar para Entregador
+            <Bike className="w-4 h-4" /> Enviar para Entregador
           </button>
         )}
         
+        {/* Settlement / Finalization Buttons */}
         {canRestaurantSettleOrder(selectedOrder) ? (
+          <div className="space-y-2">
+            <button 
+              onClick={handleOpenSettlement}
+              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-stone-950 font-extrabold rounded-xl shadow-lg shadow-amber-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-xs sm:text-sm"
+            >
+              <DollarSign className="w-4 h-4" />
+              Conferir Recebimento e Baixar
+            </button>
+            <button 
+              onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
+              disabled={isUpdating}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs"
+            >
+              {isUpdating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              Finalizar Pedido Diretamente
+            </button>
+          </div>
+        ) : (['entregue', 'delivered'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'DELIVERED') && !['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) ? (
           <button 
-            onClick={handleOpenSettlement}
-            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-sm"
+            onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
+            disabled={isUpdating}
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-sm cursor-pointer"
           >
-            <DollarSign className="w-5 h-5" />
-            Conferir Recebimento e Finalizar
+            {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            {isUpdating ? 'Processando...' : 'Finalizar Pedido'}
           </button>
-        ) : ['finalizado', 'cancelado', 'rejeitado'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'FINALIZED' ? (
-          <div className="text-center text-stone-400 font-bold py-2">
+        ) : !['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) && selectedOrder.status !== 'pendente' ? (
+          <button 
+            onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
+            disabled={isUpdating}
+            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 text-xs cursor-pointer"
+          >
+            {isUpdating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            Finalizar Pedido Agora
+          </button>
+        ) : ['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'FINALIZED' || getCanonicalOrderState(selectedOrder).orderStatus === 'CANCELLED' ? (
+          <div className="text-center text-stone-400 font-bold py-2 text-xs">
             Este pedido já foi {String(getRestaurantStatusText(selectedOrder.status) || '').toLowerCase()}.
           </div>
         ) : null}
+
+        {/* Universal Cancel Button for any non-terminal order */}
+        {!['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) && selectedOrder.status !== 'pendente' && (
+          <button 
+            onClick={() => setIsCancelModalOpen(true)}
+            disabled={isUpdating}
+            className="w-full py-2 bg-red-50 text-red-600 font-bold rounded-xl hover:bg-red-100 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" /> Cancelar Pedido
+          </button>
+        )}
       </div>
+
+      {/* Modal de Cancelamento / Rejeição */}
+      <CancelOrderModal
+        isOpen={isCancelModalOpen}
+        order={selectedOrder}
+        isUpdating={isUpdating}
+        onClose={() => setIsCancelModalOpen(false)}
+        onConfirmCancel={(orderId, reason) => {
+          onUpdate(orderId, selectedOrder.status === 'pendente' ? 'rejeitado' : 'cancelado', reason);
+          setIsCancelModalOpen(false);
+        }}
+      />
+
       {/* Modal de Estorno */}
       <FormModal
         isOpen={showRefundModal}

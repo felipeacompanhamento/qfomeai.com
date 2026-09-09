@@ -399,15 +399,15 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-2 sm:px-4 py-4 space-y-4">
+    <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-7xl mx-auto px-1 sm:px-3 py-2 sm:py-3 space-y-3 sm:space-y-4 h-full overflow-hidden font-sans">
       {/* Top Header */}
-      <div className="bg-white rounded-2xl p-4 border border-stone-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
-            <Store className="w-6 h-6" />
+          <div className="p-2.5 sm:p-3 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+            <Store className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-stone-800">Venda no Balcão (PDV)</h1>
+            <h1 className="text-lg sm:text-xl font-bold text-stone-800">Venda no Balcão (PDV)</h1>
             <p className="text-xs text-stone-500">Atendimento presencial rápido, consumo local e retirada</p>
           </div>
         </div>
@@ -417,7 +417,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
           <button
             onClick={() => setMobileTab('catalog')}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-              mobileTab === 'catalog' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500'
+              mobileTab === 'catalog' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500'
             }`}
           >
             Cardápio
@@ -425,7 +425,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
           <button
             onClick={() => setMobileTab('cart')}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-              mobileTab === 'cart' ? 'bg-white text-emerald-600 shadow-sm' : 'text-stone-500'
+              mobileTab === 'cart' ? 'bg-white text-emerald-600 shadow-xs' : 'text-stone-500'
             }`}
           >
             <ShoppingBag className="w-3.5 h-3.5" />
@@ -435,18 +435,18 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
       </div>
 
       {error && (
-        <div className="p-4 bg-red-50 text-red-700 rounded-2xl border border-red-200 text-sm flex items-center gap-2">
+        <div className="p-3 sm:p-4 bg-red-50 text-red-700 rounded-2xl border border-red-200 text-sm flex items-center gap-2 shrink-0">
           <AlertCircle className="w-5 h-5 flex-shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      {/* Main Grid: Catalog (2/3) + Cart Summary (1/3) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+      {/* Main Grid: Catalog (2/3 or 7/12 cols) + Cart Summary (1/3 or 5/12 cols) */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 items-stretch h-full overflow-hidden">
         {/* Left Column: Product Catalog */}
-        <div className={`lg:col-span-2 space-y-4 ${mobileTab === 'cart' ? 'hidden sm:block' : 'block'}`}>
-          {/* Controls: Search and Categories */}
-          <div className="bg-white rounded-2xl p-4 border border-stone-200 shadow-sm space-y-3">
+        <div className={`lg:col-span-7 xl:col-span-8 flex flex-col min-h-0 h-full overflow-hidden space-y-3 ${mobileTab === 'cart' ? 'hidden sm:flex' : 'flex'}`}>
+          {/* Controls: Search and Categories - Fixed */}
+          <div className="bg-white rounded-2xl p-3 sm:p-4 border border-stone-200 shadow-xs space-y-3 shrink-0">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400" />
               <input
@@ -454,29 +454,31 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
                 placeholder="Buscar produto por nome ou descrição..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full pl-10 pr-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
 
             {/* Categories Pills */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 scrollbar-none">
               <button
+                type="button"
                 onClick={() => setSelectedCategory('todos')}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                   selectedCategory === 'todos'
-                    ? 'bg-emerald-600 text-white shadow-sm'
+                    ? 'bg-emerald-600 text-white shadow-xs'
                     : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                 }`}
               >
-                Todos
+                Todos ({products.length})
               </button>
               {categories.map(cat => (
                 <button
+                  type="button"
                   key={cat.id}
                   onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all shrink-0 cursor-pointer ${
                     selectedCategory === cat.id
-                      ? 'bg-emerald-600 text-white shadow-sm'
+                      ? 'bg-emerald-600 text-white shadow-xs'
                       : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                   }`}
                 >
@@ -486,124 +488,130 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
             </div>
           </div>
 
-          {/* Product Cards Grid */}
-          {filteredProducts.length === 0 ? (
-            <div className="bg-white rounded-2xl p-8 border border-stone-200 text-center text-stone-500 text-sm">
-              Nenhum produto disponível encontrado.
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {filteredProducts.map(product => {
-                const price = getProductPriceForChannel(product, 'counter');
-                return (
-                  <button
-                    key={product.id}
-                    onClick={() => handleProductClick(product)}
-                    className="bg-white rounded-2xl p-3 border border-stone-200 text-left hover:border-emerald-500 hover:shadow-md transition-all flex flex-col justify-between group active:scale-[0.98]"
-                  >
-                    <div>
-                      {product.imagem_url && (
-                        <img 
-                          src={product.imagem_url} 
-                          alt={product.nome}
-                          className="w-full h-24 object-cover rounded-xl mb-2.5 bg-stone-100"
-                        />
-                      )}
-                      <h3 className="font-bold text-stone-800 text-xs sm:text-sm line-clamp-2 group-hover:text-emerald-700">
-                        {product.nome}
-                      </h3>
-                      {product.descricao && (
-                        <p className="text-[11px] text-stone-500 line-clamp-2 mt-0.5">
-                          {product.descricao}
-                        </p>
-                      )}
-                    </div>
-                    <div className="mt-3 flex items-center justify-between pt-2 border-t border-stone-100">
-                      <span className="font-extrabold text-stone-900 text-xs sm:text-sm">
-                        {formatCurrency(price)}
-                      </span>
-                      <div className="w-7 h-7 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-all">
-                        <Plus className="w-4 h-4" />
+          {/* Product Cards Grid - Scrollable */}
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1 pb-4">
+            {filteredProducts.length === 0 ? (
+              <div className="bg-white rounded-2xl p-8 border border-stone-200 text-center text-stone-500 text-sm">
+                Nenhum produto disponível encontrado.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 sm:gap-3">
+                {filteredProducts.map(product => {
+                  const price = getProductPriceForChannel(product, 'counter');
+                  return (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => handleProductClick(product)}
+                      className="bg-white rounded-2xl p-3 border border-stone-200 text-left hover:border-emerald-500 hover:shadow-md transition-all flex flex-col justify-between group active:scale-[0.98] cursor-pointer"
+                    >
+                      <div>
+                        {product.imagem_url && (
+                          <img 
+                            src={product.imagem_url} 
+                            alt={product.nome}
+                            className="w-full h-24 object-cover rounded-xl mb-2 bg-stone-100"
+                          />
+                        )}
+                        <h3 className="font-bold text-stone-800 text-xs sm:text-sm line-clamp-2 group-hover:text-emerald-700">
+                          {product.nome}
+                        </h3>
+                        {product.descricao && (
+                          <p className="text-[11px] text-stone-500 line-clamp-2 mt-0.5">
+                            {product.descricao}
+                          </p>
+                        )}
                       </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                      <div className="mt-3 flex items-center justify-between pt-2 border-t border-stone-100">
+                        <span className="font-extrabold text-stone-900 text-xs sm:text-sm">
+                          {formatCurrency(price)}
+                        </span>
+                        <div className="w-7 h-7 bg-emerald-50 text-emerald-600 rounded-lg flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-all">
+                          <Plus className="w-4 h-4" />
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right Column: Order Cart & Checkout */}
-        <div className={`space-y-4 ${mobileTab === 'catalog' ? 'hidden sm:block' : 'block'}`}>
-          <div className="bg-white rounded-2xl p-4 border border-stone-200 shadow-sm space-y-4 sticky top-4">
-            <h2 className="font-bold text-stone-800 text-base flex items-center justify-between border-b border-stone-100 pb-3">
-              <span>Carrinho de Venda</span>
-              <span className="text-xs font-semibold px-2.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-full">
-                {cart.reduce((a, b) => a + b.quantidade, 0)} itens
-              </span>
-            </h2>
+        <div className={`lg:col-span-5 xl:col-span-4 flex flex-col min-h-0 h-full overflow-hidden ${mobileTab === 'catalog' ? 'hidden sm:flex' : 'flex'}`}>
+          <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs flex flex-col h-full min-h-0 overflow-hidden">
+            {/* Cart Header - Fixed */}
+            <div className="shrink-0 space-y-2.5 border-b border-stone-100 pb-3">
+              <h2 className="font-bold text-stone-800 text-base flex items-center justify-between">
+                <span>Carrinho de Venda</span>
+                <span className="text-xs font-semibold px-2.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-full">
+                  {cart.reduce((a, b) => a + b.quantidade, 0)} itens
+                </span>
+              </h2>
 
-            {/* Service Mode Selector */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-stone-600">Modalidade de Atendimento</label>
-              <div className="grid grid-cols-3 gap-1.5 p-1 bg-stone-100 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setServiceMode('COUNTER')}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                    serviceMode === 'COUNTER' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-800'
-                  }`}
-                >
-                  Balcão
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setServiceMode('PICKUP')}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                    serviceMode === 'PICKUP' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-800'
-                  }`}
-                >
-                  Retirada
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setServiceMode('DINE_IN')}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                    serviceMode === 'DINE_IN' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-800'
-                  }`}
-                >
-                  Consumo Local
-                </button>
+              {/* Service Mode Selector */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-stone-600">Modalidade de Atendimento</label>
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-stone-100 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setServiceMode('COUNTER')}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      serviceMode === 'COUNTER' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500 hover:text-stone-800'
+                    }`}
+                  >
+                    Balcão
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setServiceMode('PICKUP')}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      serviceMode === 'PICKUP' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500 hover:text-stone-800'
+                    }`}
+                  >
+                    Retirada
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setServiceMode('DINE_IN')}
+                    className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                      serviceMode === 'DINE_IN' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500 hover:text-stone-800'
+                    }`}
+                  >
+                    Consumo Local
+                  </button>
+                </div>
               </div>
+
+              {/* Client Identification Input */}
+              <FormField 
+                label={`Nome do Cliente ${serviceMode === 'PICKUP' ? '*' : '(opcional)'}`}
+                error={clientNameError || undefined}
+              >
+                <TextInput
+                  placeholder={serviceMode === 'PICKUP' ? 'Nome do cliente para chamada' : 'Nome do cliente'}
+                  value={clientName}
+                  onChange={(e) => {
+                    setClientName(e.target.value);
+                    if (clientNameError) setClientNameError(null);
+                  }}
+                />
+              </FormField>
             </div>
 
-            {/* Client Identification Input */}
-            <FormField 
-              label={`Nome do Cliente ${serviceMode === 'PICKUP' ? '*' : '(opcional)'}`}
-              error={clientNameError || undefined}
-            >
-              <TextInput
-                placeholder={serviceMode === 'PICKUP' ? 'Nome do cliente para chamada' : 'Nome do cliente'}
-                value={clientName}
-                onChange={(e) => {
-                  setClientName(e.target.value);
-                  if (clientNameError) setClientNameError(null);
-                }}
-              />
-            </FormField>
-
-            {/* Cart Items List */}
-            <div className="max-h-60 overflow-y-auto space-y-2.5 pr-1 divide-y divide-stone-100">
+            {/* Cart Items List - Independently Scrollable */}
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar my-2 divide-y divide-stone-100 pr-1 space-y-2">
               {cart.length === 0 ? (
                 <div className="py-8 text-center text-stone-400 text-xs">
                   Sua lista de pedido no balcão está vazia.
                 </div>
               ) : (
                 cart.map(item => (
-                  <div key={item.cartId} className="pt-2.5 first:pt-0 space-y-1">
+                  <div key={item.cartId} className="pt-2 first:pt-0 space-y-1">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="font-bold text-stone-800 text-xs">{item.nome}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-stone-800 text-xs truncate">{item.nome}</div>
                         {item.tamanhoSelecionado && (
                           <div className="text-[10px] text-stone-500">Tamanho: {item.tamanhoSelecionado.nome}</div>
                         )}
@@ -616,7 +624,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
                           <div className="text-[10px] text-amber-700 italic">Obs: {item.observacao}</div>
                         )}
                       </div>
-                      <div className="font-bold text-stone-900 text-xs">
+                      <div className="font-bold text-stone-900 text-xs shrink-0">
                         {formatCurrency(item.precoFinal * item.quantidade)}
                       </div>
                     </div>
@@ -624,23 +632,26 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 bg-stone-100 rounded-lg p-0.5">
                         <button
+                          type="button"
                           onClick={() => updateCartQuantity(item.cartId, -1)}
-                          className="p-1 hover:bg-white rounded transition-all text-stone-600"
+                          className="p-1 hover:bg-white rounded transition-all text-stone-600 cursor-pointer"
                         >
                           <Minus className="w-3 h-3" />
                         </button>
                         <span className="text-xs font-bold text-stone-800 w-4 text-center">{item.quantidade}</span>
                         <button
+                          type="button"
                           onClick={() => updateCartQuantity(item.cartId, 1)}
-                          className="p-1 hover:bg-white rounded transition-all text-stone-600"
+                          className="p-1 hover:bg-white rounded transition-all text-stone-600 cursor-pointer"
                         >
                           <Plus className="w-3 h-3" />
                         </button>
                       </div>
 
                       <button
+                        type="button"
                         onClick={() => removeCartItem(item.cartId)}
-                        className="text-stone-400 hover:text-red-500 p-1 transition-all"
+                        className="text-stone-400 hover:text-red-500 p-1 transition-all cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -650,72 +661,77 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
               )}
             </div>
 
-            {/* Order Totals Summary */}
-            <div className="bg-stone-50 p-3 rounded-xl space-y-2 border border-stone-200/60 text-xs">
-              <div className="flex justify-between font-extrabold text-stone-900 text-sm pt-1 border-t border-stone-200">
-                <span>Total a Pagar</span>
-                <span className="text-emerald-700">{formatCurrency(cartTotal)}</span>
-              </div>
-            </div>
-
-            
-            <PaymentsComposer 
-              totalOrderCents={cartTotalCents}
-              payments={payments}
-              setPayments={setPayments}
-              configuredMethods={activeRestaurantProfile?.formas_pagamento || activeRestaurantProfile?.payment_methods}
-              serviceMode={serviceMode}
-              isPaid={isPaid}
-              setIsPaid={setIsPaid}
-            />
-            {/* Cash Change Input */}
-            {cashPaymentsCents > 0 && isPaid && (
-              <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-amber-900">Valor entregue em dinheiro</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="Ex: R$ 10,00"
-                    value={deliveredCashCents > 0 ? (deliveredCashCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00'}
-                    onChange={(e) => {
-                      const rawDigits = e.target.value.replace(/\D/g, '');
-                      const cents = rawDigits ? parseInt(rawDigits, 10) : 0;
-                      setDeliveredCashCents(cents);
-                    }}
-                    className="w-32 text-right px-2 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
+            {/* Totals & Payments & Checkout - Fixed at bottom */}
+            <div className="shrink-0 border-t border-stone-100 pt-2.5 space-y-2.5 max-h-[45vh] overflow-y-auto custom-scrollbar pr-0.5">
+              {/* Order Totals Summary */}
+              <div className="bg-stone-50 p-2.5 rounded-xl space-y-1 border border-stone-200/60 text-xs">
+                <div className="flex justify-between font-extrabold text-stone-900 text-sm">
+                  <span>Total a Pagar</span>
+                  <span className="text-emerald-700">{formatCurrency(cartTotal)}</span>
                 </div>
-
-                {isCashAmountInsufficient && (
-                  <p className="text-[11px] font-bold text-red-600">
-                    O valor entregue em dinheiro é menor que a parcela em dinheiro.
-                  </p>
-                )}
-
-                {changeDueCents > 0 && (
-                  <div className="flex justify-between items-center text-xs font-extrabold text-emerald-800 pt-1 border-t border-amber-200/80">
-                    <span>Troco a devolver:</span>
-                    <span>{(changeDueCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
-                  </div>
-                )}
               </div>
-            )}
-            {/* Confirm Order Button */}
-            <button
-              onClick={handleCheckout}
-              disabled={cart.length === 0 || saveLoading || isCashAmountInsufficient || availablePaymentMethods.length === 0 || payments.reduce((a,b)=>a+b.amount,0)!==cartTotalCents}
-              className="w-full flex items-center justify-center gap-2 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm rounded-xl shadow-lg shadow-emerald-100 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saveLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                  <Check className="w-5 h-5" />
-                  <span>Finalizar e enviar para cozinha ({formatCurrency(cartTotal)})</span>
-                </>
+
+              <PaymentsComposer 
+                totalOrderCents={cartTotalCents}
+                payments={payments}
+                setPayments={setPayments}
+                configuredMethods={activeRestaurantProfile?.formas_pagamento || activeRestaurantProfile?.payment_methods}
+                serviceMode={serviceMode}
+                isPaid={isPaid}
+                setIsPaid={setIsPaid}
+              />
+
+              {/* Cash Change Input */}
+              {cashPaymentsCents > 0 && isPaid && (
+                <div className="p-2.5 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-900">Valor entregue em dinheiro</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="Ex: R$ 10,00"
+                      value={deliveredCashCents > 0 ? (deliveredCashCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ 0,00'}
+                      onChange={(e) => {
+                        const rawDigits = e.target.value.replace(/\D/g, '');
+                        const cents = rawDigits ? parseInt(rawDigits, 10) : 0;
+                        setDeliveredCashCents(cents);
+                      }}
+                      className="w-28 text-right px-2 py-1 bg-white border border-amber-300 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  {isCashAmountInsufficient && (
+                    <p className="text-[11px] font-bold text-red-600">
+                      O valor entregue em dinheiro é menor que a parcela em dinheiro.
+                    </p>
+                  )}
+
+                  {changeDueCents > 0 && (
+                    <div className="flex justify-between items-center text-xs font-extrabold text-emerald-800 pt-1 border-t border-amber-200/80">
+                      <span>Troco a devolver:</span>
+                      <span>{(changeDueCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                    </div>
+                  )}
+                </div>
               )}
-            </button>
+
+              {/* Confirm Order Button */}
+              <button
+                type="button"
+                onClick={handleCheckout}
+                disabled={cart.length === 0 || saveLoading || isCashAmountInsufficient || availablePaymentMethods.length === 0 || payments.reduce((a,b)=>a+b.amount,0)!==cartTotalCents}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {saveLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <>
+                    <Check className="w-4 h-4 sm:w-5 sm:h-5" />
+                    <span>Finalizar e enviar para cozinha ({formatCurrency(cartTotal)})</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>

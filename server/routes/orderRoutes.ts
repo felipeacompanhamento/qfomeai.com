@@ -435,13 +435,19 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
       }
 
       // 3. Validate restaurantId
-      const restaurantId = userData.restaurantId || req.user.restaurantId;
+      const restaurantId = userData.restaurantId || req.user.restaurantId || req.user.uid;
       if (!restaurantId) {
         return res.status(400).json({ error: 'ID do restaurante não encontrado no cadastro do usuário.' });
       }
 
       // 4. Validate canonical permissions
-      const roleUpper = (userData.role || '').toUpperCase();
+      let roleUpper = (userData.role || userData.tipo_usuario || '').toUpperCase();
+      if (['RESTAURANTE', 'RESTAURANT', 'ADMIN', 'PLATFORM_ADMIN'].includes(roleUpper)) {
+        roleUpper = 'OWNER';
+      }
+      if (!roleUpper && (userData.restaurantId || req.user.restaurantId)) {
+        roleUpper = 'OWNER';
+      }
       const allowedRoles = ['OWNER', 'RESTAURANT_ADMIN', 'MANAGER', 'KITCHEN', 'CASHIER', 'WAITER', 'DRIVER'];
       if (!allowedRoles.includes(roleUpper)) {
         return res.status(403).json({
@@ -501,27 +507,28 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
       }
 
       // Valid status transitions check
+      const normCurrent = (currentStatus || '').toLowerCase().trim();
       const validTransitions: Record<string, string[]> = {
-        pendente: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
-        recebido: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
-        novo: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
-        new: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
-        pending: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
-        aguardando_aprovacao: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
-        aguardando_confirmacao: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'cancelado', 'rejeitado'],
+        pendente: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        recebido: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        novo: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        new: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        pending: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        aguardando_aprovacao: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        aguardando_confirmacao: ['aceito', 'confirmado', 'preparo', 'em preparo', 'em_preparo', 'cozinha', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
 
-        aceito: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
-        confirmado: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
-        confirmed: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        aceito: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        confirmado: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        confirmed: ['preparo', 'em preparo', 'em_preparo', 'cozinha', 'pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
 
-        preparo: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
-        'em preparo': ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
-        'em_preparo': ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
-        cozinha: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
-        preparing: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'cancelado', 'rejeitado'],
+        preparo: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        'em preparo': ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        'em_preparo': ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        cozinha: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        preparing: ['pronto', 'ready', 'despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
 
-        pronto: ['despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'em_entrega', 'out_for_delivery', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
-        ready: ['despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'em_entrega', 'out_for_delivery', 'entregue', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        pronto: ['despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'em_entrega', 'out_for_delivery', 'entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
+        ready: ['despachado', 'saiu_entrega', 'entrega', 'saiu para entrega', 'saiu_para_entrega', 'em_entrega', 'out_for_delivery', 'entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
 
         despachado: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
         saiu_entrega: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
@@ -531,12 +538,13 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
         em_entrega: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
         out_for_delivery: ['entregue', 'delivered', 'finalizado', 'completed', 'cancelado', 'rejeitado'],
 
-        entregue: ['finalizado', 'completed', 'cancelado'],
-        delivered: ['finalizado', 'completed', 'cancelado']
+        entregue: ['finalizado', 'completed', 'cancelado', 'rejeitado'],
+        delivered: ['finalizado', 'completed', 'cancelado', 'rejeitado'],
+        servido: ['finalizado', 'completed', 'cancelado', 'rejeitado']
       };
 
-      const allowedNext = validTransitions[(currentStatus || '').toLowerCase()] || ['cancelado', 'rejeitado'];
-      if (!allowedNext.includes(newStatus.toLowerCase())) {
+      const allowedNext = validTransitions[normCurrent] || ['cancelado', 'rejeitado', 'finalizado', 'entregue'];
+      if (!allowedNext.includes(newStatus.toLowerCase()) && !['cancelado', 'rejeitado'].includes(newStatus.toLowerCase())) {
         return res.status(400).json({
           error: 'INVALID_TRANSITION',
           message: `Transição de status inválida: de "${currentStatus}" para "${newStatus}".`
@@ -571,6 +579,12 @@ export function createOrderRouter(authAdmin: Auth, db: Firestore, messaging: Mes
       } else if (newStatus === 'finalizado' || newStatus === 'completed') {
         updates.data_finalizado = now;
         updates.finalizedAt = now;
+      }
+
+      if (req.body.pago || (newStatus === 'finalizado' && req.body.markAsPaid)) {
+        updates.pago = true;
+        updates.paymentStatus = 'PAID';
+        updates.financialSettlementStatus = 'SETTLED';
       }
 
       const transactionResult = await db.runTransaction(async (transaction) => {

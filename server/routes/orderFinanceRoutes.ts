@@ -106,14 +106,6 @@ export function createOrderFinanceRouter(authAdmin: Auth, db: Firestore): Router
               transaction.get(caixasRef.where('status', '==', 'OPEN'))
             ]);
 
-            // Check clientActionId for idempotency
-            if (actionSnap && actionSnap.exists) {
-              const err: any = new Error('Esta ação já foi processada anteriormente.');
-              err.status = 409;
-              err.code = 'DUPLICATE_ACTION';
-              throw err;
-            }
-
             // 6. buscar pedido
             if (!orderSnap.exists) {
               const err: any = new Error('Pedido não encontrado.');
@@ -123,6 +115,20 @@ export function createOrderFinanceRouter(authAdmin: Auth, db: Firestore): Router
             }
 
             const orderData = orderSnap.data() || {};
+
+            // Check clientActionId for idempotency
+            if (actionSnap && actionSnap.exists) {
+              const fallbackCaixaId = openCaixasQuery.empty ? 'caixa_default' : openCaixasQuery.docs[0].id;
+              return {
+                order: {
+                  id: orderId,
+                  ...orderData,
+                  pago: orderData.pago !== undefined ? orderData.pago : true,
+                  financialSettlementStatus: orderData.financialSettlementStatus || 'SETTLED'
+                },
+                cashRegisterId: fallbackCaixaId
+              };
+            }
 
             // 7. confirmar que o pedido pertence ao mesmo restaurante
             const orderRestId = orderData.restaurantId || orderData.restaurante_id;
@@ -189,12 +195,32 @@ export function createOrderFinanceRouter(authAdmin: Auth, db: Firestore): Router
 
             const pendingCents = totalCents - alreadyPaidCents;
 
-            // Check already fully paid
-            if (pendingCents <= 0) {
-              const err: any = new Error('Este pedido já foi totalmente pago.');
-              err.status = 409;
-              err.code = 'ORDER_ALREADY_PAID';
-              throw err;
+            // Check already fully paid - handle idempotently and allow payment method updates
+            if (pendingCents <= 0 || (orderData.pago === true && alreadyPaidCents >= totalCents && totalCents > 0)) {
+              const requestedMethod = payments[0]?.paymentMethodId ? (normalizePaymentMethodId(payments[0].paymentMethodId) || payments[0].paymentMethodId) : null;
+              if (requestedMethod && requestedMethod !== orderData.forma_pagamento) {
+                const updateData: any = {
+                  forma_pagamento: requestedMethod,
+                  pago: true,
+                  financialSettlementStatus: 'SETTLED',
+                  updatedAt: new Date().toISOString()
+                };
+                transaction.update(orderRef, sanitizeForFirestore(updateData));
+                return {
+                  order: { ...orderData, ...updateData },
+                  cashRegisterId
+                };
+              }
+
+              return {
+                order: {
+                  id: orderId,
+                  ...orderData,
+                  pago: true,
+                  financialSettlementStatus: orderData.financialSettlementStatus || 'SETTLED'
+                },
+                cashRegisterId
+              };
             }
 
             // Check for duplicated payment entries

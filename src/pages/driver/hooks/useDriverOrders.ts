@@ -28,6 +28,17 @@ const normalizeLegacyDeliveryStatus = (statusEntrega?: string, status?: string):
 export const getOrderDeliveryStatus = (order: AssignedOrder): string => {
   if (!order) return 'ASSIGNED';
 
+  // Finalized or settled delivered evidence
+  if (
+    order.status === 'finalizado' ||
+    order.status === 'completed' ||
+    order.canonicalStatus === 'FINALIZED' ||
+    order.orderStatus === 'FINALIZED' ||
+    (order.financialSettlementStatus === 'SETTLED' && (order.status === 'entregue' || order.deliveryStatus === 'DELIVERED' || Boolean(order.deliveredAt)))
+  ) {
+    return 'FINALIZED';
+  }
+
   // Delivered evidence guarantee
   if (
     order.status === 'entregue' ||
@@ -39,7 +50,7 @@ export const getOrderDeliveryStatus = (order: AssignedOrder): string => {
     order.canonicalStatus === 'DELIVERED'
   ) {
     if (order.financialSettlementStatus === 'SETTLED' || order.status === 'finalizado') {
-      return 'DELIVERED';
+      return 'FINALIZED';
     }
     return 'DELIVERED_PENDING_SETTLEMENT';
   }
@@ -317,11 +328,28 @@ export const useDriverOrders = ({
     const clientActionId = generateUUID();
 
     // Optimistic state update in memory
+    const orderTotal = Number(order.valor_total || order.total || order.totalValue || 0);
+    let sumPayments = 0;
+    if (Array.isArray(order.payments)) {
+      sumPayments = order.payments.reduce((acc, p) => acc + (Number(p.valor || p.amount) || 0), 0);
+    }
+    const isOrderPaid =
+      order.pago === true ||
+      order.isPaid === true ||
+      order.paid === true ||
+      order.pagoOnline === true ||
+      order.forma_pagamento === 'pix_app' ||
+      order.paymentStatus === 'PAID' ||
+      order.paymentStatus === 'SETTLED' ||
+      order.financialSettlementStatus === 'SETTLED' ||
+      order.financialSettlementStatus === 'NOT_REQUIRED' ||
+      (orderTotal > 0 && sumPayments >= orderTotal);
+
     const statusMap: Record<string, string> = {
       ACCEPT: 'ACCEPTED',
       REJECT: 'FAILED',
       START: 'IN_TRANSIT',
-      DELIVER: 'DELIVERED_PENDING_SETTLEMENT',
+      DELIVER: isOrderPaid ? 'FINALIZED' : 'DELIVERED_PENDING_SETTLEMENT',
       FAIL: 'FAILED'
     };
 
@@ -331,11 +359,15 @@ export const useDriverOrders = ({
       if (o.id === order.id) {
         return {
           ...o,
-          deliveryStatus: nextDeliveryStatus,
+          deliveryStatus: actionType === 'DELIVER' ? 'DELIVERED' : nextDeliveryStatus,
           canonicalStatus: nextDeliveryStatus,
-          financialSettlementStatus: actionType === 'DELIVER' ? 'PENDING_RESTAURANT_CONFIRMATION' : o.financialSettlementStatus,
+          orderStatus: actionType === 'DELIVER' ? (isOrderPaid ? 'FINALIZED' : 'DELIVERED') : o.orderStatus,
+          status: actionType === 'DELIVER' ? (isOrderPaid ? 'finalizado' : 'entregue') : (actionType === 'START' ? 'delivering' : o.status),
+          status_entrega: actionType === 'DELIVER' ? 'delivered' : (actionType === 'START' ? 'out_for_delivery' : (actionType === 'ACCEPT' ? 'accepted' : o.status_entrega)),
+          financialSettlementStatus: actionType === 'DELIVER' ? (isOrderPaid ? 'SETTLED' : 'PENDING_RESTAURANT_CONFIRMATION') : o.financialSettlementStatus,
           driverPaymentReport: paymentReport || o.driverPaymentReport,
-          failureReason: reason || o.failureReason
+          failureReason: reason || o.failureReason,
+          pago: isOrderPaid ? true : o.pago
         };
       }
       return o;
