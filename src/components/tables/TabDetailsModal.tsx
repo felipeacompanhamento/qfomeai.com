@@ -2,9 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { formatCurrency as canonicalFormatCurrency, formatTime as canonicalFormatTime, formatDateTime as canonicalFormatDateTime } from '../../lib/utils';
 import { db, auth } from '../../firebase';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Table, Tab, TabItem } from '../../types/mesas';
+import { Table, Tab, TabItem, TableStatus, TabStatus } from '../../types/mesas';
 import { tabRoundService } from '../../services/tabRoundService';
 import { tabRepository } from '../../domain/tab/tabRepository';
+import { updateTableStatus } from '../../domain/table/tableRepository';
 import { useAuth } from '../../contexts/AuthContext';
 import { printThermalPreConta } from '../orders/OrderThermalPrint';
 import { 
@@ -39,7 +40,9 @@ import {
   QrCode,
   Wallet,
   Receipt,
-  Check
+  Check,
+  ChefHat,
+  Lock
 } from 'lucide-react';
 import {
   Button,
@@ -668,20 +671,20 @@ export function TabDetailsModal({
   const formatTimeOnly = (isoString?: string) => canonicalFormatTime(isoString);
   const formatDateWithTime = (isoString?: string) => canonicalFormatDateTime(isoString);
 
-  // Helper for status badge styling
+  // Helper for status badge styling (PREPARING = Em preparo, READY = Pronto, DELIVERED = Servido)
   const getProductionStatusBadge = (statusStr?: string) => {
     const s = (statusStr || '').toLowerCase();
     if (s === 'pronto' || s === 'ready') {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
           <span>Pronto</span>
         </span>
       );
     }
-    if (s === 'entregue' || s === 'delivered' || s === 'servido') {
+    if (s === 'entregue' || s === 'delivered' || s === 'servido' || s === 'finalized') {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-300">
           <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
           <span>Servido</span>
         </span>
@@ -689,23 +692,70 @@ export function TabDetailsModal({
     }
     if (s === 'cancelado' || s === 'cancelled') {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">
-          <AlertCircle className="w-3.5 h-3.5 text-red-600" />
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300">
+          <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
           <span>Cancelado</span>
         </span>
       );
     }
-    // Default: Em preparo / Cozinha
+    // Default: PREPARING = Em preparo
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
         <CookingPot className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-        <span>Em Preparo</span>
+        <span>Em preparo</span>
       </span>
     );
   };
 
-  // Derived active totals & balances
-  const totalCents = roundGroups.reduce((acc, round) => acc + round.totalCents, 0);
+  // Helper for Tab status badge
+  const getTabStatusBadge = (statusStr?: string) => {
+    const s = (statusStr || '').toUpperCase();
+    if (s === 'WAITING_PAYMENT' || s === 'AGUARDANDO_PAGAMENTO' || s === 'CONTA_SOLICITADA') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-full border border-amber-300">
+          <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+          <span>Aguardando Pagamento</span>
+        </span>
+      );
+    }
+    if (s === 'CLOSED' || s === 'FECHADA' || s === 'CONCLUIDA') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-bold text-stone-700 bg-stone-100 px-3 py-1 rounded-full border border-stone-300">
+          <CheckCircle2 className="w-3.5 h-3.5 text-stone-600" />
+          <span>Fechada</span>
+        </span>
+      );
+    }
+    if (s === 'PARTIALLY_PAID') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-800 bg-blue-100 px-3 py-1 rounded-full border border-blue-300">
+          <DollarSign className="w-3.5 h-3.5 text-blue-600" />
+          <span>Parcialmente Paga</span>
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-300">
+        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        <span>Aberta</span>
+      </span>
+    );
+  };
+
+  // Derived active totals & balances (Subtotal, Descontos, Total, Valor Pago, Saldo a Pagar)
+  const subtotalCents = roundGroups.reduce((acc, round) => acc + round.totalCents, 0);
+  const discountCents = Math.max(
+    0,
+    typeof (liveTab as any)?.discountInCents === 'number'
+      ? (liveTab as any).discountInCents
+      : (typeof (liveTab as any)?.discountCents === 'number'
+        ? (liveTab as any).discountCents
+        : (typeof (liveTab as any)?.desconto === 'number'
+          ? Math.round((liveTab as any).desconto * 100)
+          : 0))
+  );
+  const totalCents = Math.max(0, subtotalCents - discountCents);
+
   const totalQuantityItems = roundGroups.reduce((acc, r) => {
     const activeItemsInRound = r.items.filter(i => i.status !== 'CANCELLED' && i.status !== 'cancelado');
     return acc + activeItemsInRound.reduce((iAcc, item) => iAcc + item.quantity, 0);
@@ -713,7 +763,15 @@ export function TabDetailsModal({
 
   const remainingCents = Math.max(0, totalCents - paidCents);
 
-  const displayTableName = table?.name || (liveTab?.tableId ? `Mesa` : 'Comanda Avulsa');
+  const readyRounds = useMemo(() => {
+    return roundGroups.filter(
+      r => (r.status || '').toLowerCase() === 'ready' || (r.status || '').toLowerCase() === 'pronto'
+    );
+  }, [roundGroups]);
+
+  const displayTableName = table?.name || (liveTab?.tableId ? `Mesa ${liveTab.tableId}` : 'Comanda Avulsa');
+  const displayTabNumber = (liveTab as any)?.displayId || (liveTab as any)?.tabNumber || liveTab?.tableNumber || (liveTab?.id ? (String(liveTab.id).length > 8 ? String(liveTab.id).slice(-6).toUpperCase() : liveTab.id) : '');
+  const displayTabLabel = displayTabNumber ? `Comanda #${displayTabNumber}` : 'Comanda Avulsa';
   const displayHallName = hallName || 'Salão';
   const displayWaiterName = liveTab?.waiterName || waiterName || liveTab?.openedBy || 'Não atribuído';
   const displayPeopleCount = liveTab?.peopleCount || table?.capacity || 1;
@@ -823,6 +881,62 @@ export function TabDetailsModal({
     }
   };
 
+  const [isClosingTab, setIsClosingTab] = useState<boolean>(false);
+  const [isConfirmCloseOpen, setIsConfirmCloseOpen] = useState<boolean>(false);
+
+  // Fechar Comanda & Liberar Mesa (somente quando saldo a pagar <= 0)
+  const handleDirectCloseTab = async () => {
+    if (remainingCents > 0) {
+      setCancelError(`Não é possível fechar a comanda: existe saldo pendente de ${formatCurrency(remainingCents)}. Registre o pagamento antes de fechar.`);
+      setIsConfirmCloseOpen(false);
+      return;
+    }
+
+    const currentTab = liveTab || tab;
+    if (!currentTab?.id || !currentTab?.restaurantId) {
+      setCancelError('Identificador da comanda não encontrado.');
+      setIsConfirmCloseOpen(false);
+      return;
+    }
+
+    try {
+      setIsClosingTab(true);
+      setCancelError(null);
+
+      // 1. Fechar a comanda (status CLOSED)
+      await tabRepository.closeTab(currentTab.id, currentTab.restaurantId);
+
+      // 2. Liberar a mesa vinculada (status AVAILABLE)
+      if (table?.id) {
+        await updateTableStatus(table.id, currentTab.restaurantId, TableStatus.AVAILABLE);
+        try {
+          const tableRef = doc(db, 'tables', table.id.trim());
+          await updateDoc(tableRef, {
+            comandaId: null,
+            tabId: null,
+            status: TableStatus.AVAILABLE,
+            updatedAt: new Date()
+          });
+        } catch (tableErr) {
+          console.warn('Atualização complementar da mesa:', tableErr);
+        }
+      }
+
+      setCancelSuccessMsg('Comanda fechada com sucesso e mesa liberada!');
+      setIsConfirmCloseOpen(false);
+
+      setTimeout(() => {
+        onSuccessClose?.();
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      console.error('Erro ao fechar comanda:', err);
+      setCancelError(err.message || 'Falha ao fechar a comanda.');
+    } finally {
+      setIsClosingTab(false);
+    }
+  };
+
   const [isReleasingTable, setIsReleasingTable] = useState<boolean>(false);
   const [isConfirmReleaseOpen, setIsConfirmReleaseOpen] = useState<boolean>(false);
 
@@ -843,6 +957,17 @@ export function TabDetailsModal({
       tabStatus === 'aberta'
     );
   }, [table, liveTab, tab]);
+
+  const canReleaseTable = useMemo(() => {
+    const currentTab = liveTab || tab;
+    const items = Array.isArray(currentTab?.items) ? currentTab.items : [];
+    const activeItems = items.filter((i: any) => {
+      if (!i || typeof i !== 'object') return false;
+      const st = String(i.status || '').toLowerCase();
+      return !['cancelled', 'cancelado', 'canceled', 'removed', 'removido'].includes(st) && (Number(i.quantity || i.qtd || 1) > 0);
+    });
+    return isOccupiedOrWaiting && activeItems.length === 0 && totalCents === 0 && remainingCents === 0;
+  }, [liveTab, tab, isOccupiedOrWaiting, totalCents, remainingCents]);
 
   const handleConfirmReleaseTable = async () => {
     if (isReleasingTable) return;
@@ -995,336 +1120,219 @@ export function TabDetailsModal({
             </div>
           )}
 
-          {/* Operational Header Metadata Card (Compact Grid) */}
+          {/* ========================================================================= */}
+          {/* 1. CABEÇALHO                                                              */}
+          {/* ========================================================================= */}
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 shadow-xs space-y-3">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-stone-100 text-stone-700 rounded-lg shrink-0">
+                  <UtensilsCrossed className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-stone-900 text-sm sm:text-base leading-tight">
+                    {displayTableName}
+                  </h3>
+                  <span className="text-xs font-bold text-stone-500">
+                    {displayTabLabel}
+                  </span>
+                </div>
+              </div>
+              <div>
+                {getTabStatusBadge(liveTab?.status || (table?.status as string))}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 text-xs">
-              
-              {/* Garçom */}
-              <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100 flex flex-col justify-between">
+              {/* Mesa */}
+              <div className="bg-stone-50 p-3 rounded-xl border border-stone-100 flex flex-col justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
+                  <UtensilsCrossed className="w-3 h-3 text-stone-500" /> Mesa
+                </span>
+                <span className="font-bold text-stone-900 text-sm sm:text-base truncate mt-1">
+                  {displayTableName}
+                </span>
+              </div>
+
+              {/* Comanda */}
+              <div className="bg-stone-50 p-3 rounded-xl border border-stone-100 flex flex-col justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
+                  <Receipt className="w-3 h-3 text-stone-500" /> Comanda
+                </span>
+                <span className="font-bold text-stone-900 text-sm sm:text-base truncate mt-1">
+                  {displayTabNumber ? `#${displayTabNumber}` : 'Avulsa'}
+                </span>
+              </div>
+
+              {/* Garçom responsável */}
+              <div className="bg-stone-50 p-3 rounded-xl border border-stone-100 flex flex-col justify-between">
                 <span className="text-xs font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
                   <User className="w-3 h-3 text-stone-500" /> Garçom
                 </span>
-                <span className="font-bold text-stone-800 text-xs sm:text-sm truncate mt-1">
+                <span className="font-bold text-stone-900 text-sm sm:text-base truncate mt-1">
                   {displayWaiterName}
                 </span>
               </div>
 
-              {/* Pessoas */}
-              <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100 flex flex-col justify-between">
+              {/* Quantidade de pessoas */}
+              <div className="bg-stone-50 p-3 rounded-xl border border-stone-100 flex flex-col justify-between">
                 <span className="text-xs font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
-                  <Users className="w-3 h-3 text-stone-500" /> Ocupantes
+                  <Users className="w-3 h-3 text-stone-500" /> Pessoas
                 </span>
-                <span className="font-bold text-stone-800 text-xs sm:text-sm truncate mt-1">
+                <span className="font-bold text-stone-900 text-sm sm:text-base truncate mt-1">
                   {displayPeopleCount} {displayPeopleCount === 1 ? 'pessoa' : 'pessoas'}
                 </span>
               </div>
-
-              {/* Horário de Abertura */}
-              <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100 flex flex-col justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-stone-500" /> Abertura
-                </span>
-                <span className="font-bold text-stone-800 text-xs sm:text-sm truncate mt-1">
-                  {formatTimeOnly(liveTab?.openedAt || liveTab?.createdAt)}
-                </span>
-              </div>
-
-              {/* Tempo de Atendimento */}
-              <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-100 flex flex-col justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-stone-400 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-rose-500" /> Duração
-                </span>
-                <span className="font-bold text-rose-700 text-xs sm:text-sm truncate mt-1">
-                  {elapsedTime}
-                </span>
-              </div>
-
             </div>
 
-            {/* Optional Customer Name or Observation */}
-            {(liveTab?.customerName || liveTab?.observation) && (
-              <div className="pt-2 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-stone-600">
-                {liveTab.customerName && (
-                  <div className="flex items-center gap-1.5 font-semibold text-stone-800">
-                    <span className="text-stone-400">Cliente:</span>
-                    <span className="px-2 py-0.5 bg-stone-100 rounded-md font-bold">{liveTab.customerName}</span>
-                  </div>
-                )}
-                {liveTab.observation && (
-                  <div className="flex items-center gap-1 text-stone-500 italic text-xs">
-                    <FileText className="w-3 h-3 text-stone-400 shrink-0" />
-                    <span className="truncate">"{liveTab.observation}"</span>
-                  </div>
-                )}
+            {/* Horário de abertura & Duração */}
+            <div className="pt-2 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-stone-600">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                  <span>Abertura: <strong>{formatTimeOnly(liveTab?.openedAt || liveTab?.createdAt)}</strong></span>
+                </div>
+                <span className="text-stone-300">•</span>
+                <div className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                  <span>Duração: <strong className="text-rose-700">{elapsedTime}</strong></span>
+                </div>
+              </div>
+              {liveTab?.customerName && (
+                <div className="flex items-center gap-1.5 font-medium text-stone-700">
+                  <span className="text-stone-400">Cliente:</span>
+                  <span className="px-2 py-0.5 bg-stone-100 rounded-md font-bold text-stone-800">{liveTab.customerName}</span>
+                </div>
+              )}
+            </div>
+
+            {liveTab?.observation && (
+              <div className="p-2.5 bg-amber-50/70 border border-amber-200/60 rounded-xl text-xs text-amber-900 flex items-start gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                <span>Observação: <strong>"{liveTab.observation}"</strong></span>
               </div>
             )}
           </div>
 
-          {/* Unified Operational Actions Panel */}
-          <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="font-extrabold text-stone-900 text-xs sm:text-sm uppercase tracking-wider text-stone-500">
-                Ações da Mesa
-              </h3>
-              <span className="text-xs text-stone-400 font-medium">Acesso Rápido</span>
+          {/* ========================================================================= */}
+          {/* SEÇÃO: ATENDIMENTO (Pedidos, Rodadas e Status Operacional)                 */}
+          {/* ========================================================================= */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-stone-900 text-white rounded-lg">
+                  <UtensilsCrossed className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-black text-stone-900 text-sm sm:text-base tracking-wide uppercase">
+                    ATENDIMENTO
+                  </h3>
+                  <span className="text-[11px] text-stone-500 font-medium">
+                    Pedidos / Rodadas • Em preparo • Pronto • Servido
+                  </span>
+                </div>
+              </div>
+              <span className="text-xs text-stone-600 font-bold bg-white px-2.5 py-1 rounded-lg border border-stone-200">
+                {roundGroups.length} {roundGroups.length === 1 ? 'rodada' : 'rodadas'} • {totalQuantityItems} {totalQuantityItems === 1 ? 'item' : 'itens'}
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-              {/* Action 1: Adicionar Itens / Nova Rodada */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (canAddItems === false) {
-                    setCancelError('Seu perfil não possui permissão para lançar itens.');
-                    return;
-                  }
-                  if (table || liveTab) {
-                    onOpenCatalog(table || { id: liveTab?.tableId || '', name: 'Comanda' } as Table, liveTab);
-                  }
-                }}
-                className="p-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full"
-              >
-                <div className="p-1.5 bg-emerald-600 text-white rounded-lg shrink-0">
-                  <Plus className="w-4 h-4 stroke-[3]" />
+            {/* List of Round Cards (Rodadas Agrupadas) */}
+            {roundGroups.length === 0 ? (
+              <div className="bg-white p-8 rounded-2xl border border-dashed border-stone-300 text-center space-y-3">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                  <ShoppingBag className="w-6 h-6" />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <span className="font-bold text-xs block leading-tight whitespace-normal">Nova Rodada</span>
-                  <span className="text-[10px] text-emerald-600 block whitespace-normal">Lançar itens</span>
+                <div className="space-y-1">
+                  <h4 className="font-extrabold text-stone-800 text-sm">Nenhum item lançado ainda</h4>
+                  <p className="text-stone-500 text-xs max-w-xs mx-auto">
+                    Esta comanda foi iniciada, mas ainda não possui nenhuma rodada de pedidos enviada.
+                  </p>
                 </div>
-              </button>
-
-              {/* Action 2: Liberar Mesa (Somente quando OCCUPIED ou WAITING_PAYMENT) */}
-              {isOccupiedOrWaiting && (
                 <button
                   type="button"
                   onClick={() => {
-                    const currentTab = liveTab || tab;
-                    const items = Array.isArray(currentTab?.items) ? currentTab.items : [];
-                    const activeItems = items.filter((i: any) => {
-                      if (!i || typeof i !== 'object') return false;
-                      const st = String(i.status || '').toLowerCase();
-                      return !['cancelled', 'cancelado', 'canceled', 'removed', 'removido'].includes(st) && (Number(i.quantity || i.qtd || 1) > 0);
-                    });
-                    const totalCents = currentTab?.totalInCents ?? Math.round(Number(currentTab?.total || 0) * 100);
-                    const paidCents = currentTab?.paidInCents ?? Math.round(Number((currentTab as any)?.paidAmount || 0) * 100);
-                    const balanceDueCents = Math.max(totalCents - paidCents, 0);
-
-                    if (activeItems.length > 0 || totalCents > 0 || balanceDueCents > 0) {
-                      setCancelError('Não é permitido liberar a mesa pois ela possui consumo, pedidos em aberto ou saldo devedor. Solicite o fechamento ao caixa.');
+                    if (canAddItems === false) {
+                      setCancelError('Seu perfil não possui permissão para lançar itens.');
                       return;
                     }
-                    setIsConfirmReleaseOpen(true);
+                    if (table || liveTab) {
+                      onOpenCatalog(table || { id: liveTab?.tableId || '', name: 'Comanda' } as Table, liveTab);
+                    }
                   }}
-                  disabled={isReleasingTable || !table?.id}
-                  className="p-3 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200/80 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Liberar mesa (sem consumo)"
+                  className="mt-2 inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all active:scale-95 min-h-[44px] cursor-pointer"
                 >
-                  <div className="p-1.5 bg-rose-600 text-white rounded-lg shrink-0">
-                    <RefreshCw className={`w-4 h-4 ${isReleasingTable ? 'animate-spin' : ''}`} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="font-bold text-xs block leading-tight whitespace-normal">
-                      {isReleasingTable ? 'Liberando...' : 'Liberar Mesa'}
-                    </span>
-                    <span className="text-[10px] text-rose-600 block whitespace-normal">
-                      {isReleasingTable ? 'Aguarde a confirmação' : 'Encerrar sem consumo'}
-                    </span>
-                  </div>
+                  <Plus className="w-4 h-4 stroke-[3]" />
+                  <span>Adicionar Primeiro Item</span>
                 </button>
-              )}
-
-              {/* Action 3: Transferir Mesa */}
-              {onOpenTransferTable && table && liveTab && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenTransferTable(table, liveTab);
-                  }}
-                  className="p-3 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full"
-                >
-                  <div className="p-1.5 bg-rose-100 text-rose-700 rounded-lg shrink-0">
-                    <ArrowRightLeft className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="font-bold text-xs block leading-tight whitespace-normal">Transferir Mesa</span>
-                    <span className="text-[10px] text-stone-500 block whitespace-normal">Mudar de mesa</span>
-                  </div>
-                </button>
-              )}
-
-              {/* Action 4: Transferir Itens */}
-              {onOpenTransferItems && table && liveTab && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenTransferItems(table, liveTab);
-                  }}
-                  className="p-3 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full"
-                >
-                  <div className="p-1.5 bg-amber-100 text-amber-700 rounded-lg shrink-0">
-                    <Layers className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="font-bold text-xs block leading-tight whitespace-normal">Transferir Itens</span>
-                    <span className="text-[10px] text-stone-500 block whitespace-normal">Mover pedidos</span>
-                  </div>
-                </button>
-              )}
-
-              {/* Action 5: Unificar Mesas */}
-              {onOpenMergeTabs && table && liveTab && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenMergeTabs(table, liveTab);
-                  }}
-                  className="p-3 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full"
-                >
-                  <div className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg shrink-0">
-                    <GitMerge className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="font-bold text-xs block leading-tight whitespace-normal">Unir Mesas</span>
-                    <span className="text-[10px] text-stone-500 block whitespace-normal">Juntar comandas</span>
-                  </div>
-                </button>
-              )}
-
-              {/* Action 6: Separar Mesas Unidas (if applicable) */}
-              {onOpenSplitTabs && table && liveTab && liveTab.mergedTables && liveTab.mergedTables.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenSplitTabs(table, liveTab);
-                  }}
-                  className="p-3 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full"
-                >
-                  <div className="p-1.5 bg-amber-600 text-white rounded-lg shrink-0">
-                    <GitMerge className="w-4 h-4 rotate-180" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="font-bold text-xs block leading-tight whitespace-normal">Separar Mesas</span>
-                    <span className="text-[10px] text-amber-700 block whitespace-normal">Desfazer junção</span>
-                  </div>
-                </button>
-              )}
-
-              {/* Action 7: Imprimir Prévia */}
-              <button
-                type="button"
-                onClick={handlePrintPreview}
-                className="p-3 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full"
-              >
-                <div className="p-1.5 bg-stone-200 text-stone-700 rounded-lg shrink-0">
-                  <Printer className="w-4 h-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <span className="font-bold text-xs block leading-tight whitespace-normal">Imprimir Prévia</span>
-                  <span className="text-[10px] text-stone-500 block whitespace-normal">Conferência</span>
-                </div>
-              </button>
-
-              {/* Action 8: Atualizar Comanda */}
-              <button
-                type="button"
-                onClick={handleManualRefresh}
-                className="p-3 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2.5 text-left active:scale-98 cursor-pointer min-h-[44px] w-full"
-              >
-                <div className="p-1.5 bg-stone-200 text-stone-700 rounded-lg shrink-0">
-                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-600' : ''}`} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <span className="font-bold text-xs block leading-tight whitespace-normal">Atualizar</span>
-                  <span className="text-[10px] text-stone-500 block whitespace-normal">Sincronizar dados</span>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          {/* Section Header: Rodadas Enviadas */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-stone-200/70 text-stone-700 rounded-lg">
-                <Layers className="w-4 h-4" />
               </div>
-              <h3 className="font-extrabold text-stone-900 text-sm sm:text-base">
-                Rodadas Enviadas ({roundGroups.length})
-              </h3>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                {roundGroups.map((round) => {
+                  const isRoundReady = (round.status || '').toLowerCase() === 'pronto' || (round.status || '').toLowerCase() === 'ready';
+                  const displayOrderNumber = round.orderId
+                    ? (String(round.orderId).length > 8 ? String(round.orderId).slice(-6).toUpperCase() : round.orderId)
+                    : `${round.roundNumber}`;
 
-            <span className="text-xs text-stone-500 font-medium">
-              {totalQuantityItems} {totalQuantityItems === 1 ? 'item ativo' : 'itens ativos'}
-            </span>
-          </div>
+                  return (
+                    <div 
+                      key={round.id}
+                      className={`bg-white rounded-2xl border shadow-xs overflow-hidden transition-all ${
+                        isRoundReady ? 'border-emerald-300 ring-2 ring-emerald-500/20' : 'border-stone-200 hover:border-stone-300'
+                      }`}
+                    >
+                      {/* Round Card Header */}
+                      <div className={`px-4 py-3 border-b flex items-center justify-between gap-2.5 flex-wrap ${
+                        isRoundReady ? 'bg-emerald-50/70 border-emerald-100' : 'bg-stone-100/80 border-stone-200'
+                      }`}>
+                        <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+                          <span className="px-2.5 py-1 bg-stone-900 text-white rounded-lg text-xs font-black shrink-0">
+                            Rodada {round.roundNumber}
+                          </span>
 
-          {/* List of Round Cards (Rodadas Agrupadas) */}
-          {roundGroups.length === 0 ? (
-            <div className="bg-white p-8 rounded-2xl border border-dashed border-stone-300 text-center space-y-3">
-              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-                <ShoppingBag className="w-6 h-6" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="font-extrabold text-stone-800 text-sm">Nenhum item lançado ainda</h4>
-                <p className="text-stone-500 text-xs max-w-xs mx-auto">
-                  Esta comanda foi iniciada, mas ainda não possui nenhuma rodada de pedidos enviada.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onOpenCatalog(table!, liveTab)}
-                className="mt-2 inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all active:scale-95 min-h-[44px]"
-              >
-                <Plus className="w-4 h-4 stroke-[3]" />
-                <span>Adicionar Primeiro Item</span>
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {roundGroups.map((round) => (
-                <div 
-                  key={round.id}
-                  className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden transition-all hover:border-stone-300"
-                >
-                  {/* Round Card Header */}
-                  <div className="bg-stone-100/80 px-4 py-3 border-b border-stone-200 flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="px-2.5 py-1 bg-stone-900 text-white rounded-lg text-xs font-black shrink-0">
-                        Rodada {round.roundNumber}
-                      </span>
+                          <span className="text-xs font-bold px-2 py-0.5 bg-white border border-stone-200 rounded-md text-stone-700">
+                            Pedido #{displayOrderNumber}
+                          </span>
 
-                      <div className="flex items-center gap-2 text-xs text-stone-600 truncate">
-                        <span className="font-semibold text-stone-800">
-                          {formatTimeOnly(round.sentAt)}
-                        </span>
-                        <span className="text-stone-300">•</span>
-                        <span className="text-stone-500 truncate">
-                          Por: {round.sentBy}
-                        </span>
+                          <div className="flex items-center gap-2 text-xs text-stone-600 truncate">
+                            <span className="font-semibold text-stone-800 flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-stone-400" />
+                              {formatTimeOnly(round.sentAt)}
+                            </span>
+                            {round.sentBy && (
+                              <>
+                                <span className="text-stone-300">•</span>
+                                <span className="text-stone-500 truncate">
+                                  Por: {round.sentBy}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {getProductionStatusBadge(round.status)}
+
+                          {isRoundReady && round.orderId && (
+                            <button
+                              type="button"
+                              onClick={() => handleMarkServed(round.orderId)}
+                              disabled={isSubmittingAction}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                              title="Marcar pedido como servido na mesa"
+                            >
+                              <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
+                              <span>MARCAR COMO SERVIDO</span>
+                            </button>
+                          )}
+
+                          {canViewPrices && (
+                            <span className="font-extrabold text-stone-900 text-xs sm:text-sm pl-1">
+                              {formatCurrency(round.totalCents)}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {getProductionStatusBadge(round.status)}
-                      {((round.status || '').toLowerCase() === 'pronto' || (round.status || '').toLowerCase() === 'ready') && (
-                        <button
-                          type="button"
-                          onClick={() => handleMarkServed(round.orderId)}
-                          disabled={isSubmittingAction}
-                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer min-h-[36px]"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>SERVIDO NA MESA</span>
-                        </button>
-                      )}
-                      <span className="font-extrabold text-stone-900 text-xs sm:text-sm">
-                        {formatCurrency(round.totalCents)}
-                      </span>
-                    </div>
-                  </div>
 
                   {/* Round Items List (Mobile First Card Items) */}
                   <div className="divide-y divide-stone-100">
@@ -1511,107 +1519,591 @@ export function TabDetailsModal({
                       );
                     })}
                   </div>
-
                 </div>
-              ))}
+              );
+            })}
             </div>
           )}
+          </div>
+
+          {/* ========================================================================= */}
+          {/* 3. AÇÕES OPERACIONAIS                                                     */}
+          {/* ========================================================================= */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 shadow-xs space-y-3">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-amber-100 text-amber-800 rounded-lg shrink-0">
+                  <ChefHat className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-stone-900 text-sm sm:text-base leading-tight">
+                    Ações Operacionais de Produção
+                  </h3>
+                  <span className="text-xs text-stone-500 font-medium">
+                    Controle de entrega dos pedidos na mesa
+                  </span>
+                </div>
+              </div>
+
+              {readyRounds.length > 0 ? (
+                <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full text-xs font-bold animate-pulse flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                  <span>{readyRounds.length} pronto(s) para servir</span>
+                </span>
+              ) : (
+                <span className="text-xs text-stone-400 font-medium">
+                  Cozinha & Salão
+                </span>
+              )}
+            </div>
+
+            {readyRounds.length > 0 ? (
+              <div className="space-y-3">
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Existem pedidos prontos aguardando para serem servidos na mesa:</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                  {readyRounds.map((round) => {
+                    const displayOrderNumber = round.orderId
+                      ? (String(round.orderId).length > 8 ? String(round.orderId).slice(-6).toUpperCase() : round.orderId)
+                      : `${round.roundNumber}`;
+                    const activeRoundItems = round.items.filter(
+                      (i) => i.status !== 'CANCELLED' && i.status !== 'cancelado'
+                    );
+
+                    return (
+                      <div
+                        key={`op-action-${round.id}`}
+                        className="p-3.5 sm:p-4 bg-emerald-50/40 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2 py-0.5 bg-stone-900 text-white rounded-md text-xs font-black">
+                              Rodada {round.roundNumber}
+                            </span>
+                            <span className="text-xs font-bold px-2 py-0.5 bg-white border border-stone-200 rounded-md text-stone-700">
+                              Pedido #{displayOrderNumber}
+                            </span>
+                            <span className="text-xs text-stone-500 font-medium">
+                              Enviado às {formatTimeOnly(round.sentAt)}
+                            </span>
+                          </div>
+
+                          <p className="text-xs text-stone-700 font-medium line-clamp-2">
+                            {activeRoundItems.map(i => `${i.quantity}x ${i.productName}`).join(' • ')}
+                          </p>
+                        </div>
+
+                        {round.orderId && (
+                          <button
+                            type="button"
+                            onClick={() => handleMarkServed(round.orderId)}
+                            disabled={isSubmittingAction}
+                            className="w-full sm:w-auto px-5 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer min-h-[48px] shrink-0"
+                            title="Marcar pedido como servido na mesa (status DELIVERED)"
+                          >
+                            <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+                            <span>MARCAR COMO SERVIDO</span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-xl text-xs text-stone-600 flex items-center gap-2.5">
+                <Clock className="w-4 h-4 text-stone-400 shrink-0" />
+                <span>Nenhum pedido aguardando ser servido no momento. Quando a cozinha finalizar o preparo de uma rodada, a ação destacada <strong>"MARCAR COMO SERVIDO"</strong> aparecerá aqui.</span>
+              </div>
+            )}
+          </div>
+
+          {/* ========================================================================= */}
+          {/* SEÇÃO: CONTA (Financeiro e Encerramento da Comanda / Mesa)                 */}
+          {/* ========================================================================= */}
+          <div className="bg-white p-4 sm:p-5 rounded-3xl border-2 border-stone-300 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-stone-900 text-sm sm:text-base tracking-wide uppercase">
+                      CONTA
+                    </h3>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                      remainingCents === 0 
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                        : 'bg-amber-100 text-amber-800 border border-amber-300'
+                    }`}>
+                      {remainingCents === 0 ? 'Quitada (R$ 0,00)' : 'Saldo Pendente'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-stone-500 font-medium mt-0.5">
+                    Total • Pago • Saldo • Pré-conta • Registrar pagamento • Fechar conta
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-semibold text-stone-400">
+                {displayTableName} • {displayTabLabel}
+              </span>
+            </div>
+
+            {/* Fluxo Visual da Conta */}
+            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200">
+              <span className="text-[10px] font-black text-stone-400 uppercase tracking-wider block mb-2 text-center">
+                FLUXO DA CONTA
+              </span>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-center text-[11px] font-extrabold">
+                <div className="p-1.5 rounded-lg bg-white border border-stone-200 text-stone-700">
+                  1. Aberta
+                </div>
+                <div className="p-1.5 rounded-lg bg-white border border-stone-200 text-stone-700">
+                  2. Pré-Conta
+                </div>
+                <div className={`p-1.5 rounded-lg border ${paidCents > 0 ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-white border-stone-200 text-stone-600'}`}>
+                  3. Pagamento
+                </div>
+                <div className={`p-1.5 rounded-lg border ${remainingCents === 0 ? 'bg-emerald-100 border-emerald-400 text-emerald-900' : 'bg-white border-stone-200 text-stone-600'}`}>
+                  4. Saldo R$ 0
+                </div>
+                <div className={`p-1.5 rounded-lg border ${remainingCents === 0 ? 'bg-stone-900 text-white border-stone-900' : 'bg-white border-stone-200 text-stone-400'}`}>
+                  5. Fechar Comanda
+                </div>
+                <div className={`p-1.5 rounded-lg border ${remainingCents === 0 ? 'bg-stone-900 text-white border-stone-900' : 'bg-white border-stone-200 text-stone-400'}`}>
+                  6. Liberar Mesa
+                </div>
+              </div>
+            </div>
+
+            {/* Resumo Financeiro (Total, Pago, Saldo) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Total */}
+              <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Total</span>
+                  {subtotalCents !== totalCents && (
+                    <span className="text-[11px] text-stone-400 font-medium">
+                      Sub: {formatCurrency(subtotalCents)}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xl sm:text-2xl font-black text-stone-900 block">
+                  {formatCurrency(totalCents)}
+                </span>
+                {discountCents > 0 && (
+                  <span className="text-[11px] text-emerald-700 font-bold block">
+                    Desc: -{formatCurrency(discountCents)}
+                  </span>
+                )}
+              </div>
+
+              {/* Pago */}
+              <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
+                <span className="text-xs font-bold text-stone-500 uppercase tracking-wider block">Valor Pago</span>
+                <span className="text-xl sm:text-2xl font-black text-emerald-600 block">
+                  {formatCurrency(paidCents)}
+                </span>
+                <span className="text-[11px] text-stone-400 block font-medium">
+                  {paidCents > 0 ? 'Pagamento registrado' : 'Nenhum valor recebido'}
+                </span>
+              </div>
+
+              {/* Saldo a Pagar */}
+              <div className={`p-3.5 rounded-2xl border space-y-1 ${
+                remainingCents > 0 
+                  ? 'bg-amber-50/80 border-amber-300 ring-2 ring-amber-400/20' 
+                  : 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400/20'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-stone-700">SALDO A PAGAR</span>
+                  {remainingCents === 0 ? (
+                    <span className="px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[10px] font-black">QUITADA</span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 bg-amber-600 text-white rounded text-[10px] font-black">PENDENTE</span>
+                  )}
+                </div>
+                <span className={`text-xl sm:text-2xl font-black block ${
+                  remainingCents > 0 ? 'text-amber-700' : 'text-emerald-700'
+                }`}>
+                  {formatCurrency(remainingCents)}
+                </span>
+                <span className="text-[11px] font-medium block">
+                  {remainingCents === 0 ? 'Conta pronta para fechar' : 'Aguardando quitação'}
+                </span>
+              </div>
+            </div>
+
+            {/* Alerta quando há saldo pendente para fechamento */}
+            {remainingCents > 0 ? (
+              <div className="p-3.5 bg-amber-50 border border-amber-300/80 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <strong className="block text-amber-950">Fechamento de comanda bloqueado:</strong>
+                  <span>Existe saldo pendente de <strong>{formatCurrency(remainingCents)}</strong>. Registre o pagamento do valor restante para permitir o fechamento da comanda e a liberação da mesa.</span>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-300/80 rounded-2xl text-xs text-emerald-900 flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <strong className="block text-emerald-950">Comanda 100% quitada (Saldo R$ 0,00):</strong>
+                  <span>Todos os valores foram recebidos. A comanda pode ser encerrada e a mesa liberada.</span>
+                </div>
+              </div>
+            )}
+
+            {/* Ações da Conta (Pré-conta, Registrar Pagamento, Fechar Conta) */}
+            <div className="space-y-2.5 pt-1">
+              <span className="text-xs font-black text-stone-700 uppercase tracking-wider block">
+                Ações da Conta
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {/* 1. Pré-Conta */}
+                <button
+                  type="button"
+                  onClick={handlePrintPreview}
+                  className="p-3.5 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-2xl transition-all flex items-center gap-3 text-left active:scale-98 cursor-pointer min-h-[52px]"
+                  title="Imprimir conferência da pré-conta (não altera nenhum status)"
+                >
+                  <div className="p-2.5 bg-stone-200 text-stone-700 rounded-xl shrink-0">
+                    <Printer className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-extrabold text-xs sm:text-sm block leading-tight">Pré-Conta</span>
+                    <span className="text-[11px] text-stone-500 block">Imprimir conferência</span>
+                  </div>
+                </button>
+
+                {/* 2. Registrar Pagamento */}
+                {(!isAuthorized || canCloseAccount === false) ? (
+                  <button
+                    type="button"
+                    onClick={handleRequestBill}
+                    disabled={isRequestingBill || remainingCents === 0}
+                    className="p-3.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-2xl transition-all flex items-center gap-3 text-left active:scale-98 cursor-pointer min-h-[52px] disabled:opacity-50"
+                  >
+                    <div className="p-2.5 bg-amber-600 text-white rounded-xl shrink-0">
+                      <Receipt className={`w-4 h-4 ${isRequestingBill ? 'animate-spin' : ''}`} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-xs sm:text-sm block leading-tight">Solicitar Conta</span>
+                      <span className="text-[11px] text-amber-700 block">Avisar caixa</span>
+                    </div>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleOpenPaymentModal}
+                    disabled={remainingCents === 0}
+                    className={`p-3.5 rounded-2xl transition-all flex items-center gap-3 text-left active:scale-98 min-h-[52px] ${
+                      remainingCents > 0
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer'
+                        : 'bg-stone-100 text-stone-400 border border-stone-200 cursor-not-allowed'
+                    }`}
+                    title={remainingCents > 0 ? 'Registrar pagamento total ou parcial' : 'Saldo já quitado'}
+                  >
+                    <div className={`p-2.5 rounded-xl shrink-0 ${remainingCents > 0 ? 'bg-white/20 text-white' : 'bg-stone-200 text-stone-400'}`}>
+                      <DollarSign className="w-4 h-4 stroke-[2.5]" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-xs sm:text-sm block leading-tight">Registrar Pagamento</span>
+                      <span className={`text-[11px] block ${remainingCents > 0 ? 'text-emerald-100' : 'text-stone-400'}`}>
+                        {remainingCents > 0 ? 'Total ou parcial' : 'Saldo 100% pago'}
+                      </span>
+                    </div>
+                  </button>
+                )}
+
+                {/* 3. Fechar Conta / Fechar Comanda */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (remainingCents > 0) {
+                      setCancelError(`Não é possível fechar a comanda: existe saldo pendente de ${formatCurrency(remainingCents)}. Registre o pagamento antes de fechar.`);
+                      return;
+                    }
+                    setIsConfirmCloseOpen(true);
+                  }}
+                  disabled={isClosingTab || remainingCents > 0}
+                  className={`p-3.5 rounded-2xl transition-all flex items-center gap-3 text-left min-h-[52px] ${
+                    remainingCents <= 0
+                      ? 'bg-stone-900 hover:bg-black text-white shadow-md cursor-pointer active:scale-98 ring-2 ring-emerald-500/60'
+                      : 'bg-stone-100 text-stone-400 border border-stone-200 cursor-not-allowed opacity-60'
+                  }`}
+                  title={remainingCents > 0 ? `Bloqueado: Saldo pendente de ${formatCurrency(remainingCents)}` : 'Fechar comanda e liberar mesa'}
+                >
+                  <div className={`p-2.5 rounded-xl shrink-0 ${remainingCents <= 0 ? 'bg-emerald-500 text-white' : 'bg-stone-200 text-stone-400'}`}>
+                    {remainingCents <= 0 ? (
+                      <CheckCircle2 className={`w-4 h-4 ${isClosingTab ? 'animate-spin' : ''}`} />
+                    ) : (
+                      <Lock className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-extrabold text-xs sm:text-sm block leading-tight">
+                      {isClosingTab ? 'Fechando...' : 'Fechar Comanda'}
+                    </span>
+                    <span className={`text-[11px] block ${remainingCents <= 0 ? 'text-emerald-300' : 'text-stone-400'}`}>
+                      {remainingCents <= 0 ? 'Liberar mesa' : 'Bloqueado (com saldo)'}
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Outras Ações da Mesa (Secundárias) */}
+            <div className="pt-2 border-t border-stone-100 space-y-1.5">
+              <span className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block">
+                Outras Ações da Mesa
+              </span>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {/* Adicionar pedido/rodada */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (canAddItems === false) {
+                      setCancelError('Seu perfil não possui permissão para lançar itens.');
+                      return;
+                    }
+                    if (table || liveTab) {
+                      onOpenCatalog(table || { id: liveTab?.tableId || '', name: 'Comanda' } as Table, liveTab);
+                    }
+                  }}
+                  className="p-2.5 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2 text-left active:scale-98 cursor-pointer min-h-[44px]"
+                >
+                  <div className="p-1.5 bg-emerald-100 text-emerald-700 rounded-lg shrink-0">
+                    <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-extrabold text-xs block leading-tight truncate">Nova Rodada</span>
+                  </div>
+                </button>
+
+                {/* Transferir Mesa */}
+                {onOpenTransferTable && table && liveTab && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenTransferTable(table, liveTab);
+                    }}
+                    className="p-2.5 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2 text-left active:scale-98 cursor-pointer min-h-[44px]"
+                  >
+                    <div className="p-1.5 bg-rose-100 text-rose-700 rounded-lg shrink-0">
+                      <ArrowRightLeft className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-xs block leading-tight truncate">Transferir Mesa</span>
+                    </div>
+                  </button>
+                )}
+
+                {/* Transferir Itens */}
+                {onOpenTransferItems && table && liveTab && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenTransferItems(table, liveTab);
+                    }}
+                    className="p-2.5 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2 text-left active:scale-98 cursor-pointer min-h-[44px]"
+                  >
+                    <div className="p-1.5 bg-amber-100 text-amber-700 rounded-lg shrink-0">
+                      <Layers className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-xs block leading-tight truncate">Transferir Itens</span>
+                    </div>
+                  </button>
+                )}
+
+                {/* Unir Mesas */}
+                {onOpenMergeTabs && table && liveTab && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenMergeTabs(table, liveTab);
+                    }}
+                    className="p-2.5 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2 text-left active:scale-98 cursor-pointer min-h-[44px]"
+                  >
+                    <div className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg shrink-0">
+                      <GitMerge className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-xs block leading-tight truncate">Unir Mesas</span>
+                    </div>
+                  </button>
+                )}
+
+                {/* Separar Mesas Unidas */}
+                {onOpenSplitTabs && table && liveTab && liveTab.mergedTables && liveTab.mergedTables.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenSplitTabs(table, liveTab);
+                    }}
+                    className="p-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl transition-all flex items-center gap-2 text-left active:scale-98 cursor-pointer min-h-[44px]"
+                  >
+                    <div className="p-1.5 bg-amber-600 text-white rounded-lg shrink-0">
+                      <GitMerge className="w-3.5 h-3.5 rotate-180" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-xs block leading-tight truncate">Separar Mesas</span>
+                    </div>
+                  </button>
+                )}
+
+                {/* Liberar Mesa (somente se não tiver consumo nem saldo) */}
+                {isOccupiedOrWaiting && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentTab = liveTab || tab;
+                      const items = Array.isArray(currentTab?.items) ? currentTab.items : [];
+                      const activeItems = items.filter((i: any) => {
+                        if (!i || typeof i !== 'object') return false;
+                        const st = String(i.status || '').toLowerCase();
+                        return !['cancelled', 'cancelado', 'canceled', 'removed', 'removido'].includes(st) && (Number(i.quantity || i.qtd || 1) > 0);
+                      });
+                      const totalC = currentTab?.totalInCents ?? Math.round(Number(currentTab?.total || 0) * 100);
+                      const paidC = currentTab?.paidInCents ?? Math.round(Number((currentTab as any)?.paidAmount || 0) * 100);
+                      const balanceDueC = Math.max(totalC - paidC, 0);
+
+                      if (activeItems.length > 0 || totalC > 0 || balanceDueC > 0) {
+                        setCancelError('Não é permitido liberar a mesa pois ela possui consumo, pedidos em aberto ou saldo devedor.');
+                        return;
+                      }
+                      setIsConfirmReleaseOpen(true);
+                    }}
+                    disabled={isReleasingTable || !table?.id}
+                    className="p-2.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 rounded-xl transition-all flex items-center gap-2 text-left active:scale-98 cursor-pointer min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="p-1.5 bg-rose-600 text-white rounded-lg shrink-0">
+                      <RefreshCw className={`w-3.5 h-3.5 ${isReleasingTable ? 'animate-spin' : ''}`} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-extrabold text-xs block leading-tight truncate">
+                        {isReleasingTable ? 'Liberando...' : 'Liberar Mesa'}
+                      </span>
+                    </div>
+                  </button>
+                )}
+
+                {/* Atualizar comanda */}
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  className="p-2.5 bg-stone-50 hover:bg-stone-100 text-stone-800 border border-stone-200 rounded-xl transition-all flex items-center gap-2 text-left active:scale-98 cursor-pointer min-h-[44px]"
+                >
+                  <div className="p-1.5 bg-stone-200 text-stone-700 rounded-lg shrink-0">
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-emerald-600' : ''}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-extrabold text-xs block leading-tight truncate">Sincronizar</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
 
         </div>
 
         {/* Modal Sticky Footer / Summary with Safe-Area support */}
-        <div className="p-3.5 sm:p-5 bg-white border-t border-stone-200 shadow-lg space-y-3 shrink-0 sticky bottom-0 z-20 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          
-          {/* Subtotal & Total / Balance Display */}
-          <div className="bg-stone-900 text-white p-3.5 sm:p-4 rounded-2xl shadow-sm space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <span className="text-xs font-bold uppercase tracking-wider text-stone-400 block">
-                  Total da Mesa / Comanda
-                </span>
-                <div className="text-xs text-stone-300">
-                  {paidCents > 0 ? (
-                    <span>
-                      Já pago: <span className="font-semibold text-emerald-400">{formatCurrency(paidCents)}</span>
-                    </span>
-                  ) : (
-                    <span>Subtotal dos itens ativos</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="text-right">
-                <span className="text-lg sm:text-2xl font-black text-white">
-                  {formatCurrency(totalCents)}
+        <div className="p-3.5 sm:p-5 bg-white border-t border-stone-200 shadow-lg shrink-0 sticky bottom-0 z-20 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
+            <div className="min-w-0">
+              <span className="text-xs font-bold uppercase tracking-wider text-stone-400 block">
+                SALDO A PAGAR
+              </span>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-lg sm:text-2xl font-black ${remainingCents > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {formatCurrency(remainingCents)}
                 </span>
                 {paidCents > 0 && (
-                  <div className="text-xs font-bold text-amber-400">
-                    Saldo Restante: {formatCurrency(remainingCents)}
-                  </div>
+                  <span className="text-xs text-stone-500 font-medium">
+                    (Pago: {formatCurrency(paidCents)})
+                  </span>
                 )}
               </div>
             </div>
-          </div>
 
-          {/* Operational Action Buttons Row */}
-          <div className="flex items-center gap-2">
-            {/* Main Action: Receber / Fechar Conta (ou Solicitar Conta se garçom sem permissão de fechar) */}
-            {(!isAuthorized || canCloseAccount === false) ? (
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              {remainingCents > 0 ? (
+                (!isAuthorized || canCloseAccount === false) ? (
+                  <button
+                    type="button"
+                    onClick={handleRequestBill}
+                    disabled={isRequestingBill}
+                    className="flex-1 sm:flex-none py-3 px-4 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95 min-h-[48px] cursor-pointer"
+                    title="Solicitar conta da mesa para o caixa"
+                  >
+                    <Receipt className={`w-4 h-4 stroke-[2.5] ${isRequestingBill ? 'animate-spin' : ''}`} />
+                    <span>{isRequestingBill ? 'Solicitando...' : 'Solicitar Conta'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleOpenPaymentModal}
+                    className="flex-1 sm:flex-none py-3 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95 min-h-[48px] cursor-pointer"
+                    title="Registrar pagamento da comanda"
+                  >
+                    <DollarSign className="w-4 h-4 stroke-[2.5]" />
+                    <span>Registrar Pagamento</span>
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmCloseOpen(true)}
+                  disabled={isClosingTab}
+                  className="flex-1 sm:flex-none py-3 px-5 bg-stone-900 hover:bg-black text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95 min-h-[48px] cursor-pointer ring-2 ring-emerald-500"
+                  title="Fechar comanda quitada e liberar mesa"
+                >
+                  <CheckCircle2 className={`w-4 h-4 stroke-[2.5] text-emerald-400 ${isClosingTab ? 'animate-spin' : ''}`} />
+                  <span>{isClosingTab ? 'Fechando...' : 'Fechar Comanda'}</span>
+                </button>
+              )}
+
               <button
                 type="button"
-                onClick={handleRequestBill}
-                disabled={isRequestingBill || remainingCents === 0}
-                className="flex-1 py-3.5 px-4 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95 min-h-[48px] cursor-pointer"
-                title="Solicitar conta da mesa para o caixa"
+                onClick={handlePrintPreview}
+                className="py-3 px-3.5 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-1.5 min-h-[48px] border border-stone-200 shrink-0 cursor-pointer"
+                title="Imprimir Pré-Conta (não altera status)"
               >
-                <Receipt className={`w-5 h-5 stroke-[2.5] ${isRequestingBill ? 'animate-spin' : ''}`} />
-                <span>{isRequestingBill ? 'Solicitando...' : 'Solicitar Conta'}</span>
+                <Printer className="w-4 h-4" />
+                <span className="hidden sm:inline">Pré-Conta</span>
               </button>
-            ) : (
+
               <button
                 type="button"
-                onClick={handleOpenPaymentModal}
-                disabled={remainingCents === 0}
-                className="flex-1 py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-stone-300 disabled:text-stone-500 disabled:cursor-not-allowed text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95 min-h-[48px] cursor-pointer"
-                title={remainingCents === 0 ? 'Conta já quitada' : 'Receber pagamento e fechar comanda'}
+                onClick={() => {
+                  if (canAddItems === false) {
+                    setCancelError('Seu perfil não possui permissão para lançar itens.');
+                    return;
+                  }
+                  if (table || liveTab) {
+                    onOpenCatalog(table || { id: liveTab?.tableId || '', name: 'Comanda' } as Table, liveTab);
+                  }
+                }}
+                className="py-3 px-3 sm:px-4 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-1.5 min-h-[48px] border border-stone-200 cursor-pointer shrink-0"
+                title="Adicionar novos itens à comanda"
               >
-                <DollarSign className="w-5 h-5 stroke-[2.5]" />
-                <span>Receber / Fechar Conta</span>
+                <Plus className="w-4 h-4 stroke-[3]" />
+                <span className="hidden sm:inline">Nova Rodada</span>
               </button>
-            )}
-
-            {/* Add Items Action */}
-            <button
-              type="button"
-              onClick={() => {
-                if (canAddItems === false) {
-                  setCancelError('Seu perfil não possui permissão para lançar itens.');
-                  return;
-                }
-                if (table || liveTab) {
-                  onOpenCatalog(table || { id: liveTab?.tableId || '', name: 'Comanda' } as Table, liveTab);
-                }
-              }}
-              className="py-3.5 px-4 bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs sm:text-sm rounded-2xl shadow-sm transition-all flex items-center justify-center gap-1.5 min-h-[48px] cursor-pointer shrink-0"
-              title="Adicionar novos itens à comanda"
-            >
-              <Plus className="w-4 h-4 stroke-[3]" />
-              <span className="hidden sm:inline">Adicionar Itens</span>
-              <span className="sm:hidden">Itens</span>
-            </button>
-
-            {/* Print Preview Button */}
-            <button
-              type="button"
-              onClick={handlePrintPreview}
-              className="py-3.5 px-3 sm:px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs sm:text-sm rounded-2xl transition-all flex items-center justify-center gap-1.5 min-h-[48px] border border-stone-200 shrink-0 cursor-pointer"
-              title="Imprimir Prévia da Conta"
-            >
-              <Printer className="w-4 h-4" />
-              <span className="hidden md:inline">Imprimir</span>
-            </button>
+            </div>
           </div>
-
         </div>
 
       </div>
@@ -2163,6 +2655,18 @@ export function TabDetailsModal({
         cancelLabel="Cancelar"
         type="danger"
         loading={isReleasingTable}
+      />
+
+      <ConfirmDialog
+        isOpen={isConfirmCloseOpen}
+        onClose={() => setIsConfirmCloseOpen(false)}
+        onConfirm={handleDirectCloseTab}
+        title="Fechar comanda e liberar mesa?"
+        description={`O saldo desta comanda está totalmente quitado (${formatCurrency(remainingCents)}). Ao fechar a comanda, a ${displayTableName} será liberada imediatamente. Todo o histórico de consumo e pedidos servidos permanecerá salvo.`}
+        confirmLabel="Fechar Comanda"
+        cancelLabel="Voltar"
+        type="primary"
+        loading={isClosingTab}
       />
 
     </div>

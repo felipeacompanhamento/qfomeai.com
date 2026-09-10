@@ -2,21 +2,58 @@ import React, { useState, useEffect } from 'react';
 import { Clock } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
-import { isGarcomOrder } from '../orders/utils/orderSource';
+import { isGarcomOrder, isRetiradaOrder, getOrderModality } from '../orders/utils/orderSource';
+import { getModalityStatusText } from '../orders/utils/orderPresentation';
 
-const getRestaurantStatusText = (status: string, isGarcom: boolean = false) => {
-  switch (status) {
-    case 'pendente': return 'Novo pedido';
-    case 'aceito': return 'Aceito';
-    case 'preparo': return 'Em preparo';
-    case 'pronto': return 'Pronto';
-    case 'entrega': return isGarcom ? 'Servindo' : 'Saiu para entrega';
+const getRestaurantStatusText = (status: string, isGarcom: boolean = false, isRetirada: boolean = false, order?: any) => {
+  if (order) {
+    return getModalityStatusText(order);
+  }
+  const clean = String(status || '').toLowerCase().trim();
+  if (isRetirada) {
+    if (['pendente', 'novo', 'new'].includes(clean)) return 'Novo pedido';
+    if (['aceito', 'confirmado', 'confirmed'].includes(clean)) return 'Aceito';
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(clean)) return 'Em preparo';
+    if (['pronto', 'ready'].includes(clean)) return 'PRONTO PARA RETIRADA';
+    if (['entregue', 'delivered', 'retirado', 'finalizado', 'completed', 'finalized'].includes(clean)) return 'Retirado';
+    if (['cancelado', 'cancelled', 'rejeitado'].includes(clean)) return 'Cancelado';
+    return 'Retirado';
+  }
+  if (isGarcom) {
+    if (['pendente', 'novo', 'new'].includes(clean)) return 'Novo pedido';
+    if (['aceito', 'confirmado', 'confirmed'].includes(clean)) return 'Aceito';
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(clean)) return 'Em preparo';
+    if (['pronto', 'ready'].includes(clean)) return 'Pronto';
+    if (['entregue', 'delivered', 'servido', 'finalizado', 'completed', 'finalized'].includes(clean)) return 'Servido';
+    if (['cancelado', 'cancelled', 'rejeitado'].includes(clean)) return 'Cancelado';
+    return 'Servido';
+  }
+  switch (clean) {
+    case 'pendente':
+    case 'novo':
+    case 'new': return 'Novo pedido';
+    case 'aceito':
+    case 'confirmado':
+    case 'confirmed': return 'Aceito';
+    case 'preparo':
+    case 'cozinha':
+    case 'preparing': return 'Em preparo';
+    case 'pronto':
+    case 'ready': return 'Pronto';
+    case 'entrega':
+    case 'saiu_entrega':
+    case 'saiu para entrega':
+    case 'despachado':
+    case 'em_entrega':
+    case 'out_for_delivery': return 'Em rota';
     case 'entregue':
-    case 'delivered':
-    case 'servido': return isGarcom ? 'Servido' : 'Entregue';
-    case 'cancelado': return 'Cancelado';
+    case 'delivered': return 'Entregue';
+    case 'finalizado':
+    case 'completed':
+    case 'finalized': return 'Finalizado';
+    case 'cancelado':
+    case 'cancelled':
     case 'rejeitado': return 'Cancelado';
-    case 'finalizado': return isGarcom ? 'Finalizado' : 'Entregue';
     default: return status;
   }
 };
@@ -95,7 +132,7 @@ const OrderListItem = React.memo(({ order, isSelected, onClick }: OrderListItemP
           </span>
         </div>
         <span className={`text-[10px] font-bold px-2 py-1 rounded-lg uppercase tracking-wider ${getStatusColor(order.status)}`}>
-          {getRestaurantStatusText(order.status, isGarcomOrder(order))}
+          {getRestaurantStatusText(order.status, isGarcomOrder(order), isRetiradaOrder(order))}
         </span>
       </div>
       

@@ -58,8 +58,8 @@ export default function DeliveryAssignmentTab() {
     // 1. Real-time subscription to active delivery orders
     const ordersRef = collection(db, 'restaurants', restaurantId, 'orders');
     
-    // Query active order statuses to avoid full collection listener
-    const activeStatuses = ['recebido', 'aceito', 'em_preparo', 'pronto', 'saiu_para_entrega', 'pendente', 'em preparo', 'saiu para entrega'];
+    // Query active order statuses to avoid full collection listener (max 10 in Firestore 'in')
+    const activeStatuses = ['recebido', 'aceito', 'em_preparo', 'preparo', 'cozinha', 'pronto', 'despachado', 'saiu_para_entrega', 'pendente', 'em preparo'];
     const qActiveOrders = query(
       ordersRef,
       where('status', 'in', activeStatuses)

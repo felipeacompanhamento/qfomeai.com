@@ -2,10 +2,10 @@
  * Definição e utilitários para origem e modalidade do pedido (Delivery, Balcão, Garçom, Mesa, Retirada, Totem)
  */
 
-import { OrderSource, OrderOrigem, OrderModality, normalizeOrderOrigem, isGarcomOrder, getOrderModality } from '../../../../domain/order/orderSource';
+import { OrderSource, OrderOrigem, OrderModality, normalizeOrderOrigem, isGarcomOrder, isRetiradaOrder, getOrderModality, getTotemRealModality } from '../../../../domain/order/orderSource';
 
 export type { OrderSource, OrderOrigem, OrderModality };
-export { normalizeOrderOrigem, isGarcomOrder, getOrderModality };
+export { normalizeOrderOrigem, isGarcomOrder, isRetiradaOrder, getOrderModality, getTotemRealModality };
 
 export interface OrderModalityDetails {
   modality: OrderModality;
@@ -79,7 +79,10 @@ export function getOrderModalityDetails(order: any): OrderModalityDetails {
         isTableModality: true,
         hasIndividualPayment: false
       };
-    case 'TOTEM':
+    case 'TOTEM': {
+      const totemReal = getTotemRealModality(order);
+      const isMesa = totemReal === 'MESA';
+      const isEntrega = totemReal === 'ENTREGA';
       return {
         modality,
         label: 'TOTEM',
@@ -87,11 +90,12 @@ export function getOrderModalityDetails(order: any): OrderModalityDetails {
         badgeBg: 'bg-stone-800 text-white',
         badgeText: 'text-white',
         badgeBorder: 'border-stone-800',
-        iconName: 'Monitor',
-        isDeliveryFlow: false,
-        isTableModality: false,
-        hasIndividualPayment: true
+        iconName: isMesa ? 'Utensils' : isEntrega ? 'Bike' : 'Monitor',
+        isDeliveryFlow: isEntrega,
+        isTableModality: isMesa,
+        hasIndividualPayment: !isMesa
       };
+    }
     case 'DELIVERY':
     default:
       return {

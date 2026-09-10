@@ -81,6 +81,8 @@ export interface CreateCounterOrderInput {
   pago: boolean;
   amountReceived?: number;
   clientActionId: string;
+  observacoes?: string;
+  observacao?: string;
 }
 
 export interface CounterCreatedOrderItem {
@@ -158,7 +160,9 @@ export const counterOrderService = {
       payments,
       pago,
       amountReceived = 0,
-      clientActionId
+      clientActionId,
+      observacoes,
+      observacao
     } = input;
 
     if (!restaurantId || !operatorId) {
@@ -241,7 +245,9 @@ export const counterOrderService = {
         paymentMethod: forma_pagamento,
         payments,
         pago,
-        amountReceived
+        amountReceived,
+        observacoes: observacoes || observacao || '',
+        observacao: observacao || observacoes || ''
       })
     });
 

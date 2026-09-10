@@ -674,6 +674,285 @@ function generateTotemReceiptHtml(order: any, restaurant?: any, profile?: any): 
 }
 
 // ============================================================================
+// FORMATTER: Kitchen Ticket Items (Simple, large, legible, strictly production)
+// NO prices, NO currency values, NO financial info
+// ============================================================================
+function formatKitchenTicketItemsHtml(items: any[]): string {
+  if (!Array.isArray(items) || items.length === 0) {
+    return '<div style="text-align: center; font-weight: bold; padding: 8px 0; font-size: 11pt;">SEM ITENS LISTADOS</div>';
+  }
+
+  let html = '';
+  items.forEach((item: any) => {
+    const qtd = Number(item.quantidade || item.quantity || 1);
+    const nome = escapeHtml(item.nome || item.name || item.produto || '');
+    const tamanho = escapeHtml(item.tamanho || item.variation || item.opcao_escolhida || item.tamanho_nome || '');
+    const remocoes = escapeHtml(item.remocoes || item.removidos || '');
+    const obsItem = escapeHtml(item.observacao || item.observacoes || item.notes || item.observation || '');
+
+    html += `
+      <div style="margin-bottom: 8px; border-bottom: 1px dashed #444; padding-bottom: 6px; break-inside: avoid; page-break-inside: avoid;">
+        <div style="font-size: 13pt; font-weight: 900; line-height: 1.25;">
+          <span>${qtd}x ${nome}</span>
+        </div>
+        ${tamanho ? `<div style="font-size: 11pt; font-weight: bold; margin-top: 2px; padding-left: 10px;">• ${tamanho}</div>` : ''}
+        ${remocoes ? `<div style="font-size: 11pt; font-weight: 900; margin-top: 2px; padding-left: 10px; color: #000;">• SEM: ${remocoes}</div>` : ''}
+    `;
+
+    const extras = Array.isArray(item.adicionais) ? item.adicionais : Array.isArray(item.extras) ? item.extras : Array.isArray(item.subitens) ? item.subitens : [];
+    if (extras.length > 0) {
+      extras.forEach((extra: any) => {
+        const extraQtd = Number(extra.quantidade || extra.quantity || 1);
+        const extraNome = escapeHtml(extra.nome || extra.name || extra.produto || extra);
+        html += `
+          <div style="font-size: 10.5pt; font-weight: bold; padding-left: 10px; margin-top: 1px;">
+            + ${extraQtd > 1 ? `${extraQtd}x ` : ''}${extraNome}
+          </div>
+        `;
+      });
+    }
+
+    if (obsItem) {
+      html += `
+        <div style="font-size: 11.5pt; font-weight: 900; padding: 4px 6px; margin-top: 4px; background: #eee; border: 1.5px solid #000; border-radius: 4px;">
+          OBS: ${obsItem}
+        </div>
+      `;
+    }
+
+    html += `</div>`;
+  });
+
+  return html;
+}
+
+// ============================================================================
+// GENERATOR: TICKET DE PRODUÇÃO DA COZINHA / KDS
+// Simples, grande, legível e focado somente na PRODUÇÃO
+// ============================================================================
+export function generateKitchenTicketHtml(order: any, restaurant?: any, profile?: any): string {
+  if (!order) return '';
+
+  const modality: OrderModality = getOrderModality(order);
+  const paperSize = profile?.impressora_tamanho || restaurant?.impressora_tamanho || restaurant?.defaultPaperSize || restaurant?.paperSize || '80mm';
+
+  // Número do pedido padronizado
+  const rawOrderNum = order.number || order.numero || order.numero_pedido || order.orderNumber || order.displayId || order.id || '';
+  const orderNumStr = String(rawOrderNum).length > 8 ? String(rawOrderNum).slice(-6).toUpperCase() : String(rawOrderNum);
+
+  // Mesa padronizada
+  const rawMesa = order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== ''
+    ? order.tableNumber
+    : (order.mesa_numero !== undefined && order.mesa_numero !== null && String(order.mesa_numero).trim() !== ''
+        ? order.mesa_numero
+        : (order.tableName || order.mesa || order.num_mesa || ''));
+  const mesaNumStr = String(rawMesa).replace(/^mesa\s*/i, '').trim();
+  const mesaDisplay = mesaNumStr ? (isNaN(Number(mesaNumStr)) ? mesaNumStr : `MESA ${mesaNumStr.padStart(2, '0')}`) : 'MESA --';
+
+  // Comanda padronizada
+  const rawTab = order.tabId || order.comandaId || order.comanda_id || order.tabNumber || order.comandaNumero || order.tab_id;
+  const tabNumStr = rawTab ? String(rawTab).replace(/^comanda\s*/i, '').trim() : '';
+  const tabDisplay = tabNumStr ? (String(tabNumStr).startsWith('#') ? tabNumStr : `#${String(tabNumStr).length > 6 ? String(tabNumStr).slice(-6).toUpperCase() : tabNumStr}`) : '';
+
+  // Garçom: Para GARCOM, usar waiterName gravado no momento da criação do pedido. NÃO consultar cadastro de funcionário.
+  const waiterName = order.waiterName || order.garcom_nome || order.garcom || order.nome_garcom || '';
+
+  // Rodada
+  const roundNum = order.roundNumber || order.numero_rodada || order.round || order.rodada;
+  const roundDisplay = roundNum ? `${roundNum}` : (order.currentRound ? `${order.currentRound}` : '');
+
+  // Horário
+  const orderDate = order.data_criacao || order.createdAt ? new Date(order.data_criacao || order.createdAt) : new Date();
+  const horarioStr = orderDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  // Cliente
+  const rawClient = order.cliente_nome || order.nome_cliente || order.customerName || order.cliente?.nome || order.customer?.name || '';
+  const clientName = rawClient ? escapeHtml(String(rawClient)) : '';
+
+  // Número de retirada / senha (se existir)
+  const rawPickup = order.senha || order.pickupCode || order.retiradaCode || order.senhaRetirada || order.codigoRetirada || order.pickupNumber;
+  const pickupCode = rawPickup ? escapeHtml(String(rawPickup)) : '';
+
+  // Observações gerais do pedido
+  const rawObsGeral = order.observacao || order.observacoes || order.notes || order.observation || order.observacao_cozinha || order.observacoes_cozinha || '';
+  const obsGeral = rawObsGeral ? escapeHtml(String(rawObsGeral)) : '';
+
+  // Itens
+  const items = order.items || order.itens || [];
+  const itemsHtml = formatKitchenTicketItemsHtml(items);
+
+  let headerHtml = '';
+
+  switch (modality) {
+    case 'GARCOM_MESA':
+      // 1. GARCOM / MESA
+      // Cabeçalho em destaque:
+      // MESA 04
+      // Pedido #numero
+      // Comanda #numero
+      // Garçom: nome
+      // Rodada: numero
+      // Horário
+      headerHtml = `
+        <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
+          <div style="font-size: 22pt; font-weight: 900; line-height: 1.1; letter-spacing: 0.5px;">${mesaDisplay}</div>
+          <div style="font-size: 16pt; font-weight: 900; margin-top: 3px;">Pedido #${orderNumStr}</div>
+        </div>
+        <div style="font-size: 11pt; line-height: 1.4; margin-bottom: 6px;">
+          ${tabDisplay ? `<div><b>Comanda:</b> ${tabDisplay}</div>` : ''}
+          ${waiterName ? `<div><b>Garçom:</b> ${escapeHtml(waiterName)}</div>` : ''}
+          ${roundDisplay ? `<div><b>Rodada:</b> ${roundDisplay}</div>` : ''}
+          <div><b>Horário:</b> ${horarioStr}</div>
+        </div>
+      `;
+      break;
+
+    case 'BALCAO_MESA':
+      // 2. BALCAO + MESA
+      // BALCÃO • MESA
+      // Mesa
+      // Pedido #numero
+      // Comanda
+      // Horário
+      headerHtml = `
+        <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
+          <div style="font-size: 14pt; font-weight: 900; letter-spacing: 0.5px;">BALCÃO • MESA</div>
+          <div style="font-size: 20pt; font-weight: 900; margin-top: 2px; line-height: 1.1;">${mesaDisplay}</div>
+          <div style="font-size: 15pt; font-weight: 900; margin-top: 2px;">Pedido #${orderNumStr}</div>
+        </div>
+        <div style="font-size: 11pt; line-height: 1.4; margin-bottom: 6px;">
+          ${tabDisplay ? `<div><b>Comanda:</b> ${tabDisplay}</div>` : ''}
+          <div><b>Horário:</b> ${horarioStr}</div>
+        </div>
+      `;
+      break;
+
+    case 'BALCAO_RETIRADA':
+      // 3. BALCAO + RETIRADA
+      // BALCÃO • RETIRADA
+      // Pedido #numero
+      // Cliente, se existir
+      // Horário
+      headerHtml = `
+        <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
+          <div style="font-size: 14pt; font-weight: 900; letter-spacing: 0.5px;">BALCÃO • RETIRADA</div>
+          <div style="font-size: 17pt; font-weight: 900; margin-top: 3px;">Pedido #${orderNumStr}</div>
+          ${pickupCode ? `<div style="font-size: 13pt; font-weight: 900; margin-top: 2px;">Retirada: #${pickupCode}</div>` : ''}
+        </div>
+        <div style="font-size: 11pt; line-height: 1.4; margin-bottom: 6px;">
+          ${clientName ? `<div><b>Cliente:</b> ${clientName}</div>` : ''}
+          <div><b>Horário:</b> ${horarioStr}</div>
+        </div>
+      `;
+      break;
+
+    case 'BALCAO_ENTREGA':
+      // 4. BALCAO + ENTREGA
+      // BALCÃO • ENTREGA
+      // Pedido #numero
+      // Cliente
+      // Horário
+      headerHtml = `
+        <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
+          <div style="font-size: 14pt; font-weight: 900; letter-spacing: 0.5px;">BALCÃO • ENTREGA</div>
+          <div style="font-size: 17pt; font-weight: 900; margin-top: 3px;">Pedido #${orderNumStr}</div>
+        </div>
+        <div style="font-size: 11pt; line-height: 1.4; margin-bottom: 6px;">
+          <div><b>Cliente:</b> ${clientName || 'Cliente'}</div>
+          <div><b>Horário:</b> ${horarioStr}</div>
+        </div>
+      `;
+      break;
+
+    case 'DELIVERY':
+      // 5. DELIVERY
+      // DELIVERY
+      // Pedido #numero
+      // Cliente
+      // Horário
+      headerHtml = `
+        <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
+          <div style="font-size: 14pt; font-weight: 900; letter-spacing: 0.5px;">DELIVERY</div>
+          <div style="font-size: 17pt; font-weight: 900; margin-top: 3px;">Pedido #${orderNumStr}</div>
+        </div>
+        <div style="font-size: 11pt; line-height: 1.4; margin-bottom: 6px;">
+          <div><b>Cliente:</b> ${clientName || 'Cliente'}</div>
+          <div><b>Horário:</b> ${horarioStr}</div>
+        </div>
+      `;
+      break;
+
+    case 'TOTEM':
+    default:
+      // 6. TOTEM
+      // TOTEM
+      // Pedido #numero
+      // Número de retirada, se existir
+      // Horário
+      headerHtml = `
+        <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 6px;">
+          <div style="font-size: 14pt; font-weight: 900; letter-spacing: 0.5px;">TOTEM</div>
+          <div style="font-size: 17pt; font-weight: 900; margin-top: 3px;">Pedido #${orderNumStr}</div>
+          ${pickupCode ? `<div style="font-size: 14pt; font-weight: 900; margin-top: 2px;">SENHA: #${pickupCode}</div>` : ''}
+        </div>
+        <div style="font-size: 11pt; line-height: 1.4; margin-bottom: 6px;">
+          <div><b>Horário:</b> ${horarioStr}</div>
+        </div>
+      `;
+      break;
+  }
+
+  const obsHtml = obsGeral ? `
+    <div style="margin-top: 8px; border: 2px solid #000; padding: 6px; border-radius: 4px; background: #fff; break-inside: avoid; page-break-inside: avoid;">
+      <div style="font-size: 10pt; font-weight: 900; text-align: center; border-bottom: 1px dashed #000; padding-bottom: 2px; margin-bottom: 4px;">OBSERVAÇÕES DO PEDIDO</div>
+      <div style="font-size: 11pt; font-weight: bold; text-align: center;">${obsGeral}</div>
+    </div>
+  ` : '';
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Ticket Cozinha #${orderNumStr}</title>
+      <style>
+        ${getThermalStyles(paperSize)}
+      </style>
+    </head>
+    <body>
+      <div class="receipt">
+        <div style="text-align: center; font-size: 9pt; font-weight: 900; letter-spacing: 1px; border-bottom: 1px solid #000; padding-bottom: 2px; margin-bottom: 6px;">
+          *** PRODUÇÃO / COZINHA ***
+        </div>
+        ${headerHtml}
+        <div style="border-top: 2px solid #000; margin: 6px 0 8px 0;"></div>
+        <div style="font-size: 10pt; font-weight: 900; text-transform: uppercase; margin-bottom: 6px;">ITENS:</div>
+        ${itemsHtml}
+        ${obsHtml}
+        <div style="margin-top: 10px; border-top: 2px solid #000; padding-top: 4px; text-align: center; font-weight: 900; font-size: 9pt; letter-spacing: 0.5px;">
+          FIM DO TICKET DE PRODUÇÃO
+        </div>
+        <!-- Cutter Spacer (12mm) -->
+        <div style="height: 12mm;"></div>
+      </div>
+
+      <script>
+        window.onload = () => {
+          window.focus();
+          window.print();
+          setTimeout(() => {
+            try {
+              window.close();
+            } catch (e) {}
+          }, 800);
+        };
+      </script>
+    </body>
+    </html>
+  `;
+}
+
+// ============================================================================
 // MAIN GENERATOR: Automatic Model Dispatcher by source/origem + service mode
 // ============================================================================
 export function generateThermalReceiptHtml(order: any, restaurant?: any, profile?: any): string {
@@ -681,6 +960,10 @@ export function generateThermalReceiptHtml(order: any, restaurant?: any, profile
 
   if (order.type === 'PRE_CONTA' || order.isPreConta || order.isPreBill) {
     return generatePreContaReceiptHtml(order, restaurant, profile);
+  }
+
+  if (order.type === 'KITCHEN_TICKET' || order.type === 'COZINHA' || order.isKitchenTicket || order.isKitchen || order.forKitchen) {
+    return generateKitchenTicketHtml(order, restaurant, profile);
   }
 
   // Identifica automaticamente a modalidade operacional do pedido
@@ -1047,76 +1330,11 @@ export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile
   `;
 }
 
-// Global print handler for Pre-Conta
-export function printThermalPreConta(data: any, restaurant?: any, profile?: any) {
-  if (!data) return;
-
-  const htmlContent = generatePreContaReceiptHtml(data, restaurant, profile);
-
-  let printWindow: Window | null = null;
-  try {
-    printWindow = window.open('', '_blank', 'width=420,height=700');
-  } catch (e) {
-    console.warn('Popup blocked, attempting iframe fallback approach.', e);
-  }
-
-  if (printWindow) {
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-  } else {
-    const iframeId = 'qfomeai-thermal-print-iframe';
-    let iframe = document.getElementById(iframeId) as HTMLIFrameElement;
-    
-    if (iframe) {
-      document.body.removeChild(iframe);
-    }
-    
-    iframe = document.createElement('iframe') as HTMLIFrameElement;
-    iframe.id = iframeId;
-    iframe.style.position = 'absolute';
-    iframe.style.width = '0px';
-    iframe.style.height = '0px';
-    iframe.style.border = 'none';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '-9999px';
-    
-    document.body.appendChild(iframe);
-    
-    const doc = iframe.contentWindow?.document || iframe.contentDocument;
-    if (doc) {
-      doc.open();
-      doc.write(htmlContent);
-      doc.close();
-      
-      iframe.onload = () => {
-        setTimeout(() => {
-          try {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-            setTimeout(() => {
-              if (document.getElementById(iframeId)) {
-                document.body.removeChild(iframe);
-              }
-            }, 5000);
-          } catch (err) {
-            console.error('Error printing through hidden iframe:', err);
-            if (document.getElementById(iframeId)) {
-              document.body.removeChild(iframe);
-            }
-          }
-        }, 500);
-      };
-    } else {
-      console.error('Could not construct printable document context inside hidden iframe');
-    }
-  }
-}
-
-// Global print handler used by all buttons in the system
-export function printThermalOrder(order: any, restaurant?: any, profile?: any) {
-  if (!order) return;
-
-  const htmlContent = generateThermalReceiptHtml(order, restaurant, profile);
+// ============================================================================
+// THERMAL PRINT EXECUTION: Uses existing popup or hidden iframe mechanism
+// ============================================================================
+function executeThermalPrint(htmlContent: string) {
+  if (!htmlContent) return;
 
   // Attempt to open in a popup window
   let printWindow: Window | null = null;
@@ -1178,6 +1396,27 @@ export function printThermalOrder(order: any, restaurant?: any, profile?: any) {
       console.error('Could not construct printable document context inside hidden iframe');
     }
   }
+}
+
+// Global print handler for Pre-Conta da Mesa / Comanda
+export function printThermalPreConta(data: any, restaurant?: any, profile?: any) {
+  if (!data) return;
+  const htmlContent = generatePreContaReceiptHtml(data, restaurant, profile);
+  executeThermalPrint(htmlContent);
+}
+
+// Global print handler for Kitchen / KDS Production Ticket
+export function printThermalKitchenTicket(order: any, restaurant?: any, profile?: any) {
+  if (!order) return;
+  const htmlContent = generateKitchenTicketHtml(order, restaurant, profile);
+  executeThermalPrint(htmlContent);
+}
+
+// Global print handler used for order receipts
+export function printThermalOrder(order: any, restaurant?: any, profile?: any) {
+  if (!order) return;
+  const htmlContent = generateThermalReceiptHtml(order, restaurant, profile);
+  executeThermalPrint(htmlContent);
 }
 
 // React component wrapping the HTML representation just in case

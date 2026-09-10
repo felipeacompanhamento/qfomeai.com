@@ -108,7 +108,17 @@ export default function AdminDashboard() {
 
       setRestaurants(resSnap.docs.map(d => ({ id: d.id, ...d.data() })));
       setUsers(userSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setOrders(orderSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setOrders(orderSnap.docs.map(d => {
+        const data = d.data() as any;
+        const restId = data?.restaurante_id || data?.restaurant_id || data?.restaurantId || d.ref.parent.parent?.id || '';
+        return {
+          ...data,
+          id: d.id,
+          restaurante_id: restId,
+          restaurant_id: restId,
+          restaurantId: restId
+        };
+      }));
       setCategories(catSnap.docs.map(d => ({ id: d.id, ...d.data() })));
       setProducts(prodSnap.docs.map(d => ({ id: d.id, restaurante_id: d.ref.parent.parent?.id, ...d.data() })));
     } catch (error) {
@@ -1088,7 +1098,17 @@ function CouponManagement({ restaurants, categories, products }: { restaurants: 
   const fetchOrders = useCallback(async () => {
     try {
       const snap = await getDocs(query(collectionGroup(db, 'orders'), orderBy('data_criacao', 'desc'), limit(50)));
-      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setOrders(snap.docs.map(d => {
+        const data = d.data() as any;
+        const restId = data?.restaurante_id || data?.restaurant_id || data?.restaurantId || d.ref.parent.parent?.id || '';
+        return {
+          ...data,
+          id: d.id,
+          restaurante_id: restId,
+          restaurant_id: restId,
+          restaurantId: restId
+        };
+      }));
     } catch (error) {
       console.error('[AdminDashboard] Erro ao buscar pedidos para cupons:', error);
     }
@@ -1968,6 +1988,7 @@ function ReportManagement({ users, restaurants, orders }: any) {
   const [selectedReport, setSelectedReport] = useState<any>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
+  const [blockingLoading, setBlockingLoading] = useState(false);
 
   const formatDate = (dateValue: any) => {
     if (!dateValue) return 'Data indisponível';
@@ -2012,6 +2033,28 @@ function ReportManagement({ users, restaurants, orders }: any) {
     }
   };
 
+  const handleToggleServiceBlock = async (serviceId: string, shouldBlock: boolean) => {
+    if (!serviceId) return;
+    setBlockingLoading(true);
+    try {
+      const docRef = doc(db, 'prestadores_servicos', serviceId);
+      await updateDoc(docRef, {
+        status: shouldBlock ? 'BLOQUEADO' : 'ATIVO',
+        ativo: !shouldBlock,
+        updatedAt: new Date()
+      });
+      if (selectedReport) {
+        await handleUpdateStatus(selectedReport.id, 'resolvida');
+      }
+      alert(shouldBlock ? "Anúncio de serviço BLOQUEADO com sucesso!" : "Anúncio de serviço ATIVADO/DESBLOQUEADO!");
+    } catch (err: any) {
+      console.error("[AdminDashboard] Erro ao alterar status do serviço:", err);
+      alert("Erro ao alterar status do anúncio de serviço.");
+    } finally {
+      setBlockingLoading(false);
+    }
+  };
+
   if (loading) return <div className="p-12 text-center text-stone-500">Carregando denúncias...</div>;
 
   return (
@@ -2039,7 +2082,7 @@ function ReportManagement({ users, restaurants, orders }: any) {
           <table className="w-full text-left min-w-[800px]">
             <thead>
               <tr className="bg-stone-50 border-b border-stone-200">
-                <th className="p-4 font-bold text-stone-600">Assunto / Pedido</th>
+                <th className="p-4 font-bold text-stone-600">Assunto / Origem</th>
                 <th className="p-4 font-bold text-stone-600">Status</th>
                 <th className="p-4 font-bold text-stone-600">Data</th>
                 <th className="p-4 font-bold text-stone-600">Envolvidos</th>
@@ -2048,21 +2091,30 @@ function ReportManagement({ users, restaurants, orders }: any) {
             </thead>
             <tbody>
               {filteredReports.map(r => {
-                const order = orders.find((o: any) => o.id === r.orderId);
+                const isServiceReport = r.type === 'servico' || !!r.servicoId;
+                const order = isServiceReport ? null : orders.find((o: any) => o.id === r.orderId);
                 const client = users.find((c: any) => c.id === r.reporterId) || users.find((c: any) => c.id === r.clientId);
-                const restaurant = restaurants.find((res: any) => res.id === r.restaurantId) || restaurants.find((res: any) => res.id === r.reportedId);
+                const restaurant = isServiceReport ? null : (restaurants.find((res: any) => res.id === r.restaurantId) || restaurants.find((res: any) => res.id === r.reportedId));
                 
-                const isOrderLoading = !order && orders.length === 0;
+                const isOrderLoading = !isServiceReport && !order && orders.length === 0;
                 const isClientLoading = !client && users.length === 0;
-                const isRestaurantLoading = !restaurant && restaurants.length === 0;
 
                 return (
                   <tr key={r.id} className="border-b border-stone-100 hover:bg-stone-50">
                     <td className="p-4 font-bold text-stone-800">
-                      <p>{typeof r.message === 'string' ? r.message.substring(0, 40) : 'Sem mensagem'}{r.message?.length > 40 ? '...' : ''}</p>
-                      <div className="text-xs text-stone-500 font-normal mt-1">
-                        {isOrderLoading ? 'Carregando pedido...' : order ? (
-                          <span>Pedido: #{String(order.id || '').slice(-5).toUpperCase()} - R$ {Number(order.total || 0).toFixed(2)} ({order.items?.length || 0} itens)</span>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        {isServiceReport && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-100 text-purple-800">
+                            Serviço Local
+                          </span>
+                        )}
+                        <p>{typeof r.message === 'string' ? r.message.substring(0, 45) : 'Sem mensagem'}{r.message?.length > 45 ? '...' : ''}</p>
+                      </div>
+                      <div className="text-xs text-stone-500 font-normal">
+                        {isServiceReport ? (
+                          <span>Anúncio: <strong className="text-stone-800">{r.servicoTitulo || 'Serviço'}</strong> ({r.servicoNome || 'Prestador'})</span>
+                        ) : isOrderLoading ? 'Carregando pedido...' : order ? (
+                          <span>Pedido: #{String(order.id || '').slice(-5).toUpperCase()} - R$ {Number(order.total || 0).toFixed(2)}</span>
                         ) : 'Pedido não encontrado'}
                       </div>
                     </td>
@@ -2077,11 +2129,15 @@ function ReportManagement({ users, restaurants, orders }: any) {
                     </td>
                     <td className="p-4 text-sm text-stone-500">{formatDate(r.createdAt)}</td>
                     <td className="p-4 text-sm">
-                      <p className="font-bold text-stone-800">C: {isClientLoading ? 'Carregando...' : client?.nome || 'N/A'}</p>
-                      <p className="text-stone-500">R: {isRestaurantLoading ? 'Carregando...' : restaurant?.nome || 'N/A'}</p>
+                      <p className="font-bold text-stone-800">Denunciante: {isClientLoading ? 'Carregando...' : client?.nome || r.reporterId || 'Anônimo'}</p>
+                      {isServiceReport ? (
+                        <p className="text-stone-500">Prestador: {r.servicoNome || 'N/A'}</p>
+                      ) : (
+                        <p className="text-stone-500">Restaurante: {restaurant?.nome || 'N/A'}</p>
+                      )}
                     </td>
                     <td className="p-4">
-                      <button onClick={() => setSelectedReport(r)} className="text-emerald-600 font-bold text-sm hover:underline">Ver detalhes</button>
+                      <button onClick={() => setSelectedReport(r)} className="text-emerald-600 font-bold text-sm hover:underline cursor-pointer">Ver detalhes</button>
                     </td>
                   </tr>
                 );
@@ -2096,7 +2152,7 @@ function ReportManagement({ users, restaurants, orders }: any) {
           <div className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="p-6 border-b border-stone-100 flex items-center justify-between bg-stone-50">
               <h3 className="text-xl font-bold text-stone-800">Detalhes da Denúncia</h3>
-              <button onClick={() => setSelectedReport(null)} className="p-2 hover:bg-stone-200 rounded-xl transition-all">
+              <button onClick={() => setSelectedReport(null)} className="p-2 hover:bg-stone-200 rounded-xl transition-all cursor-pointer">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -2104,19 +2160,60 @@ function ReportManagement({ users, restaurants, orders }: any) {
               
               <div className="bg-orange-50 p-4 rounded-2xl border border-orange-100">
                 <p className="text-sm font-bold text-orange-800 mb-1">Motivo / Mensagem</p>
-                <p className="text-sm text-orange-900">{selectedReport.message || 'Nenhuma mensagem fornecida.'}</p>
+                <p className="text-sm text-orange-900">{selectedReport.message || selectedReport.motivo || 'Nenhuma mensagem fornecida.'}</p>
+                {selectedReport.observacao && (
+                  <p className="text-xs text-orange-800 mt-2 italic">Observação: "{selectedReport.observacao}"</p>
+                )}
               </div>
+
+              {selectedReport.type === 'servico' || selectedReport.servicoId ? (
+                <div className="bg-purple-50 p-5 rounded-2xl border border-purple-100 space-y-4">
+                  <div className="flex items-center justify-between border-b border-purple-200/60 pb-3">
+                    <div>
+                      <span className="text-[10px] font-black tracking-wider uppercase text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md">
+                        Canal de Serviços
+                      </span>
+                      <h4 className="text-base font-black text-stone-900 mt-1">{selectedReport.servicoTitulo || 'Anúncio de Serviço'}</h4>
+                      <p className="text-xs font-bold text-stone-600">Profissional: {selectedReport.servicoNome || 'N/A'}</p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleServiceBlock(selectedReport.servicoId, true)}
+                        disabled={blockingLoading}
+                        className="py-2 px-3.5 bg-red-600 hover:bg-red-700 active:scale-95 text-xs font-black text-white rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {blockingLoading ? 'Aguarde...' : 'Bloquear Anúncio'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleServiceBlock(selectedReport.servicoId, false)}
+                        disabled={blockingLoading}
+                        className="py-2 px-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-xs font-black text-white rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        Desbloquear / Ativar
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-purple-900 space-y-1">
+                    <p>• Bloquear oculta o anúncio da busca pública e impede que o prestador o ative novamente.</p>
+                    <p>• Ao bloquear ou desbloquear, esta denúncia é marcada como resolvida automaticamente.</p>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                 <div className="space-y-4">
                   <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
                     <p className="font-bold text-stone-800 mb-2 flex items-center gap-2">
-                      Denunciante (Cliente)
+                      Denunciante
                     </p>
                     {(() => {
                       const client = users.find((u: any) => u.id === selectedReport.reporterId) || users.find((u: any) => u.id === selectedReport.clientId);
-                      if (!client && users.length === 0) return <p className="text-stone-500">Carregando dados do cliente...</p>;
-                      if (!client) return <p className="text-stone-500">Cliente não encontrado.</p>;
+                      if (!client && users.length === 0) return <p className="text-stone-500">Carregando dados do usuário...</p>;
+                      if (!client) return <p className="text-stone-500">ID: {selectedReport.reporterId || 'Anônimo'}</p>;
                       return (
                         <>
                           <p className="font-bold">{client.nome}</p>
@@ -2131,55 +2228,66 @@ function ReportManagement({ users, restaurants, orders }: any) {
                     })()}
                   </div>
 
-                  <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                    <p className="font-bold text-stone-800 mb-2 flex items-center gap-2">
-                      Denunciado (Restaurante)
-                    </p>
-                    {(() => {
-                      const restaurant = restaurants.find((r: any) => r.id === selectedReport.restaurantId) || restaurants.find((r: any) => r.id === selectedReport.reportedId);
-                      if (!restaurant && restaurants.length === 0) return <p className="text-stone-500">Carregando dados do restaurante...</p>;
-                      if (!restaurant) return <p className="text-stone-500">Restaurante não encontrado.</p>;
-                      return (
-                        <>
-                          <p className="font-bold">{restaurant.nome}</p>
-                          <p className="text-stone-500">{restaurant.email}</p>
-                          {restaurant.telefone && (
-                            <a href={`https://wa.me/${String(restaurant.telefone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="text-emerald-600 font-bold hover:underline mt-1 inline-block">
-                              WhatsApp: {restaurant.telefone}
-                            </a>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
+                  {!(selectedReport.type === 'servico' || selectedReport.servicoId) && (
+                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                      <p className="font-bold text-stone-800 mb-2 flex items-center gap-2">
+                        Denunciado (Restaurante)
+                      </p>
+                      {(() => {
+                        const restaurant = restaurants.find((r: any) => r.id === selectedReport.restaurantId) || restaurants.find((r: any) => r.id === selectedReport.reportedId);
+                        if (!restaurant && restaurants.length === 0) return <p className="text-stone-500">Carregando dados do restaurante...</p>;
+                        if (!restaurant) return <p className="text-stone-500">Restaurante não encontrado.</p>;
+                        return (
+                          <>
+                            <p className="font-bold">{restaurant.nome}</p>
+                            <p className="text-stone-500">{restaurant.email}</p>
+                            {restaurant.telefone && (
+                              <a href={`https://wa.me/${String(restaurant.telefone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="text-emerald-600 font-bold hover:underline mt-1 inline-block">
+                                WhatsApp: {restaurant.telefone}
+                              </a>
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 <div>
-                  <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 h-full">
-                    <p className="font-bold text-stone-800 mb-2">Detalhes do Pedido</p>
-                    {(() => {
-                      const order = orders.find((o: any) => o.id === selectedReport.orderId);
-                      if (!order && orders.length === 0) return <p className="text-stone-500">Carregando dados do pedido...</p>;
-                      if (!order) return <p className="text-stone-500">Pedido não encontrado.</p>;
-                      return (
-                        <div className="space-y-2">
-                          <p><span className="font-bold">ID:</span> #{String(order.id || '').slice(-5).toUpperCase()}</p>
-                          <p><span className="font-bold">Status do Pedido:</span> <span className="uppercase text-xs font-bold bg-stone-200 px-2 py-1 rounded-full">{order.status}</span></p>
-                          <p><span className="font-bold">Total:</span> R$ {Number(order.total || 0).toFixed(2)}</p>
-                          <div className="mt-3 pt-3 border-t border-stone-200">
-                            <p className="font-bold mb-1">Itens:</p>
-                            <ul className="space-y-1">
-                              {order.items?.map((item: any, idx: number) => (
-                                <li key={idx} className="text-stone-600 text-xs">
-                                  {item.quantidade}x {item.nome}
-                                </li>
-                              ))}
-                            </ul>
+                  {!(selectedReport.type === 'servico' || selectedReport.servicoId) ? (
+                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 h-full">
+                      <p className="font-bold text-stone-800 mb-2">Detalhes do Pedido</p>
+                      {(() => {
+                        const order = orders.find((o: any) => o.id === selectedReport.orderId);
+                        if (!order && orders.length === 0) return <p className="text-stone-500">Carregando dados do pedido...</p>;
+                        if (!order) return <p className="text-stone-500">Pedido não encontrado.</p>;
+                        return (
+                          <div className="space-y-2">
+                            <p><span className="font-bold">ID:</span> #{String(order.id || '').slice(-5).toUpperCase()}</p>
+                            <p><span className="font-bold">Status do Pedido:</span> <span className="uppercase text-xs font-bold bg-stone-200 px-2 py-1 rounded-full">{order.status}</span></p>
+                            <p><span className="font-bold">Total:</span> R$ {Number(order.total || 0).toFixed(2)}</p>
+                            <div className="mt-3 pt-3 border-t border-stone-200">
+                              <p className="font-bold mb-1">Itens:</p>
+                              <ul className="space-y-1">
+                                {order.items?.map((item: any, idx: number) => (
+                                  <li key={idx} className="text-stone-600 text-xs">
+                                    {item.quantidade}x {item.nome}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="bg-stone-50 p-4 rounded-2xl border border-stone-100 h-full space-y-2">
+                      <p className="font-bold text-stone-800 mb-2">Informações Adicionais</p>
+                      <p><span className="font-bold">ID do Serviço:</span> {selectedReport.servicoId}</p>
+                      <p><span className="font-bold">Motivo Selecionado:</span> {selectedReport.motivo || 'N/A'}</p>
+                      <p><span className="font-bold">ID do Prestador:</span> {selectedReport.providerUserId || 'N/A'}</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2691,7 +2799,17 @@ function OrderManagement({ restaurants, users }: any) {
       }
 
       const snap = await getDocs(q);
-      const newOrders = snap.docs.map(d => ({ id: d.id, ...(d.data() as object) }));
+      const newOrders = snap.docs.map(d => {
+        const data = d.data() as any;
+        const restId = data?.restaurante_id || data?.restaurant_id || data?.restaurantId || d.ref.parent.parent?.id || restaurantFilter || '';
+        return {
+          ...data,
+          id: d.id,
+          restaurante_id: restId,
+          restaurant_id: restId,
+          restaurantId: restId
+        };
+      });
       
       if (isNextPage) {
         setLocalOrders(prev => [...prev, ...newOrders]);
@@ -2806,6 +2924,19 @@ function OrderManagement({ restaurants, users }: any) {
 
   const handleUpdateOrderStatus = async (order: any, newStatus: string, reason?: string) => {
     try {
+      if (!order || !order.id) {
+        console.error('[AdminDashboard] Pedido inválido ou sem ID:', order);
+        alert('Erro ao identificar o pedido.');
+        return;
+      }
+
+      const restId = order.restaurante_id || order.restaurant_id || order.restaurantId;
+      if (!restId) {
+        console.error('[AdminDashboard] Identificador do restaurante não encontrado no pedido:', order);
+        alert('Não foi possível identificar o restaurante vinculado a este pedido.');
+        return;
+      }
+
       const updateData: any = { status: newStatus };
       if (reason) updateData.motivo_cancelamento = reason;
       if (newStatus === 'rejeitado' || newStatus === 'cancelado') updateData.data_cancelamento = new Date().toISOString();
@@ -2813,10 +2944,12 @@ function OrderManagement({ restaurants, users }: any) {
       if (newStatus === 'despachado') updateData.data_despacho = new Date().toISOString();
       if (newStatus === 'finalizado') updateData.data_finalizacao = new Date().toISOString();
 
-      await updateDoc(doc(db, 'restaurants', order.restaurante_id, 'orders', order.id), updateData);
+      await updateDoc(doc(db, 'restaurants', restId, 'orders', order.id), updateData);
       
       // Update local state to reflect changes immediately
-      setSelectedOrder({ ...order, ...updateData });
+      const updatedOrder = { ...order, ...updateData };
+      setSelectedOrder(updatedOrder);
+      setLocalOrders((prev: any[]) => prev.map((o: any) => o.id === order.id ? { ...o, ...updateData } : o));
     } catch (error) {
       console.error('[AdminDashboard] Erro ao atualizar status do pedido:', error);
       alert('Erro ao atualizar status do pedido.');

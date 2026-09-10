@@ -1,6 +1,269 @@
+import { getOrderModality, getTotemRealModality, isGarcomOrder, isRetiradaOrder } from '../../../../domain/order/orderSource';
+import { getCanonicalOrderState, canRestaurantSettleOrder } from '../../../../domain/order/orderLifecycle';
+
+export interface ModalityAction {
+  label: string;
+  nextStatus?: string;
+  actionType?: 'assign_driver' | 'settlement' | 'details' | 'update_status';
+  isModalTrigger?: boolean;
+  bg: string;
+  isTerminal?: boolean;
+}
+
 /**
- * Utilitários de apresentação e cálculo de tempos de etapa / atrasos
+ * Retorna o texto padronizado do status visual de acordo com a modalidade
  */
+export function getModalityStatusText(order: any): string {
+  if (!order) return '';
+
+  const modality = getOrderModality(order);
+  const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
+  const canonical = getCanonicalOrderState(order);
+
+  // 1. GARÇOM / MESA & BALCÃO + MESA (e TOTEM com atendimento Mesa)
+  if (modality === 'GARCOM_MESA' || modality === 'BALCAO_MESA' || (modality === 'TOTEM' && getTotemRealModality(order) === 'MESA')) {
+    if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+      return 'Novo pedido';
+    }
+    if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+      return 'Aceito';
+    }
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+      return 'Em preparo';
+    }
+    if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+      return 'Pronto';
+    }
+    if (['entregue', 'delivered', 'servido', 'finalizado', 'completed', 'finalized'].includes(rawStatus) || canonical.orderStatus === 'DELIVERED' || canonical.orderStatus === 'FINALIZED') {
+      return 'Servido';
+    }
+    if (['cancelado', 'cancelled', 'rejeitado'].includes(rawStatus) || canonical.orderStatus === 'CANCELLED') {
+      return 'Cancelado';
+    }
+    return 'Servido';
+  }
+
+  // 2. BALCÃO + RETIRADA (e TOTEM com atendimento Retirada)
+  if (modality === 'BALCAO_RETIRADA' || (modality === 'TOTEM' && getTotemRealModality(order) === 'RETIRADA')) {
+    if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+      return 'Novo pedido';
+    }
+    if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+      return 'Aceito';
+    }
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+      return 'Em preparo';
+    }
+    if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+      return 'PRONTO PARA RETIRADA';
+    }
+    if (['entregue', 'delivered', 'retirado', 'finalizado', 'completed', 'finalized'].includes(rawStatus) || canonical.orderStatus === 'DELIVERED' || canonical.orderStatus === 'FINALIZED') {
+      return 'Retirado';
+    }
+    if (['cancelado', 'cancelled', 'rejeitado'].includes(rawStatus) || canonical.orderStatus === 'CANCELLED') {
+      return 'Cancelado';
+    }
+    return 'Retirado';
+  }
+
+  // 3. BALCÃO + ENTREGA, DELIVERY & TOTEM (com atendimento Entrega)
+  if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+    return 'Novo pedido';
+  }
+  if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+    return 'Aceito';
+  }
+  if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+    return 'Em preparo';
+  }
+  if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+    if (canonical.deliveryStatus === 'ASSIGNED' || canonical.deliveryStatus === 'ACCEPTED' || Boolean(order.driverId || order.entregador_id || order.assignedDriverName || order.deliveredByDriverName)) {
+      return 'Aguardando entregador';
+    }
+    return 'Pronto';
+  }
+  if (['entrega', 'saiu_entrega', 'saiu para entrega', 'saiu_para_entrega', 'despachado', 'em_entrega', 'out_for_delivery'].includes(rawStatus) || canonical.orderStatus === 'OUT_FOR_DELIVERY') {
+    return 'Em rota';
+  }
+  if (['entregue', 'delivered'].includes(rawStatus) || canonical.orderStatus === 'DELIVERED') {
+    return 'Entregue';
+  }
+  if (['finalizado', 'completed', 'finalized'].includes(rawStatus) || canonical.orderStatus === 'FINALIZED') {
+    return 'Finalizado';
+  }
+  if (['cancelado', 'cancelled', 'rejeitado'].includes(rawStatus) || canonical.orderStatus === 'CANCELLED') {
+    return 'Cancelado';
+  }
+
+  return 'Novo pedido';
+}
+
+/**
+ * Determina a próxima ação padronizada do pedido baseada em:
+ * Origem + Modalidade / Atendimento + Status Atual
+ */
+export function getModalityNextAction(order: any): ModalityAction {
+  if (!order) {
+    return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+  }
+
+  const modality = getOrderModality(order);
+  const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
+  const canonical = getCanonicalOrderState(order);
+  const isPendingSettlement = canRestaurantSettleOrder(order);
+  const hasDriver = Boolean(
+    order.driverId || 
+    order.entregador_id || 
+    order.entregadorId || 
+    order.assignedDriverName || 
+    order.deliveredByDriverName || 
+    order.driverName || 
+    order.entregador_nome
+  );
+
+  // Status terminais
+  if (
+    ['finalizado', 'completed', 'finalized', 'cancelado', 'cancelled', 'rejeitado'].includes(rawStatus) ||
+    canonical.orderStatus === 'FINALIZED' ||
+    canonical.orderStatus === 'CANCELLED'
+  ) {
+    return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+  }
+
+  // 1. GARÇOM / MESA
+  if (modality === 'GARCOM_MESA') {
+    if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+      return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+    }
+    if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+      return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+    }
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+      return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+    }
+    if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+      return { label: 'MARCAR COMO SERVIDO', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+    }
+    // Já servido (entregue / finalizado) -> Nenhuma ação operacional adicional
+    return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+  }
+
+  // 2. BALCÃO + MESA
+  if (modality === 'BALCAO_MESA') {
+    if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+      return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+    }
+    if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+      return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+    }
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+      return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+    }
+    if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+      return { label: 'MARCAR COMO SERVIDO', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+    }
+    // Já servido -> Nenhuma ação operacional adicional
+    return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+  }
+
+  // 3. BALCÃO + RETIRADA
+  if (modality === 'BALCAO_RETIRADA') {
+    if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+      return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+    }
+    if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+      return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+    }
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+      return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+    }
+    if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+      return { label: 'MARCAR COMO RETIRADO', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+    }
+    // Já retirado -> Nenhuma ação operacional adicional
+    return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+  }
+
+  // 4. TOTEM (Resolve modalidade real)
+  if (modality === 'TOTEM') {
+    const totemReal = getTotemRealModality(order);
+    if (totemReal === 'MESA') {
+      if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+      }
+      if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+      }
+      if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+        return { label: 'MARCAR COMO SERVIDO', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+    }
+    if (totemReal === 'RETIRADA') {
+      if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+      }
+      if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+      }
+      if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+        return { label: 'MARCAR COMO RETIRADO', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+      }
+      return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+    }
+  }
+
+  // 5. BALCÃO + ENTREGA & DELIVERY
+  if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+    return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+  }
+  if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+    return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
+  }
+  if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+    return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
+  }
+  if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+    if (!hasDriver) {
+      return {
+        label: 'ENVIAR PARA ENTREGADOR',
+        isModalTrigger: true,
+        actionType: 'assign_driver',
+        bg: 'bg-indigo-600 hover:bg-indigo-700 text-white'
+      };
+    }
+    return {
+      label: 'Despachar / Saiu',
+      nextStatus: 'despachado',
+      bg: 'bg-blue-600 hover:bg-blue-700 text-white'
+    };
+  }
+  if (isPendingSettlement) {
+    return {
+      label: 'Conferir Recebimento',
+      isModalTrigger: true,
+      actionType: 'settlement',
+      bg: 'bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold'
+    };
+  }
+  if (
+    ['entrega', 'saiu_entrega', 'saiu para entrega', 'saiu_para_entrega', 'despachado', 'em_entrega', 'out_for_delivery'].includes(rawStatus) ||
+    canonical.orderStatus === 'OUT_FOR_DELIVERY'
+  ) {
+    return { label: 'Marcar Entregue', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+  }
+  if (['entregue', 'delivered'].includes(rawStatus) || canonical.orderStatus === 'DELIVERED') {
+    return { label: 'Finalizar Pedido', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
+  }
+
+  return { label: 'Ver Detalhes', isModalTrigger: true, isTerminal: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
+}
 
 export interface StageTimeInfo {
   elapsedMinutes: number;

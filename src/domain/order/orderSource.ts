@@ -184,7 +184,90 @@ export function getOrderModality(order: any): OrderModality {
 
 export function isGarcomOrder(order: any): boolean {
   if (!order) return false;
+  const modality = getOrderModality(order);
+  if (modality === 'GARCOM_MESA' || modality === 'BALCAO_MESA') return true;
+  if (modality === 'TOTEM') {
+    return getTotemRealModality(order) === 'MESA';
+  }
   if (normalizeOrderOrigem(order) === 'GARCOM') return true;
   return Boolean(order.waiterName || order.garcom_nome || order.sentBy?.name);
+}
+
+/**
+ * Identifica o tipo de atendimento real de um pedido de TOTEM
+ */
+export function getTotemRealModality(order: any): 'MESA' | 'ENTREGA' | 'RETIRADA' {
+  if (!order) return 'RETIRADA';
+
+  const rawAtendimento = String(
+    order.atendimento ||
+    order.tipo_atendimento ||
+    order.tipoAtendimento ||
+    order.modalidade ||
+    ''
+  ).toUpperCase().trim();
+
+  const rawTipoEntrega = String(
+    order.tipo_entrega || 
+    order.tipoEntrega ||
+    order.delivery_type ||
+    order.deliveryType ||
+    order.fulfillment_type || 
+    order.fulfillmentType || 
+    ''
+  ).toLowerCase().trim();
+
+  const rawServiceMode = String(order.serviceMode || '').toUpperCase().trim();
+
+  const hasTableOrComanda = Boolean(
+    (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '' && String(order.tableNumber) !== '--') ||
+    (order.mesa_numero !== undefined && order.mesa_numero !== null && String(order.mesa_numero).trim() !== '' && String(order.mesa_numero) !== '--') ||
+    order.tableName ||
+    order.table_name ||
+    order.mesaNome ||
+    (order.num_mesa !== undefined && order.num_mesa !== null && String(order.num_mesa).trim() !== '') ||
+    (order.mesaNumero !== undefined && order.mesaNumero !== null && String(order.mesaNumero).trim() !== '') ||
+    (order.mesa && String(order.mesa).trim() !== '' && String(order.mesa) !== '--') ||
+    order.comanda_id ||
+    order.comandaId ||
+    order.tabId ||
+    order.tabNumber ||
+    order.comandaNumero ||
+    order.comanda_numero
+  );
+
+  if (
+    rawAtendimento === 'ENTREGA' || 
+    rawAtendimento === 'DELIVERY' || 
+    rawServiceMode === 'DELIVERY' || 
+    rawTipoEntrega === 'entrega' || 
+    rawTipoEntrega === 'delivery' ||
+    Boolean(order.endereco_entrega || order.endereco || order.deliverySnapshot || order.driverId || order.entregador_id || order.entregadorId)
+  ) {
+    return 'ENTREGA';
+  }
+
+  if (
+    rawAtendimento === 'MESA' || 
+    rawAtendimento === 'DINE_IN' || 
+    rawServiceMode === 'DINE_IN' || 
+    rawTipoEntrega === 'consumo_local' || 
+    rawTipoEntrega === 'mesa' ||
+    hasTableOrComanda
+  ) {
+    return 'MESA';
+  }
+
+  return 'RETIRADA';
+}
+
+export function isRetiradaOrder(order: any): boolean {
+  if (!order) return false;
+  const modality = getOrderModality(order);
+  if (modality === 'BALCAO_RETIRADA') return true;
+  if (modality === 'TOTEM') {
+    return getTotemRealModality(order) === 'RETIRADA';
+  }
+  return false;
 }
 

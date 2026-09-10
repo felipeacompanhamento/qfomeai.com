@@ -80,6 +80,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
   const [deliveryNeighborhood, setDeliveryNeighborhood] = useState<string>('');
   const [deliveryComplement, setDeliveryComplement] = useState<string>('');
   const [deliveryReference, setDeliveryReference] = useState<string>('');
+  const [orderNotes, setOrderNotes] = useState<string>('');
 
   // Field validation errors
   const [clientNameError, setClientNameError] = useState<string | null>(null);
@@ -421,10 +422,32 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
 
     if (tipo === 'RETIRADA') {
       setServiceMode('PICKUP');
+      // Limpa dados de mesa/comanda e entrega
+      setSelectedTable(null);
+      setSelectedTab(null);
+      setTableNumber('');
+      setTableFilterQuery('');
+      setDeliveryStreet('');
+      setDeliveryNumber('');
+      setDeliveryNeighborhood('');
+      setDeliveryComplement('');
+      setDeliveryReference('');
     } else if (tipo === 'MESA') {
       setServiceMode('DINE_IN');
+      // Limpa dados de entrega e valores de troco
+      setDeliveryStreet('');
+      setDeliveryNumber('');
+      setDeliveryNeighborhood('');
+      setDeliveryComplement('');
+      setDeliveryReference('');
+      setDeliveredCashCents(0);
     } else {
       setServiceMode('COUNTER');
+      // Limpa dados de mesa/comanda
+      setSelectedTable(null);
+      setSelectedTab(null);
+      setTableNumber('');
+      setTableFilterQuery('');
     }
   };
 
@@ -439,12 +462,9 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
 
     if (!restaurantId || cart.length === 0) return;
 
-    // Field validations per selected Tipo de Atendimento
+    // Validações por modalidade de atendimento no Balcão
     if (tipoAtendimento === 'RETIRADA') {
-      if (!clientName.trim()) {
-        setClientNameError('Informe o nome do cliente para retirada.');
-        return;
-      }
+      // Cliente é opcional ("cliente, se necessário"). Se vazio, adota "Cliente Balcão".
     } else if (tipoAtendimento === 'MESA') {
       if (mesaSelectionMode === 'FREE_TABLE') {
         if (!selectedTable) {
@@ -583,7 +603,9 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
         payments: tipoAtendimento === 'MESA' ? [] : payments.map(p => ({ ...p, status: isPaid ? 'PAID' : 'PENDING' })),
         pago: tipoAtendimento === 'MESA' ? false : isPaid,
         amountReceived: tipoAtendimento === 'MESA' ? 0 : finalAmountReceivedReais,
-        clientActionId: clientActionIdRef.current
+        clientActionId: clientActionIdRef.current,
+        observacoes: orderNotes.trim() || undefined,
+        observacao: orderNotes.trim() || undefined
       });
 
       // Reset clientActionIdRef on successful checkout
@@ -607,6 +629,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
       setDeliveryNeighborhood('');
       setDeliveryComplement('');
       setDeliveryReference('');
+      setOrderNotes('');
       setClientNameError(null);
       setClientPhoneError(null);
       setTableNumberError(null);
@@ -658,29 +681,38 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
             <Store className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
           <div>
-            <h1 className="text-lg sm:text-xl font-bold text-stone-800">Venda no Balcão (PDV)</h1>
-            <p className="text-xs text-stone-500">Atendimento presencial rápido, consumo local e retirada</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-lg sm:text-xl font-extrabold text-stone-900">Venda no Balcão (PDV)</h1>
+              {/* Modalidade escolhida claramente visível */}
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black tracking-wider uppercase bg-emerald-100 text-emerald-950 border border-emerald-300 shadow-2xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+                BALCÃO • {tipoAtendimento}
+              </span>
+            </div>
+            <p className="text-xs text-stone-500 mt-0.5">Origem: Balcão • Atendimento adaptável por modalidade</p>
           </div>
         </div>
 
         {/* Mobile View Switcher Tabs */}
         <div className="sm:hidden flex w-full bg-stone-100 p-1 rounded-xl">
           <button
+            type="button"
             onClick={() => setMobileTab('catalog')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-              mobileTab === 'catalog' ? 'bg-white text-stone-800 shadow-xs' : 'text-stone-500'
+            className={`flex-1 min-h-[44px] py-2 text-xs font-extrabold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              mobileTab === 'catalog' ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-500'
             }`}
           >
             Cardápio
           </button>
           <button
+            type="button"
             onClick={() => setMobileTab('cart')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-              mobileTab === 'cart' ? 'bg-white text-emerald-600 shadow-xs' : 'text-stone-500'
+            className={`flex-1 min-h-[44px] py-2 text-xs font-extrabold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              mobileTab === 'cart' ? 'bg-white text-emerald-800 shadow-xs' : 'text-stone-500'
             }`}
           >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>Carrinho ({cart.reduce((a, b) => a + b.quantidade, 0)})</span>
+            <ShoppingBag className="w-4 h-4" />
+            <span>Pedido ({cart.reduce((a, b) => a + b.quantidade, 0)})</span>
           </button>
         </div>
       </div>
@@ -793,75 +825,90 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
         <div className={`lg:col-span-5 xl:col-span-4 flex flex-col min-h-0 h-full overflow-hidden ${mobileTab === 'catalog' ? 'hidden sm:flex' : 'flex'}`}>
           <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs flex flex-col h-full min-h-0 overflow-hidden">
             {/* Cart Header - Fixed */}
-            <div className="shrink-0 space-y-2.5 border-b border-stone-100 pb-3">
-              <h2 className="font-bold text-stone-800 text-base flex items-center justify-between">
-                <span>Carrinho de Venda</span>
-                <span className="text-xs font-semibold px-2.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-full">
-                  {cart.reduce((a, b) => a + b.quantidade, 0)} itens
+            <div className="shrink-0 space-y-3 border-b border-stone-100 pb-3">
+              <div className="flex items-center justify-between">
+                <h2 className="font-extrabold text-stone-900 text-base flex items-center gap-2">
+                  <span>Novo Pedido</span>
+                  <span className="text-xs font-semibold px-2.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-full">
+                    {cart.reduce((a, b) => a + b.quantidade, 0)} {cart.reduce((a, b) => a + b.quantidade, 0) === 1 ? 'item' : 'itens'}
+                  </span>
+                </h2>
+                {/* Modalidade escolhida visível */}
+                <span className="inline-flex items-center gap-1.5 text-xs font-black tracking-wider uppercase px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-950 border border-emerald-300 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                  BALCÃO • {tipoAtendimento}
                 </span>
-              </h2>
+              </div>
 
-              {/* Tipo de Atendimento: Retirada | Consumir na Mesa | Entrega */}
-              <div className="space-y-1.5">
+              {/* Escolha da Modalidade: COMO SERÁ O ATENDIMENTO? */}
+              <div className="bg-stone-50 p-3 rounded-2xl border border-stone-200/90 space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-stone-700">Tipo de Atendimento</label>
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/50">
+                  <label className="text-xs font-black text-stone-900 tracking-wider uppercase">
+                    COMO SERÁ O ATENDIMENTO?
+                  </label>
+                  <span className="text-[10px] font-bold text-stone-500">
                     Origem: Balcão
                   </span>
                 </div>
-                <div className="grid grid-cols-3 gap-1.5 p-1 bg-stone-100 rounded-xl">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
+                    id="btn-atendimento-retirada"
                     onClick={() => handleSelectTipoAtendimento('RETIRADA')}
-                    className={`flex items-center justify-center gap-1 py-1.5 px-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    className={`min-h-[48px] py-2 px-1.5 text-xs font-black rounded-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 cursor-pointer border ${
                       tipoAtendimento === 'RETIRADA' 
-                        ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20' 
-                        : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/50'
+                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-600/30' 
+                        : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-200 hover:border-stone-300 active:scale-[0.98]'
                     }`}
                   >
-                    <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">Retirada</span>
+                    <ShoppingBag className="w-4 h-4 shrink-0" />
+                    <span className="truncate">RETIRADA</span>
                   </button>
+
                   <button
                     type="button"
+                    id="btn-atendimento-mesa"
                     onClick={() => handleSelectTipoAtendimento('MESA')}
-                    className={`flex items-center justify-center gap-1 py-1.5 px-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    className={`min-h-[48px] py-2 px-1.5 text-xs font-black rounded-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 cursor-pointer border ${
                       tipoAtendimento === 'MESA' 
-                        ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20' 
-                        : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/50'
+                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-600/30' 
+                        : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-200 hover:border-stone-300 active:scale-[0.98]'
                     }`}
                   >
-                    <Utensils className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">Consumir na Mesa</span>
+                    <Utensils className="w-4 h-4 shrink-0" />
+                    <span className="truncate">MESA</span>
                   </button>
+
                   <button
                     type="button"
+                    id="btn-atendimento-entrega"
                     onClick={() => handleSelectTipoAtendimento('ENTREGA')}
-                    className={`flex items-center justify-center gap-1 py-1.5 px-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    className={`min-h-[48px] py-2 px-1.5 text-xs font-black rounded-xl transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 cursor-pointer border ${
                       tipoAtendimento === 'ENTREGA' 
-                        ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20' 
-                        : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/50'
+                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-600/30' 
+                        : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-200 hover:border-stone-300 active:scale-[0.98]'
                     }`}
                   >
-                    <Truck className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">Entrega</span>
+                    <Truck className="w-4 h-4 shrink-0" />
+                    <span className="truncate">ENTREGA</span>
                   </button>
                 </div>
               </div>
 
               {/* Dynamic Screen States per Tipo de Atendimento */}
               {tipoAtendimento === 'RETIRADA' && (
-                <div className="space-y-2 p-2.5 bg-stone-50/80 rounded-xl border border-stone-200/60">
-                  <div className="flex items-center justify-between text-[11px] text-stone-500 font-medium">
-                    <span>Retirada no balcão quando pronto</span>
+                <div className="space-y-2 p-3 bg-stone-50/80 rounded-xl border border-stone-200/60">
+                  <div className="flex items-center justify-between text-xs text-stone-600 font-semibold">
+                    <span>Identificação para Retirada</span>
+                    <span className="text-[10px] text-stone-400 font-normal">Chamada no balcão</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <FormField 
-                      label="Nome do Cliente *"
+                      label="Cliente (opcional)"
                       error={clientNameError || undefined}
                     >
                       <TextInput
-                        placeholder="Nome para chamada no balcão"
+                        placeholder="Ex: Ana, Carlos, etc."
                         value={clientName}
                         onChange={(e) => {
                           setClientName(e.target.value);
@@ -870,7 +917,7 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
                       />
                     </FormField>
                     <FormField 
-                      label="Telefone / WhatsApp"
+                      label="Telefone / WhatsApp (opcional)"
                       error={clientPhoneError || undefined}
                     >
                       <TextInput
@@ -897,39 +944,41 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
                   </div>
 
                   {/* Mode selector: Mesa Livre vs Comanda Ativa Existente */}
-                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-200/70 rounded-lg">
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-stone-200/70 rounded-xl">
                     <button
                       type="button"
+                      id="btn-mesa-iniciar-atendimento"
                       onClick={() => {
                         setMesaSelectionMode('FREE_TABLE');
                         setSelectedTab(null);
                         setTableNumberError(null);
                       }}
-                      className={`py-1.5 px-2.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      className={`min-h-[44px] py-2 px-2 text-xs font-black rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                         mesaSelectionMode === 'FREE_TABLE'
-                          ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20'
+                          ? 'bg-white text-emerald-900 shadow-xs ring-1 ring-emerald-600/30'
                           : 'text-stone-600 hover:text-stone-900'
                       }`}
                     >
                       <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                      <span>Mesa Livre ({freeTables.length})</span>
+                      <span className="truncate">Iniciar Atendimento ({freeTables.length})</span>
                     </button>
 
                     <button
                       type="button"
+                      id="btn-mesa-comanda-existente"
                       onClick={() => {
                         setMesaSelectionMode('ACTIVE_TAB');
                         setSelectedTable(null);
                         setTableNumberError(null);
                       }}
-                      className={`py-1.5 px-2.5 text-xs font-bold rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      className={`min-h-[44px] py-2 px-2 text-xs font-black rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                         mesaSelectionMode === 'ACTIVE_TAB'
-                          ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-600/20'
+                          ? 'bg-white text-emerald-900 shadow-xs ring-1 ring-emerald-600/30'
                           : 'text-stone-600 hover:text-stone-900'
                       }`}
                     >
-                      <Receipt className="w-3 h-3 text-amber-600 shrink-0" />
-                      <span>Comanda Ativa ({activeTabs.length})</span>
+                      <Receipt className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span className="truncate">Comanda da Mesa ({activeTabs.length})</span>
                     </button>
                   </div>
 
@@ -1250,6 +1299,29 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
               )}
             </div>
 
+            {/* Observações do Pedido (Geral / Cozinha / Bar) */}
+            <div className="shrink-0 space-y-1.5 py-2 border-t border-stone-100">
+              <label htmlFor="counter-order-notes" className="text-xs font-bold text-stone-700 flex items-center justify-between">
+                <span>Observações do Pedido</span>
+                <span className="text-[10px] text-stone-400 font-normal">Cozinha / Bar</span>
+              </label>
+              <textarea
+                id="counter-order-notes"
+                rows={2}
+                placeholder={
+                  tipoAtendimento === 'RETIRADA'
+                    ? "Ex: Embalar para viagem, fornecer talheres descartáveis..."
+                    : tipoAtendimento === 'MESA'
+                    ? "Ex: Bebidas primeiro, carne ao ponto..."
+                    : "Ex: Tocar campainha 2 vezes, deixar na portaria..."
+                }
+                value={orderNotes}
+                onChange={(e) => setOrderNotes(e.target.value)}
+                maxLength={500}
+                className="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all resize-none font-medium"
+              />
+            </div>
+
             {/* Totals & Payments & Checkout - Fixed at bottom */}
             <div className="shrink-0 border-t border-stone-100 pt-2.5 space-y-2.5 max-h-[45vh] overflow-y-auto custom-scrollbar pr-0.5">
               {/* Order Totals Summary */}
@@ -1271,13 +1343,13 @@ export default function CounterPage({ restaurantProfile }: { restaurantProfile: 
               </div>
 
               {tipoAtendimento === 'MESA' ? (
-                <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200/80 space-y-1">
+                <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 space-y-1">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
-                    <Receipt className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-                    <span>Cobrança Integrada na Mesa/Comanda</span>
+                    <Receipt className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span>O valor deste pedido pertence à COMANDA</span>
                   </div>
-                  <p className="text-[11px] text-emerald-800 leading-relaxed">
-                    O valor deste pedido pertence à comanda/mesa. O acerto financeiro será efetuado no fechamento da comanda, sem cobrança individual neste momento.
+                  <p className="text-xs text-emerald-800 leading-relaxed">
+                    Não solicitar pagamento individual desse pedido. O acerto financeiro será efetuado no fechamento da comanda da mesa.
                   </p>
                 </div>
               ) : (

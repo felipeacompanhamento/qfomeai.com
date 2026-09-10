@@ -5,7 +5,7 @@ import { restaurantService } from '../../services/restaurantService';
 import { scheduleService } from '../../services/scheduleService';
 import { staticDataCacheService } from '../../services/staticDataCacheService';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, MapPin, ShoppingBag, User, Star, Clock, AlertCircle, ChevronRight, Store, Home as HomeIcon, Receipt, ShoppingCart, SlidersHorizontal, ChevronDown, Bell, Locate } from 'lucide-react';
+import { Search, MapPin, ShoppingBag, User, Star, Clock, AlertCircle, ChevronRight, Store, Briefcase, Key, Users, PawPrint, Sparkles, LayoutGrid, Home as HomeIcon, Receipt, ShoppingCart, SlidersHorizontal, ChevronDown, Bell, Locate } from 'lucide-react';
 import PlaceholderImage from '../../components/PlaceholderImage';
 import RatingsModal from '../../components/RatingsModal';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1094,41 +1094,57 @@ export default function Home() {
           </section>
         )}
 
-        {/* Dynamic Service Promotional Row with three text lines */}
+        {/* Services Discovery Section */}
         <section 
-          onClick={() => {
-            navigate('/servicos');
-          }}
-          className="bg-[#0b1b17] hover:bg-[#112923] text-white p-4.5 sm:p-5 rounded-3xl flex items-center justify-between gap-4 mt-6 mb-7 cursor-pointer shadow-lg hover:shadow-xl transition-all duration-300 relative overflow-hidden group border border-emerald-950"
+          id="home-services-discovery"
+          className="mt-5 mb-7 bg-white rounded-3xl p-4 sm:p-5 border border-stone-100/90 shadow-xs font-sans"
         >
-          {/* Subtle decoration to match high polish */}
-          <div className="absolute -right-10 -bottom-10 w-36 h-36 bg-emerald-500/10 rounded-full blur-3xl group-hover:bg-emerald-500/15 transition-all duration-500"></div>
-          
-          <div className="flex-1 min-w-0 flex items-center gap-3 sm:gap-4 z-10">
-            {/* Avatar block with delivery / service professional indication background */}
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-emerald-400 p-[1px] shadow-sm shrink-0 flex items-center justify-center overflow-hidden">
-              <div className="w-full h-full bg-[#0b1b17] rounded-2xl flex items-center justify-center">
-                <Store className="w-5 h-5 text-emerald-400" />
-              </div>
+          {/* Section Header */}
+          <div className="flex items-start sm:items-center justify-between gap-3 mb-3.5">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base sm:text-lg font-extrabold text-stone-900 tracking-tight leading-snug">
+                Serviços perto de você
+              </h2>
+              <p className="text-xs sm:text-sm text-stone-500 font-medium mt-0.5 leading-normal">
+                Encontre profissionais e serviços para o que precisar.
+              </p>
             </div>
 
-            <div className="flex-1 min-w-0 flex flex-col text-left">
-              <h3 className="font-extrabold text-sm sm:text-base md:text-lg text-white tracking-tight leading-tight font-sans">
-                Serviços disponíveis agora
-              </h3>
-              <p className="font-bold text-stone-300 text-[11px] sm:text-xs tracking-tight leading-tight mt-1">
-                Profissionais disponíveis perto de
-              </p>
-              <p className="font-medium text-xs sm:text-sm text-emerald-400 mt-1.5 truncate max-w-full">
-                {userAddress 
-                  ? `${userAddress.rua}${userAddress.bairro ? `, ${userAddress.bairro}` : ''}` 
-                  : (cidades.find(c => c.id === selectedCidade)?.nome || localStorage.getItem('user_cidade_nome') || 'Sua localização')}
-              </p>
-            </div>
+            <button
+              onClick={() => navigate('/servicos')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50/90 hover:bg-emerald-100 border border-emerald-100/80 transition-all shrink-0 active:scale-95 cursor-pointer min-h-[36px]"
+              aria-label="Ver todos os serviços"
+            >
+              <span>Ver todos</span>
+              <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+            </button>
           </div>
 
-          <div className="w-9 h-9 bg-white/10 group-hover:bg-white/25 rounded-full flex items-center justify-center text-white shrink-0 transition-all z-10 group-hover:translate-x-1 duration-300">
-            <ChevronRight className="w-4 h-4 text-white" />
+          {/* Categories Grid (Mobile-First 4 items per row) */}
+          <div className="grid grid-cols-4 gap-2 sm:gap-4 pt-1">
+            {[
+              { id: 'chaveiro', name: 'Chaveiro', icon: Key },
+              { id: 'acompanhante', name: 'Acompanhante', icon: Users },
+              { id: 'adestramento', name: 'Pets & Cães', icon: PawPrint },
+              { id: 'buffet', name: 'Buffet & Festas', icon: Sparkles },
+            ].map((service) => {
+              const Icon = service.icon;
+              return (
+                <button
+                  key={service.id}
+                  onClick={() => navigate(`/servicos?categoria=${encodeURIComponent(service.id)}`)}
+                  className="flex flex-col items-center gap-1.5 sm:gap-2 p-1 sm:p-2 rounded-2xl transition-all duration-200 group active:scale-95 cursor-pointer min-h-[44px] focus:outline-none"
+                  aria-label={`Ver serviços de ${service.name}`}
+                >
+                  <div className="w-13 h-13 sm:w-15 sm:h-15 rounded-2xl bg-stone-50 border border-stone-200/70 group-hover:bg-emerald-50 group-hover:border-emerald-300 flex items-center justify-center transition-all duration-200 shrink-0 text-stone-700 group-hover:text-emerald-600 shadow-2xs">
+                    <Icon className="w-6 h-6 sm:w-6.5 sm:h-6.5 transition-transform duration-200 group-hover:scale-110" />
+                  </div>
+                  <span className="text-[11px] sm:text-xs font-semibold text-stone-700 text-center leading-tight line-clamp-2 max-w-[85px] group-hover:text-emerald-700 transition-colors">
+                    {service.name}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </section>
 

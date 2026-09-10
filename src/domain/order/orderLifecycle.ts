@@ -1,5 +1,5 @@
-import { isGarcomOrder } from './orderSource';
-export { isGarcomOrder };
+import { isGarcomOrder, isRetiradaOrder, getOrderModality, getTotemRealModality } from './orderSource';
+export { isGarcomOrder, isRetiradaOrder, getOrderModality, getTotemRealModality };
 
 export type OrderStatus =
   | 'NEW'
@@ -515,27 +515,89 @@ export function getAvailableOrderActions(order: any, actor: OrderActor): OrderAc
   Human-readable labels
  */
 export function getOrderStatusLabel(order: any): string {
-  if (isGarcomOrder(order)) {
-    const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
-    if (rawStatus === 'pronto' || rawStatus === 'ready' || order.orderStatus === 'READY') {
+  if (!order) return '';
+
+  const modality = getOrderModality(order);
+  const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
+  const canonical = getCanonicalOrderState(order);
+
+  // 1. GARÇOM / MESA & BALCÃO + MESA (e TOTEM com atendimento Mesa)
+  if (modality === 'GARCOM_MESA' || modality === 'BALCAO_MESA' || (modality === 'TOTEM' && getTotemRealModality(order) === 'MESA')) {
+    if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+      return 'Novo pedido';
+    }
+    if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+      return 'Aceito';
+    }
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+      return 'Em preparo';
+    }
+    if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
       return 'Pronto';
     }
-    if (rawStatus === 'entregue' || rawStatus === 'delivered' || rawStatus === 'servido' || order.orderStatus === 'DELIVERED') {
+    if (['entregue', 'delivered', 'servido', 'finalizado', 'completed', 'finalized'].includes(rawStatus) || canonical.orderStatus === 'DELIVERED' || canonical.orderStatus === 'FINALIZED') {
       return 'Servido';
     }
+    if (['cancelado', 'cancelled', 'rejeitado'].includes(rawStatus) || canonical.orderStatus === 'CANCELLED') {
+      return 'Cancelado';
+    }
+    return 'Servido';
   }
+
+  // 2. BALCÃO + RETIRADA (e TOTEM com atendimento Retirada)
+  if (modality === 'BALCAO_RETIRADA' || (modality === 'TOTEM' && getTotemRealModality(order) === 'RETIRADA')) {
+    if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+      return 'Novo pedido';
+    }
+    if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+      return 'Aceito';
+    }
+    if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+      return 'Em preparo';
+    }
+    if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+      return 'PRONTO PARA RETIRADA';
+    }
+    if (['entregue', 'delivered', 'retirado', 'finalizado', 'completed', 'finalized'].includes(rawStatus) || canonical.orderStatus === 'DELIVERED' || canonical.orderStatus === 'FINALIZED') {
+      return 'Retirado';
+    }
+    if (['cancelado', 'cancelled', 'rejeitado'].includes(rawStatus) || canonical.orderStatus === 'CANCELLED') {
+      return 'Cancelado';
+    }
+    return 'Retirado';
+  }
+
+  // 3. BALCÃO + ENTREGA, DELIVERY & TOTEM (com atendimento Entrega)
+  if (['pendente', 'novo', 'new'].includes(rawStatus) || canonical.orderStatus === 'NEW') {
+    return 'Novo pedido';
+  }
+  if (['aceito', 'confirmado', 'confirmed'].includes(rawStatus) || canonical.orderStatus === 'CONFIRMED') {
+    return 'Aceito';
+  }
+  if (['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(rawStatus) || canonical.orderStatus === 'PREPARING') {
+    return 'Em preparo';
+  }
+  if (['pronto', 'ready'].includes(rawStatus) || canonical.orderStatus === 'READY') {
+    if (canonical.deliveryStatus === 'ASSIGNED' || canonical.deliveryStatus === 'ACCEPTED' || Boolean(order.driverId || order.entregador_id || order.assignedDriverName || order.deliveredByDriverName)) {
+      return 'Aguardando entregador';
+    }
+    return 'Pronto';
+  }
+  if (['entrega', 'saiu_entrega', 'saiu para entrega', 'saiu_para_entrega', 'despachado', 'em_entrega', 'out_for_delivery'].includes(rawStatus) || canonical.orderStatus === 'OUT_FOR_DELIVERY') {
+    return 'Em rota';
+  }
+  if (['entregue', 'delivered'].includes(rawStatus) || canonical.orderStatus === 'DELIVERED') {
+    return 'Entregue';
+  }
+  if (['finalizado', 'completed', 'finalized'].includes(rawStatus) || canonical.orderStatus === 'FINALIZED') {
+    return 'Finalizado';
+  }
+  if (['cancelado', 'cancelled', 'rejeitado'].includes(rawStatus) || canonical.orderStatus === 'CANCELLED') {
+    return 'Cancelado';
+  }
+
   const status = normalizeOrderStatus(order);
-  const labels: Record<OrderStatus, string> = {
-    NEW: 'Novo Pedido',
-    CONFIRMED: 'Confirmado',
-    PREPARING: 'Em Preparo',
-    READY: isGarcomOrder(order) ? 'Pronto' : 'Pronto para Retirada/Entrega',
-    OUT_FOR_DELIVERY: 'Em Rota de Entrega',
-    DELIVERED: isGarcomOrder(order) ? 'Servido' : 'Entregue',
-    FINALIZED: 'Finalizado',
-    CANCELLED: 'Cancelado'
-  };
-  return labels[status] || status;
+  return status;
 }
 
 

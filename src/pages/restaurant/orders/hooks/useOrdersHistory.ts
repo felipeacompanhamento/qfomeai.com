@@ -1,11 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { collection, query, where, orderBy, limit, getDocs, startAfter } from 'firebase/firestore';
 import { db } from '../../../../firebase';
+import { getOrderModality } from '../../../../domain/order/orderSource';
+import { extractOrderTableDisplay, extractOrderComandaDisplay, extractOrderWaiterDisplay } from '../utils/orderPresentation';
+
+export type HistoryOriginFilter = 'ALL' | 'DELIVERY' | 'GARCOM' | 'BALCAO' | 'TOTEM';
+export type HistoryBalcaoSubFilter = 'ALL' | 'RETIRADA' | 'MESA' | 'ENTREGA';
 
 export interface HistoryFilterOptions {
   period: 'today' | 'yesterday' | '7days' | '30days' | 'all';
   status: 'ALL' | 'FINALIZED' | 'CANCELLED';
   searchTerm: string;
+  originFilter: HistoryOriginFilter;
+  balcaoSubFilter: HistoryBalcaoSubFilter;
 }
 
 export function useOrdersHistory(restaurantId: string | undefined | null) {
@@ -16,7 +23,9 @@ export function useOrdersHistory(restaurantId: string | undefined | null) {
   const [filters, setFilters] = useState<HistoryFilterOptions>({
     period: 'today',
     status: 'ALL',
-    searchTerm: ''
+    searchTerm: '',
+    originFilter: 'ALL',
+    balcaoSubFilter: 'ALL'
   });
 
   const fetchHistory = useCallback(async (reset = true) => {
@@ -110,13 +119,51 @@ export function useOrdersHistory(restaurantId: string | undefined | null) {
       }
     }
 
+    // Origin & Modality filter
+    if (filters.originFilter && filters.originFilter !== 'ALL') {
+      const modality = getOrderModality(order);
+      if (filters.originFilter === 'DELIVERY') {
+        if (modality !== 'DELIVERY') return false;
+      } else if (filters.originFilter === 'GARCOM') {
+        if (modality !== 'GARCOM_MESA') return false;
+      } else if (filters.originFilter === 'BALCAO') {
+        const isBalcaoOrder = modality === 'BALCAO_RETIRADA' || modality === 'BALCAO_MESA' || modality === 'BALCAO_ENTREGA';
+        if (!isBalcaoOrder) return false;
+
+        if (filters.balcaoSubFilter === 'RETIRADA' && modality !== 'BALCAO_RETIRADA') return false;
+        if (filters.balcaoSubFilter === 'MESA' && modality !== 'BALCAO_MESA') return false;
+        if (filters.balcaoSubFilter === 'ENTREGA' && modality !== 'BALCAO_ENTREGA') return false;
+      } else if (filters.originFilter === 'TOTEM') {
+        if (modality !== 'TOTEM') return false;
+      }
+    }
+
     // Search term
     if (filters.searchTerm.trim()) {
-      const term = filters.searchTerm.toLowerCase().trim();
-      const code = (order.id || '').toLowerCase();
-      const customer = (order.nome_cliente || order.customerName || '').toLowerCase();
-      const phone = (order.telefone_cliente || order.customerPhone || '').toLowerCase();
-      return code.includes(term) || customer.includes(term) || phone.includes(term);
+      const term = filters.searchTerm.toLowerCase().replace('#', '').trim();
+      const id = String(order.id || '').toLowerCase();
+      const num = String(order.numero_pedido || order.numeroPedido || order.orderNumber || order.num || '').toLowerCase();
+      const code = id.slice(-6);
+      const customer = String(order.cliente_nome || order.nome_cliente || order.customerName || order.cliente?.nome || '').toLowerCase();
+      const phone = String(order.telefone_cliente || order.cliente_telefone || order.customerPhone || order.cliente?.telefone || order.telefone || '').toLowerCase();
+      
+      const table = String(extractOrderTableDisplay(order) || '').toLowerCase();
+      const comanda = String(extractOrderComandaDisplay(order) || '').toLowerCase();
+      const waiter = String(extractOrderWaiterDisplay(order) || '').toLowerCase();
+      const senha = String(order.senha || order.password || order.pickupNumber || '').toLowerCase();
+
+      const matchesSearch = 
+        id.includes(term) ||
+        num.includes(term) ||
+        code.includes(term) ||
+        customer.includes(term) ||
+        phone.includes(term) ||
+        (table !== '--' && table.includes(term)) ||
+        (comanda !== '--' && comanda.includes(term)) ||
+        (waiter !== '--' && waiter.includes(term)) ||
+        (senha !== '' && senha.includes(term));
+
+      if (!matchesSearch) return false;
     }
 
     return true;

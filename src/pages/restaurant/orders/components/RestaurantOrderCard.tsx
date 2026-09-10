@@ -12,7 +12,9 @@ import {
   extractOrderTableDisplay,
   extractOrderComandaDisplay,
   extractOrderWaiterDisplay,
-  extractOrderRoundDisplay
+  extractOrderRoundDisplay,
+  getModalityNextAction,
+  getModalityStatusText
 } from '../utils/orderPresentation';
 
 interface RestaurantOrderCardProps {
@@ -62,6 +64,7 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
 
   const columnId = getOrderKanbanColumn(order);
   const { orderStatus, deliveryStatus, financialSettlementStatus } = getCanonicalOrderState(order);
+  const rawStatus = String(order?.status || order?.status_pedido || '').toLowerCase().trim();
   const timeInfo = getOrderStageTimeInfo(order, columnId, nowMs);
 
   const orderCode = String(order?.id || order?._id || '').slice(-6).toUpperCase() || '------';
@@ -97,127 +100,11 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
     }
   };
 
-  const getPrimaryAction = () => {
-    const rawStatus = String(order.status || order.status_pedido || '').toLowerCase().trim();
-
-    // 1. GARÇOM / MESA
-    if (modality === 'GARCOM_MESA') {
-      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
-        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
-        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
-      }
-      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
-        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
-      }
-      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
-        return { label: 'MARCAR COMO SERVIDO', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
-    }
-
-    // 2. BALCÃO + RETIRADA
-    if (modality === 'BALCAO_RETIRADA') {
-      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
-        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
-        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
-      }
-      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
-        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
-      }
-      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
-        return { label: 'Entregar ao Cliente', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      if (rawStatus === 'entregue' || orderStatus === 'DELIVERED') {
-        return { label: 'Finalizar Pedido', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
-    }
-
-    // 3. BALCÃO + MESA
-    if (modality === 'BALCAO_MESA') {
-      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
-        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
-        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
-      }
-      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
-        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
-      }
-      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
-        return { label: 'Servir na Mesa', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
-    }
-
-    // 4. TOTEM
-    if (modality === 'TOTEM') {
-      if (rawStatus === 'novo' || rawStatus === 'new' || orderStatus === 'NEW') {
-        return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      if (rawStatus === 'confirmado' || rawStatus === 'aceito' || orderStatus === 'CONFIRMED') {
-        return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
-      }
-      if (rawStatus === 'preparo' || rawStatus === 'cozinha' || rawStatus === 'preparing' || orderStatus === 'PREPARING') {
-        return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
-      }
-      if (rawStatus === 'pronto' || rawStatus === 'ready' || orderStatus === 'READY') {
-        return { label: 'Entregar ao Cliente', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-      }
-      return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
-    }
-
-    // 5. BALCÃO + ENTREGA & DELIVERY
-    if (orderStatus === 'NEW') {
-      return { label: 'Aceitar Pedido', nextStatus: 'aceito', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-    }
-    if (orderStatus === 'CONFIRMED') {
-      return { label: 'Iniciar Preparo', nextStatus: 'preparo', bg: 'bg-stone-900 hover:bg-stone-800 text-white' };
-    }
-    if (orderStatus === 'PREPARING') {
-      return { label: 'Marcar Pronto', nextStatus: 'pronto', bg: 'bg-amber-600 hover:bg-amber-700 text-white' };
-    }
-    if (orderStatus === 'READY') {
-      if (!driverName) {
-        return {
-          label: 'Enviar para entregador',
-          isModalTrigger: true,
-          actionType: 'assign_driver',
-          bg: 'bg-indigo-600 hover:bg-indigo-700 text-white'
-        };
-      }
-      return {
-        label: 'Despachar / Saiu',
-        nextStatus: 'despachado',
-        bg: 'bg-blue-600 hover:bg-blue-700 text-white'
-      };
-    }
-    if (isPendingSettlement) {
-      return {
-        label: 'Conferir Recebimento',
-        isModalTrigger: true,
-        bg: 'bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold'
-      };
-    }
-    if (orderStatus === 'OUT_FOR_DELIVERY') {
-      return { label: 'Marcar Entregue', nextStatus: 'entregue', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-    }
-    if (orderStatus === 'DELIVERED') {
-      return { label: 'Finalizar Pedido', nextStatus: 'finalizado', bg: 'bg-emerald-600 hover:bg-emerald-700 text-white' };
-    }
-
-    return { label: 'Ver Detalhes', isModalTrigger: true, bg: 'bg-stone-100 hover:bg-stone-200 text-stone-800' };
-  };
-
-  const primaryAction = getPrimaryAction();
+  const primaryAction = getModalityNextAction(order);
 
   const handleActionClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if ((primaryAction as any).actionType === 'assign_driver') {
+    if (primaryAction.actionType === 'assign_driver') {
       if (onAssignDriver) {
         onAssignDriver(order);
       } else {
@@ -411,9 +298,19 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
           <div className="min-w-0">
             <div className="flex items-center justify-between gap-1 font-bold text-xs text-stone-900">
               <span className="font-mono text-stone-800">Pedido #{orderNum}</span>
-              <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                Retirada no Balcão
-              </span>
+              {orderStatus === 'READY' || ['pronto', 'ready'].includes(rawStatus) ? (
+                <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
+                  PRONTO PARA RETIRADA
+                </span>
+              ) : orderStatus === 'PREPARING' || ['preparo', 'cozinha', 'preparing'].includes(rawStatus) ? (
+                <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                  Em preparo
+                </span>
+              ) : (
+                <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                  Retirada no Balcão
+                </span>
+              )}
             </div>
             {customerName && (
               <h3 className="text-xs sm:text-sm font-extrabold text-stone-900 tracking-tight truncate mt-1">
@@ -422,16 +319,21 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
             )}
           </div>
         ) : modality === 'BALCAO_ENTREGA' ? (
-          /* 3. BALCÃO + ENTREGA */
+          /* 3. BALCÃO • ENTREGA */
           <div className="min-w-0">
             <div className="flex items-center justify-between gap-1 font-bold text-xs text-stone-900">
               <span className="font-mono text-stone-800">Pedido #{orderNum}</span>
               <span className="text-[10px] font-bold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                Entrega Balcão
+                {deliveryStatus === 'IN_TRANSIT' || ['despachado', 'entrega', 'saiu para entrega'].includes(rawStatus) ? 'Em Rota' :
+                 deliveryStatus === 'ACCEPTED' ? 'Entregador Atribuído' :
+                 deliveryStatus === 'ASSIGNED' ? 'Aguardando Entregador' :
+                 deliveryStatus === 'DELIVERED' || rawStatus === 'entregue' ? 'Entregue' :
+                 orderStatus === 'READY' || ['pronto', 'ready'].includes(rawStatus) ? 'Pronto para Entrega' :
+                 orderStatus === 'PREPARING' || ['preparo', 'cozinha', 'preparing'].includes(rawStatus) ? 'Em Preparo' : 'Balcão • Entrega'}
               </span>
             </div>
             <h3 className="text-xs sm:text-sm font-extrabold text-stone-900 tracking-tight truncate mt-1">
-              {customerName || 'Cliente'}
+              Cliente: {customerName || 'Cliente'}
             </h3>
             <div className="flex items-center gap-1.5 mt-0.5 text-xs text-stone-500 min-w-0 flex-wrap">
               {addressSummary && (
@@ -443,7 +345,7 @@ export const RestaurantOrderCard: React.FC<RestaurantOrderCardProps> = ({
               {customerPhone && (
                 <span className="flex items-center gap-0.5 shrink-0 text-stone-400">
                   <Phone className="w-2.5 h-2.5 shrink-0" />
-                  <span>{customerPhone.slice(-4)}</span>
+                  <span>{customerPhone}</span>
                 </span>
               )}
             </div>

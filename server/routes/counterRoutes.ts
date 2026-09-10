@@ -46,7 +46,10 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
       paymentMethod: rawPaymentMethod,
       forma_pagamento,
       pago = false,
-      amountReceived = 0
+      amountReceived = 0,
+      observacao = '',
+      observacoes = '',
+      notes = ''
     } = req.body;
 
     const paymentMethod = rawPaymentMethod || forma_pagamento || 'dinheiro';
@@ -694,7 +697,12 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
             targetTableData = tSnap.data() || {};
 
             // REGRA: Não criar uma segunda comanda! Verificar se já existe comanda ativa para esta mesa
-            const activeStatuses = ['OPEN', 'open', 'WAITING_ITEMS', 'waiting_items', 'WAITING_PAYMENT', 'waiting_payment', 'PARTIALLY_PAID', 'partially_paid'];
+            const activeStatuses = [
+              'OPEN', 'open', 'aberta', 'ABERTA',
+              'WAITING_ITEMS', 'waiting_items', 'atendimento', 'ATENDIMENTO',
+              'WAITING_PAYMENT', 'waiting_payment', 'aguardando', 'aguardando_pagamento', 'AGUARDANDO_PAGAMENTO',
+              'PARTIALLY_PAID', 'partially_paid', 'parcialmente_paga', 'PARCIALMENTE_PAGA'
+            ];
             const activeTabsQuery = db.collection('tabs')
               .where('restaurantId', '==', restaurantId)
               .where('tableId', '==', rawTableId)
@@ -707,38 +715,132 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
               targetTabData = existingTabDoc.data() || {};
               isNewTab = false;
             } else {
-              targetTabRef = db.collection('tabs').doc();
-              const tblName = targetTableData.name || targetTableData.nome || (targetTableData.number !== undefined ? `Mesa ${targetTableData.number}` : `Mesa ${rawTableId}`);
-              const tblNum = targetTableData.number !== undefined ? targetTableData.number : (targetTableData.numero !== undefined ? targetTableData.numero : null);
-              targetTabData = {
-                id: targetTabRef.id,
-                restaurantId,
-                tableId: rawTableId,
-                tableName: tblName,
-                tableNumber: tblNum,
-                hallId: targetTableData.hallId || null,
-                waiterId: operatorId,
-                waiterName: operatorName,
-                customerName: finalClientName || '',
-                observation: '',
-                peopleCount: 1,
-                status: 'OPEN',
-                origin: 'COUNTER',
-                openedBy: operatorId,
-                openedAt: nowIso,
-                createdAt: nowIso,
-                updatedAt: nowIso,
-                items: [],
-                totalInCents: 0,
-                paidInCents: 0
-              };
-              isNewTab = true;
+              // Verificação adicional: se a mesa já aponta para comandaId ou tabId ativo
+              const directComandaId = targetTableData.comandaId || targetTableData.tabId;
+              let foundDirectTab = false;
+              if (directComandaId && typeof directComandaId === 'string' && directComandaId.trim()) {
+                const checkTabRef = db.collection('tabs').doc(directComandaId.trim());
+                const checkTabSnap = await transaction.get(checkTabRef);
+                if (checkTabSnap.exists) {
+                  const checkData = checkTabSnap.data() || {};
+                  const st = String(checkData.status || '').toUpperCase().trim();
+                  if (!['CLOSED', 'FECHADA', 'CANCELLED', 'CANCELADA'].includes(st)) {
+                    targetTabRef = checkTabSnap.ref;
+                    targetTabData = checkData;
+                    isNewTab = false;
+                    foundDirectTab = true;
+                  }
+                }
+              }
+
+              if (!foundDirectTab) {
+                targetTabRef = db.collection('tabs').doc();
+                const tblName = targetTableData.name || targetTableData.nome || (targetTableData.number !== undefined ? `Mesa ${targetTableData.number}` : `Mesa ${rawTableId}`);
+                const tblNum = targetTableData.number !== undefined ? targetTableData.number : (targetTableData.numero !== undefined ? targetTableData.numero : null);
+                targetTabData = {
+                  id: targetTabRef.id,
+                  restaurantId,
+                  tableId: rawTableId,
+                  tableName: tblName,
+                  tableNumber: tblNum,
+                  hallId: targetTableData.hallId || null,
+                  waiterId: operatorId,
+                  waiterName: operatorName,
+                  customerName: finalClientName || '',
+                  observation: normalizeText(observacoes || observacao || notes, 500),
+                  peopleCount: 1,
+                  status: 'OPEN',
+                  origin: 'COUNTER',
+                  openedBy: operatorId,
+                  openedAt: nowIso,
+                  createdAt: nowIso,
+                  updatedAt: nowIso,
+                  items: [],
+                  totalInCents: 0,
+                  paidInCents: 0
+                };
+                isNewTab = true;
+              }
             }
 
             resolvedTabId = targetTabRef.id;
             resolvedTableId = rawTableId;
             resolvedTableName = targetTabData.tableName || targetTableData.name || targetTableData.nome || (targetTableData.number !== undefined ? `Mesa ${targetTableData.number}` : `Mesa ${rawTableId}`);
             resolvedTableNumber = targetTabData.tableNumber !== undefined ? targetTabData.tableNumber : (targetTableData.number !== undefined ? targetTableData.number : null);
+          } else if (tableNumber !== undefined && tableNumber !== null && String(tableNumber).trim() !== '') {
+            // Fallback por número da mesa, se tableId ou tabId não foram enviados diretamente
+            const cleanNum = String(tableNumber).replace(/^Mesa\s*/i, '').trim();
+            const numericNum = !isNaN(Number(cleanNum)) ? Number(cleanNum) : cleanNum;
+
+            const tablesQuery = db.collection('tables')
+              .where('restaurantId', '==', restaurantId)
+              .where('number', '==', numericNum);
+            const tablesSnap = await transaction.get(tablesQuery);
+
+            if (!tablesSnap.empty) {
+              const matchedTableDoc = tablesSnap.docs[0];
+              targetTableRef = matchedTableDoc.ref;
+              targetTableData = matchedTableDoc.data() || {};
+              const matchedTableId = matchedTableDoc.id;
+
+              const activeStatuses = [
+                'OPEN', 'open', 'aberta', 'ABERTA',
+                'WAITING_ITEMS', 'waiting_items', 'atendimento', 'ATENDIMENTO',
+                'WAITING_PAYMENT', 'waiting_payment', 'aguardando', 'aguardando_pagamento', 'AGUARDANDO_PAGAMENTO',
+                'PARTIALLY_PAID', 'partially_paid', 'parcialmente_paga', 'PARCIALMENTE_PAGA'
+              ];
+              const activeTabsQuery = db.collection('tabs')
+                .where('restaurantId', '==', restaurantId)
+                .where('tableId', '==', matchedTableId)
+                .where('status', 'in', activeStatuses);
+              const activeTabsSnap = await transaction.get(activeTabsQuery);
+
+              if (!activeTabsSnap.empty) {
+                const existingTabDoc = activeTabsSnap.docs[0];
+                targetTabRef = existingTabDoc.ref;
+                targetTabData = existingTabDoc.data() || {};
+                isNewTab = false;
+              } else {
+                targetTabRef = db.collection('tabs').doc();
+                const tblName = targetTableData.name || targetTableData.nome || `Mesa ${cleanNum}`;
+                targetTabData = {
+                  id: targetTabRef.id,
+                  restaurantId,
+                  tableId: matchedTableId,
+                  tableName: tblName,
+                  tableNumber: numericNum,
+                  hallId: targetTableData.hallId || null,
+                  waiterId: operatorId,
+                  waiterName: operatorName,
+                  customerName: finalClientName || '',
+                  observation: normalizeText(observacoes || observacao || notes, 500),
+                  peopleCount: 1,
+                  status: 'OPEN',
+                  origin: 'COUNTER',
+                  openedBy: operatorId,
+                  openedAt: nowIso,
+                  createdAt: nowIso,
+                  updatedAt: nowIso,
+                  items: [],
+                  totalInCents: 0,
+                  paidInCents: 0
+                };
+                isNewTab = true;
+              }
+
+              resolvedTabId = targetTabRef.id;
+              resolvedTableId = matchedTableId;
+              resolvedTableName = targetTabData.tableName || targetTableData.name || targetTableData.nome || `Mesa ${cleanNum}`;
+              resolvedTableNumber = targetTabData.tableNumber !== undefined ? targetTabData.tableNumber : numericNum;
+            }
+          }
+
+          if ((tipoAtendimento === 'MESA' || serviceMode === 'DINE_IN') && !targetTabRef) {
+            return {
+              error: 'TABLE_OR_TAB_NOT_RESOLVED',
+              status: 400,
+              message: 'Não foi possível vincular o pedido a uma mesa ou comanda válida.'
+            };
           }
         }
 
@@ -912,6 +1014,9 @@ export function createCounterRouter(authAdmin: Auth, db: Firestore): Router {
 
           data_criacao: nowIso,
           data_criacao_iso: nowIso,
+          observacao: normalizeText(observacoes || observacao || notes, 500),
+          observacoes: normalizeText(observacoes || observacao || notes, 500),
+          notes: normalizeText(observacoes || observacao || notes, 500),
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
 

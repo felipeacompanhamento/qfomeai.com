@@ -19,13 +19,14 @@ import {
 import { PaymentsManager, PaymentItem } from './PaymentsManager';
 import { processOrderPaymentsApi, processOrderRefundApi } from '../../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../../services/paymentMethodsService';
-import { isGarcomOrder, getOrderModality, getOrderModalityDetails, OrderModality } from '../orders/utils/orderSource';
+import { isGarcomOrder, isRetiradaOrder, getOrderModality, getTotemRealModality, getOrderModalityDetails, OrderModality } from '../orders/utils/orderSource';
 import { 
   extractOrderTableDisplay, 
   extractOrderComandaDisplay, 
   extractOrderWaiterDisplay, 
   extractOrderRoundDisplay, 
-  extractOrderItemPriceInfo 
+  extractOrderItemPriceInfo,
+  getModalityStatusText
 } from '../orders/utils/orderPresentation';
 import { FormField, TextInput, SelectInput, FormModal } from '../../../components/ui/FormComponents';
 import { CancelOrderModal } from '../../../components/orders/CancelOrderModal';
@@ -406,7 +407,7 @@ const OrderDetails = ({
               </div>
             </div>
             <span className={`text-[10px] sm:text-xs font-bold px-2.5 sm:px-3 py-1.5 rounded-xl uppercase tracking-wider ${getStatusColor(selectedOrder.status)}`}>
-              {getRestaurantStatusText(selectedOrder.status, isGarcomOrder(selectedOrder))}
+              {getRestaurantStatusText(selectedOrder.status, isGarcomOrder(selectedOrder), isRetiradaOrder(selectedOrder))}
             </span>
           </div>
         </div>
@@ -1019,6 +1020,7 @@ const OrderDetails = ({
 
       {/* Actions Footer */}
       <div className="shrink-0 p-4 border-t border-stone-100 bg-white sticky bottom-0 z-10 space-y-2.5">
+        {/* NEW / PENDING */}
         {selectedOrder.status === 'pendente' && (
           <div className="flex gap-3">
             <button 
@@ -1041,131 +1043,210 @@ const OrderDetails = ({
           </div>
         )}
 
-        {selectedOrder.status === 'aceito' && (
+        {/* CONFIRMED / ACEITO */}
+        {(selectedOrder.status === 'aceito' || selectedOrder.status === 'confirmado') && (
           <button 
             onClick={() => {
               onUpdate(selectedOrder.id, 'preparo');
             }}
             disabled={isUpdating}
-            className="w-full py-3 bg-yellow-500 text-white font-bold rounded-xl hover:bg-yellow-600 disabled:bg-yellow-300 shadow-lg shadow-yellow-200 transition-all flex items-center justify-center gap-2 text-sm"
+            className="w-full py-3 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 disabled:bg-stone-400 shadow-lg shadow-stone-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
             {isUpdating ? 'Processando...' : 'Iniciar Preparo'}
           </button>
         )}
 
+        {/* PREPARING / EM PREPARO */}
         {['preparo', 'cozinha', 'preparing', 'em preparo', 'em_preparo'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               onUpdate(selectedOrder.id, 'pronto');
             }}
             disabled={isUpdating}
-            className="w-full py-3 bg-emerald-500 text-white font-bold rounded-xl hover:bg-emerald-600 disabled:bg-emerald-300 shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm"
+            className="w-full py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-600 disabled:bg-amber-300 shadow-lg shadow-amber-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
             {isUpdating ? 'Processando...' : 'Marcar como Pronto'}
           </button>
         )}
 
+        {/* READY / PRONTO */}
         {(['pronto', 'ready'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'READY') && (
-          <button 
-            onClick={() => {
-              const mod = getOrderModalityDetails(selectedOrder).modality;
-              if (mod === 'GARCOM_MESA' || mod === 'BALCAO_MESA') {
-                onUpdate(selectedOrder.id, 'entregue');
-                return;
-              }
-              if (mod === 'BALCAO_RETIRADA' || mod === 'TOTEM') {
-                onUpdate(selectedOrder.id, 'finalizado');
-                return;
-              }
-              onUpdate(selectedOrder.id, 'despachado');
-            }}
-            disabled={isUpdating}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
-          >
-            {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            {isUpdating ? 'Processando...' : (() => {
-              const mod = getOrderModalityDetails(selectedOrder).modality;
-              if (mod === 'GARCOM_MESA') return 'MARCAR COMO SERVIDO';
-              if (mod === 'BALCAO_MESA') return 'Entregar na Mesa';
-              if (mod === 'BALCAO_RETIRADA') return 'Entregar e Finalizar';
-              if (mod === 'TOTEM') return 'Chamar Senha / Entregar';
-              return 'Despachar / Saiu para Entrega';
-            })()}
-          </button>
+          (() => {
+            const mod = getOrderModality(selectedOrder);
+            const totemReal = mod === 'TOTEM' ? getTotemRealModality(selectedOrder) : null;
+            const isTable = mod === 'GARCOM_MESA' || mod === 'BALCAO_MESA' || totemReal === 'MESA';
+            const isRetirada = mod === 'BALCAO_RETIRADA' || totemReal === 'RETIRADA';
+
+            if (isTable) {
+              return (
+                <button 
+                  onClick={() => onUpdate(selectedOrder.id, 'entregue')}
+                  disabled={isUpdating}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
+                >
+                  {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {isUpdating ? 'Processando...' : 'MARCAR COMO SERVIDO'}
+                </button>
+              );
+            }
+
+            if (isRetirada) {
+              return (
+                <button 
+                  onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
+                  disabled={isUpdating}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
+                >
+                  {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {isUpdating ? 'Processando...' : 'MARCAR COMO RETIRADO'}
+                </button>
+              );
+            }
+
+            // Delivery Flow (BALCAO_ENTREGA, DELIVERY, TOTEM ENTREGA)
+            const hasDriver = Boolean(
+              selectedOrder.driverId || 
+              selectedOrder.entregador_id || 
+              selectedOrder.entregadorId || 
+              selectedOrder.assignedDriverName || 
+              selectedOrder.deliveredByDriverName
+            );
+
+            return (
+              <div className="space-y-2">
+                {!hasDriver ? (
+                  <button 
+                    onClick={() => {
+                      fetchDrivers();
+                      setIsAssignModalOpen(true);
+                    }}
+                    disabled={isUpdating}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
+                  >
+                    <Bike className="w-4 h-4" />
+                    ENVIAR PARA ENTREGADOR
+                  </button>
+                ) : (
+                  <>
+                    <button 
+                      onClick={() => onUpdate(selectedOrder.id, 'despachado')}
+                      disabled={isUpdating}
+                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
+                    >
+                      {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Bike className="w-4 h-4" />}
+                      {isUpdating ? 'Processando...' : 'Despachar / Saiu para Entrega'}
+                    </button>
+                    <button 
+                      onClick={() => {
+                        fetchDrivers();
+                        setIsAssignModalOpen(true);
+                      }}
+                      className="w-full py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-medium rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer"
+                    >
+                      <Bike className="w-3.5 h-3.5" />
+                      Trocar Entregador
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()
         )}
 
+        {/* OUT FOR DELIVERY (Only for Delivery Flows) */}
         {['entrega', 'saiu_entrega', 'saiu para entrega', 'saiu_para_entrega', 'despachado', 'em_entrega', 'out_for_delivery'].includes(selectedOrder.status) && (
           <button 
             onClick={() => {
               onUpdate(selectedOrder.id, 'entregue');
             }}
             disabled={isUpdating}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm"
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
             {isUpdating ? 'Processando...' : 'Marcar como Entregue'}
           </button>
         )}
 
-        {isDeliveryOrder(selectedOrder) && ['aceito', 'preparo', 'cozinha', 'pronto'].includes(selectedOrder.status) && (
-          <button 
-            onClick={() => {
-              fetchDrivers();
-              setIsAssignModalOpen(true);
-            }}
-            className="w-full py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 transition-all flex items-center justify-center gap-2 text-xs"
-          >
-            <Bike className="w-4 h-4" /> Enviar para Entregador
-          </button>
-        )}
-        
-        {/* Settlement / Finalization Buttons */}
-        {canRestaurantSettleOrder(selectedOrder) ? (
-          <div className="space-y-2">
-            <button 
-              onClick={handleOpenSettlement}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-stone-950 font-extrabold rounded-xl shadow-lg shadow-amber-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-xs sm:text-sm"
-            >
-              <DollarSign className="w-4 h-4" />
-              Conferir Recebimento e Baixar
-            </button>
-            <button 
-              onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
-              disabled={isUpdating}
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs"
-            >
-              {isUpdating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-              Finalizar Pedido Diretamente
-            </button>
-          </div>
-        ) : (['entregue', 'delivered'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'DELIVERED') && !['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) ? (
-          <button 
-            onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
-            disabled={isUpdating}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-sm cursor-pointer"
-          >
-            {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            {isUpdating ? 'Processando...' : 'Finalizar Pedido'}
-          </button>
-        ) : !['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) && selectedOrder.status !== 'pendente' ? (
-          <button 
-            onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
-            disabled={isUpdating}
-            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 text-xs cursor-pointer"
-          >
-            {isUpdating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            Finalizar Pedido Agora
-          </button>
-        ) : ['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'FINALIZED' || getCanonicalOrderState(selectedOrder).orderStatus === 'CANCELLED' ? (
-          <div className="text-center text-stone-400 font-bold py-2 text-xs">
-            Este pedido já foi {String(getRestaurantStatusText(selectedOrder.status) || '').toLowerCase()}.
-          </div>
-        ) : null}
+        {/* DELIVERED / SETTLEMENT / FINALIZATION */}
+        {(() => {
+          const mod = getOrderModality(selectedOrder);
+          const totemReal = mod === 'TOTEM' ? getTotemRealModality(selectedOrder) : null;
+          const isTable = mod === 'GARCOM_MESA' || mod === 'BALCAO_MESA' || totemReal === 'MESA';
+          const isRetirada = mod === 'BALCAO_RETIRADA' || totemReal === 'RETIRADA';
+          const isTerminal = ['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) ||
+            getCanonicalOrderState(selectedOrder).orderStatus === 'FINALIZED' ||
+            getCanonicalOrderState(selectedOrder).orderStatus === 'CANCELLED';
+
+          // Table and Retirada orders that reached their terminal served/retirado status
+          if (isTable && ['entregue', 'servido', 'finalizado', 'completed'].includes(selectedOrder.status)) {
+            return (
+              <div className="text-center text-stone-500 font-bold py-2 text-xs">
+                Pedido servido na mesa. O valor permanece na comanda.
+              </div>
+            );
+          }
+
+          if (isRetirada && ['finalizado', 'completed', 'entregue', 'retirado'].includes(selectedOrder.status)) {
+            return (
+              <div className="text-center text-stone-500 font-bold py-2 text-xs">
+                Pedido retirado pelo cliente.
+              </div>
+            );
+          }
+
+          if (isTerminal) {
+            return (
+              <div className="text-center text-stone-400 font-bold py-2 text-xs">
+                Este pedido já foi {String(getModalityStatusText(selectedOrder) || '').toLowerCase()}.
+              </div>
+            );
+          }
+
+          // Delivery Flow Settlement and Finalize
+          if (canRestaurantSettleOrder(selectedOrder)) {
+            return (
+              <div className="space-y-2">
+                <button 
+                  onClick={handleOpenSettlement}
+                  className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-stone-950 font-extrabold rounded-xl shadow-lg shadow-amber-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-xs sm:text-sm cursor-pointer"
+                >
+                  <DollarSign className="w-4 h-4" />
+                  Conferir Recebimento e Baixar
+                </button>
+                <button 
+                  onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
+                  disabled={isUpdating}
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-xs cursor-pointer"
+                >
+                  {isUpdating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Finalizar Pedido Diretamente
+                </button>
+              </div>
+            );
+          }
+
+          if (['entregue', 'delivered'].includes(selectedOrder.status) || getCanonicalOrderState(selectedOrder).orderStatus === 'DELIVERED') {
+            return (
+              <button 
+                onClick={() => onUpdate(selectedOrder.id, 'finalizado')}
+                disabled={isUpdating}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg shadow-emerald-200 transition-all flex items-center justify-center gap-2 uppercase tracking-wider text-sm cursor-pointer"
+              >
+                {isUpdating ? <Clock className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                {isUpdating ? 'Processando...' : 'Finalizar Pedido'}
+              </button>
+            );
+          }
+
+          return null;
+        })()}
 
         {/* Universal Cancel Button for any non-terminal order */}
-        {!['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) && selectedOrder.status !== 'pendente' && (
+        {!['finalizado', 'cancelado', 'rejeitado', 'completed'].includes(selectedOrder.status) && 
+         !(['entregue', 'servido'].includes(selectedOrder.status) && (getOrderModality(selectedOrder) === 'GARCOM_MESA' || getOrderModality(selectedOrder) === 'BALCAO_MESA')) &&
+         selectedOrder.status !== 'pendente' && (
           <button 
             onClick={() => setIsCancelModalOpen(true)}
             disabled={isUpdating}
