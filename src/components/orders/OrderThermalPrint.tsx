@@ -1,9 +1,31 @@
 import React from 'react';
 import { normalizeOrderOrigem, OrderOrigem, getOrderModality, OrderModality } from '../../domain/order/orderSource';
 import { getPaymentMethodLabel } from '../../services/paymentMethodsService';
+import { markOrderPrintedOnPrinter } from '../../services/kitchenAutoPrintService';
+import { 
+  printViaCentralService, 
+  resolveOrderDestination, 
+  getRestaurantConfiguredPrinters,
+  getRestaurantPrintStations,
+  routeOrderItemsByStations,
+  getPrintersForDestination,
+  recordPrintHistoryItem,
+  ensureQzConnected,
+  showDiscretePrintNotice,
+  isDocumentAlreadyPrinted,
+  recordSuccessfulPrint,
+  recordFailedPrint,
+  buildPrintCompositeKey,
+  acquirePrintLock,
+  releasePrintLock,
+  PrintDestinationType,
+  PaperSize 
+} from '../../services/printCentralService';
+import * as qzTrayModule from 'qz-tray';
+const qz = (qzTrayModule as any).default || qzTrayModule;
 
 // Simple HTML escape helper to prevent injection
-function escapeHtml(unsafe: any): string {
+export function escapeHtml(unsafe: any): string {
   if (unsafe === null || unsafe === undefined) return '';
   return String(unsafe)
     .replace(/&/g, '&amp;')
@@ -175,7 +197,7 @@ function formatPaymentBoxHtml(order: any, orderTotal: number, restaurant?: any, 
 }
 
 // Global base CSS template for 58mm / 80mm / 100mm printers
-function getThermalStyles(paperSize: string = '80mm'): string {
+export function getThermalStyles(paperSize: string = '80mm'): string {
   const maxWidth = paperSize === '48mm' || paperSize === '58mm' ? '58mm' : paperSize === '112mm' || paperSize === '100mm' ? '100mm' : '80mm';
 
   return `
@@ -922,7 +944,7 @@ export function generateKitchenTicketHtml(order: any, restaurant?: any, profile?
     <body>
       <div class="receipt">
         <div style="text-align: center; font-size: 9pt; font-weight: 900; letter-spacing: 1px; border-bottom: 1px solid #000; padding-bottom: 2px; margin-bottom: 6px;">
-          *** PRODUÇÃO / COZINHA ***
+          ${order?.stationName ? `*** PRODUÇÃO / ${escapeHtml(String(order.stationName).toUpperCase())} ***` : '*** PRODUÇÃO / COZINHA ***'}
         </div>
         ${headerHtml}
         <div style="border-top: 2px solid #000; margin: 6px 0 8px 0;"></div>
@@ -1333,7 +1355,7 @@ export function generatePreContaReceiptHtml(data: any, restaurant?: any, profile
 // ============================================================================
 // THERMAL PRINT EXECUTION: Uses existing popup or hidden iframe mechanism
 // ============================================================================
-function executeThermalPrint(htmlContent: string) {
+export function executeThermalPrint(htmlContent: string) {
   if (!htmlContent) return;
 
   // Attempt to open in a popup window
@@ -1398,25 +1420,364 @@ function executeThermalPrint(htmlContent: string) {
   }
 }
 
-// Global print handler for Pre-Conta da Mesa / Comanda
-export function printThermalPreConta(data: any, restaurant?: any, profile?: any) {
-  if (!data) return;
-  const htmlContent = generatePreContaReceiptHtml(data, restaurant, profile);
-  executeThermalPrint(htmlContent);
+// Global print handler for Pre-Conta da Mesa / Comanda (destination 'pre_bill')
+export async function printThermalPreConta(
+  data: any, 
+  restaurant?: any, 
+  profile?: any,
+  options?: { isReprint?: boolean; forcePrint?: boolean }
+) {
+  if (!data) return { success: false, method: 'browser', error: 'Dados inválidos' };
+  
+  const restId = restaurant?.id || restaurant?.restaurantId || profile?.restaurantId || data?.tab?.restaurantId || data?.restaurantId;
+  const docId = data?.tab?.id || data?.table?.id || String(data?.tab?.number || data?.tableNumber || data?.comandaId || 'pre_bill');
+
+  return await printViaCentralService({
+    destination: 'pre_bill',
+    restaurantProfile: restaurant,
+    profile,
+    restaurantId: restId,
+    documentId: docId,
+    documentType: 'pre_bill',
+    isReprint: options?.isReprint,
+    forcePrint: options?.forcePrint,
+    documentTitle: 'Pré-conta',
+    htmlGenerator: (paperSize: PaperSize) => 
+      generatePreContaReceiptHtml(data, { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize }, profile),
+    fallbackExecutor: () => {
+      const fallbackHtml = generatePreContaReceiptHtml(data, restaurant, profile);
+      executeThermalPrint(fallbackHtml);
+    }
+  });
 }
 
-// Global print handler for Kitchen / KDS Production Ticket
-export function printThermalKitchenTicket(order: any, restaurant?: any, profile?: any) {
-  if (!order) return;
-  const htmlContent = generateKitchenTicketHtml(order, restaurant, profile);
-  executeThermalPrint(htmlContent);
+// Global print handler for Kitchen / KDS Production Ticket (destination 'kitchen')
+export async function printThermalKitchenTicket(
+  order: any, 
+  restaurant?: any, 
+  profile?: any,
+  options?: { isReprint?: boolean; forcePrint?: boolean; isAutoPrint?: boolean }
+): Promise<{ success: boolean; method: 'qz' | 'browser'; printerCount?: number; error?: string }> {
+  if (!order) return { success: false, method: 'browser', error: 'Pedido inválido' };
+
+  const restId = restaurant?.id || restaurant?.restaurantId || profile?.restaurantId || order?.restaurantId;
+  const docId = order?.id || String(order?.numero_pedido || order?.orderNumber || 'kitchen_doc');
+
+  try {
+    // 1. Obter impressoras e estações de impressão configuradas
+    const allPrinters = await getRestaurantConfiguredPrinters(restaurant, profile, restId);
+    const stations = await getRestaurantPrintStations(restaurant, profile, restId);
+
+    // 2. Se houver estações de impressão configuradas, realizar roteamento por categoria
+    if (stations.length > 0) {
+      const { stationJobs, unassignedItems } = routeOrderItemsByStations(order, stations, allPrinters);
+
+      if (stationJobs.length > 0) {
+        const isQzConnected = await ensureQzConnected();
+
+        if (isQzConnected) {
+          const printersUsed: string[] = [];
+
+          // Imprimir ticket de cada estação na impressora correspondente
+          for (const job of stationJobs) {
+            const { station, printer, items } = job;
+            const printerId = printer.id || printer.rawName;
+            const docType = `kitchen_station_${station.name || station.id}`;
+            const compositeKey = buildPrintCompositeKey(restId, docId, printerId, docType);
+
+            // REGRA 2 & 3: Checagem de idempotência por estação + documento + impressora
+            if (!options?.isReprint && !options?.forcePrint) {
+              if (isDocumentAlreadyPrinted(restId, docId, printerId, docType)) {
+                console.info(`[OrderThermalPrint] Estação "${station.name}" já impressa para pedido #${order.numero_pedido || docId}. Pulando.`);
+                continue;
+              }
+            }
+
+            // REGRA 9 & 10: Trava de concorrência / duplo clique
+            if (!acquirePrintLock(compositeKey)) {
+              console.warn(`[OrderThermalPrint] Impressão concorrente em andamento para "${compositeKey}". Ignorando duplo disparo.`);
+              continue;
+            }
+
+            const subOrder = {
+              ...order,
+              items,
+              itens: items,
+              stationName: station.name
+            };
+
+            const rawPaperSize = printer.paperSize || '80mm';
+            const paperSize: PaperSize = rawPaperSize === '58mm' ? '58mm' : rawPaperSize === '100mm' ? '100mm' : '80mm';
+            const paperWidthMm = paperSize === '58mm' ? 58 : paperSize === '100mm' ? 100 : 80;
+
+            const htmlContent = generateKitchenTicketHtml(
+              subOrder,
+              { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize },
+              profile
+            );
+            const cleanHtml = htmlContent.replace(/<script[\s\S]*?<\/script>/gi, '');
+
+            const config = qz.configs.create(printer.rawName, {
+              size: { width: paperWidthMm },
+              units: 'mm',
+              margins: 0,
+              scaleContent: true,
+              rasterize: false,
+              copies: 1
+            });
+
+            try {
+              await qz.print(config, [{ type: 'pixel', format: 'html', flavor: 'plain', data: cleanHtml }]);
+              printersUsed.push(printer.rawName);
+
+              // REGRA 8: Registrar sucesso na camada central de segurança
+              recordSuccessfulPrint(restId, docId, printerId, printer.rawName, docType, 'kitchen');
+              if (restId && order.id) {
+                markOrderPrintedOnPrinter(restId, order.id, printer.rawName, printer.rawName);
+              }
+
+              recordPrintHistoryItem({
+                timestamp: Date.now(),
+                printerName: printer.nickname || printer.rawName,
+                rawPrinterName: printer.rawName,
+                documentType: `Ticket Produção — ${station.name}${options?.isReprint ? ' (Reimpressão)' : ''}`,
+                destination: 'kitchen',
+                status: 'success',
+                method: 'qz',
+                paperSize,
+                lastHtml: htmlContent
+              });
+            } catch (err: any) {
+              // REGRA 7: Registrar erro e permitir retry
+              console.error(`[OrderThermalPrint] Erro ao imprimir na estação "${station.name}" (${printer.rawName}):`, err);
+              recordFailedPrint(restId, docId, printerId, printer.rawName, docType, err?.message);
+
+              recordPrintHistoryItem({
+                timestamp: Date.now(),
+                printerName: printer.nickname || printer.rawName,
+                rawPrinterName: printer.rawName,
+                documentType: `Ticket Produção — ${station.name}${options?.isReprint ? ' (Reimpressão)' : ''}`,
+                destination: 'kitchen',
+                status: 'error',
+                errorMessage: err?.message || 'Erro no envio para impressora da estação',
+                method: 'qz',
+                paperSize,
+                lastHtml: htmlContent
+              });
+            } finally {
+              releasePrintLock(compositeKey);
+            }
+          }
+
+          // Itens sem estação configurada continuam no fluxo padrão da cozinha
+          if (unassignedItems.length > 0) {
+            const defaultKitchenPrinters = getPrintersForDestination('kitchen', allPrinters);
+            const unassignedOrder = {
+              ...order,
+              items: unassignedItems,
+              itens: unassignedItems,
+              stationName: 'Cozinha (Geral)'
+            };
+
+            if (defaultKitchenPrinters.length > 0) {
+              for (const printer of defaultKitchenPrinters) {
+                const printerId = printer.id || printer.rawName;
+                const docType = 'kitchen_unassigned_general';
+                const compositeKey = buildPrintCompositeKey(restId, docId, printerId, docType);
+
+                if (!options?.isReprint && !options?.forcePrint) {
+                  if (isDocumentAlreadyPrinted(restId, docId, printerId, docType)) {
+                    continue;
+                  }
+                }
+
+                if (!acquirePrintLock(compositeKey)) {
+                  continue;
+                }
+
+                const rawPaperSize = printer.paperSize || '80mm';
+                const paperSize: PaperSize = rawPaperSize === '58mm' ? '58mm' : rawPaperSize === '100mm' ? '100mm' : '80mm';
+                const paperWidthMm = paperSize === '58mm' ? 58 : paperSize === '100mm' ? 100 : 80;
+
+                const htmlContent = generateKitchenTicketHtml(
+                  unassignedOrder,
+                  { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize },
+                  profile
+                );
+                const cleanHtml = htmlContent.replace(/<script[\s\S]*?<\/script>/gi, '');
+
+                const config = qz.configs.create(printer.rawName, {
+                  size: { width: paperWidthMm },
+                  units: 'mm',
+                  margins: 0,
+                  scaleContent: true,
+                  rasterize: false,
+                  copies: 1
+                });
+
+                try {
+                  await qz.print(config, [{ type: 'pixel', format: 'html', flavor: 'plain', data: cleanHtml }]);
+                  printersUsed.push(printer.rawName);
+
+                  recordSuccessfulPrint(restId, docId, printerId, printer.rawName, docType, 'kitchen');
+                  if (restId && order.id) {
+                    markOrderPrintedOnPrinter(restId, order.id, printer.rawName, printer.rawName);
+                  }
+
+                  recordPrintHistoryItem({
+                    timestamp: Date.now(),
+                    printerName: printer.nickname || printer.rawName,
+                    rawPrinterName: printer.rawName,
+                    documentType: `Ticket Produção — Cozinha (Geral)${options?.isReprint ? ' (Reimpressão)' : ''}`,
+                    destination: 'kitchen',
+                    status: 'success',
+                    method: 'qz',
+                    paperSize,
+                    lastHtml: htmlContent
+                  });
+                } catch (err: any) {
+                  console.error('[OrderThermalPrint] Erro ao imprimir itens não roteados:', err);
+                  recordFailedPrint(restId, docId, printerId, printer.rawName, docType, err?.message);
+                } finally {
+                  releasePrintLock(compositeKey);
+                }
+              }
+            } else if (!options?.isAutoPrint) {
+              // Sem impressora padrão da cozinha via QZ: fallback navegador para itens não roteados em ação manual
+              const fallbackHtml = generateKitchenTicketHtml(unassignedOrder, restaurant, profile);
+              executeThermalPrint(fallbackHtml);
+            }
+          }
+
+          if (printersUsed.length > 0 || (!options?.isReprint && !options?.forcePrint)) {
+            return {
+              success: true,
+              method: 'qz',
+              printerCount: printersUsed.length
+            };
+          }
+        }
+
+        // Se QZ estiver offline ou falhar: aviso discreto + fallback pelo navegador em ação manual
+        if (!options?.isAutoPrint) {
+          showDiscretePrintNotice('QZ Tray desconectado. Abrindo tickets das estações no navegador.', 'info');
+          for (const job of stationJobs) {
+            const subOrder = {
+              ...order,
+              items: job.items,
+              itens: job.items,
+              stationName: job.station.name
+            };
+            const stationHtml = generateKitchenTicketHtml(subOrder, restaurant, profile);
+            executeThermalPrint(stationHtml);
+            recordPrintHistoryItem({
+              timestamp: Date.now(),
+              printerName: job.printer.nickname || job.printer.rawName || 'Navegador',
+              documentType: `Ticket Produção — ${job.station.name}`,
+              destination: 'kitchen',
+              status: 'success',
+              errorMessage: 'QZ Tray desconectado (impresso via navegador)',
+              method: 'browser',
+              paperSize: '80mm',
+              lastHtml: stationHtml
+            });
+          }
+
+          if (unassignedItems.length > 0) {
+            const unassignedOrder = {
+              ...order,
+              items: unassignedItems,
+              itens: unassignedItems,
+              stationName: 'Cozinha (Geral)'
+            };
+            const fallbackHtml = generateKitchenTicketHtml(unassignedOrder, restaurant, profile);
+            executeThermalPrint(fallbackHtml);
+          }
+        }
+
+        return {
+          success: !options?.isAutoPrint,
+          method: options?.isAutoPrint ? 'qz' : 'browser',
+          printerCount: 0
+        };
+      }
+    }
+
+    // 3. Sem estações configuradas: fluxo padrão da cozinha via central de impressão
+    const result = await printViaCentralService({
+      destination: 'kitchen',
+      restaurantProfile: restaurant,
+      profile,
+      restaurantId: restId,
+      documentId: docId,
+      documentType: 'kitchen',
+      isReprint: options?.isReprint,
+      forcePrint: options?.forcePrint,
+      isAutoPrint: options?.isAutoPrint,
+      documentTitle: `Ticket Cozinha #${order?.numero_pedido || order?.orderNumber || order?.id || ''}`,
+      htmlGenerator: (paperSize: PaperSize) => 
+        generateKitchenTicketHtml(order, { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize }, profile),
+      fallbackExecutor: () => {
+        const fallbackHtml = generateKitchenTicketHtml(order, restaurant, profile);
+        executeThermalPrint(fallbackHtml);
+      }
+    });
+
+    if (result.method === 'qz' && result.printersUsed.length > 0) {
+      if (restId && order?.id) {
+        result.printersUsed.forEach(printerRawName => {
+          markOrderPrintedOnPrinter(restId, order.id, printerRawName, printerRawName);
+        });
+      }
+    }
+
+    return {
+      success: result.success,
+      method: result.method,
+      printerCount: result.printerCount,
+      error: result.error
+    };
+  } catch (err: any) {
+    console.error('[OrderThermalPrint] Erro no processamento da impressão da cozinha:', err);
+    if (!options?.isAutoPrint) {
+      const fallbackHtml = generateKitchenTicketHtml(order, restaurant, profile);
+      executeThermalPrint(fallbackHtml);
+    }
+    return { success: false, method: options?.isAutoPrint ? 'qz' : 'browser', error: err?.message };
+  }
 }
 
-// Global print handler used for order receipts
-export function printThermalOrder(order: any, restaurant?: any, profile?: any) {
-  if (!order) return;
-  const htmlContent = generateThermalReceiptHtml(order, restaurant, profile);
-  executeThermalPrint(htmlContent);
+// Global print handler used for order receipts (destination 'delivery' | 'counter' | 'dine_in')
+export async function printThermalOrder(
+  order: any, 
+  restaurant?: any, 
+  profile?: any,
+  options?: { isReprint?: boolean; forcePrint?: boolean; isAutoPrint?: boolean }
+) {
+  if (!order) return { success: false, method: 'browser', error: 'Pedido inválido' };
+
+  const destination = resolveOrderDestination(order);
+  const restId = restaurant?.id || restaurant?.restaurantId || profile?.restaurantId || order?.restaurantId;
+  const docId = order?.id || String(order?.numero_pedido || order?.orderNumber || 'order_receipt');
+
+  return await printViaCentralService({
+    destination,
+    restaurantProfile: restaurant,
+    profile,
+    restaurantId: restId,
+    documentId: docId,
+    documentType: `order_${destination}`,
+    isReprint: options?.isReprint,
+    forcePrint: options?.forcePrint,
+    isAutoPrint: options?.isAutoPrint,
+    documentTitle: `Pedido #${order?.numero_pedido || order?.orderNumber || order?.id || ''}`,
+    htmlGenerator: (paperSize: PaperSize) => 
+      generateThermalReceiptHtml(order, { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize }, profile),
+    fallbackExecutor: () => {
+      const fallbackHtml = generateThermalReceiptHtml(order, restaurant, profile);
+      executeThermalPrint(fallbackHtml);
+    }
+  });
 }
 
 // React component wrapping the HTML representation just in case

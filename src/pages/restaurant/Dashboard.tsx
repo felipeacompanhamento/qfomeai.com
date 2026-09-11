@@ -86,6 +86,7 @@ import { ContasReceberPage } from './financeiro/ContasReceberPage';
 import { ContasPagarPage } from './financeiro/ContasPagarPage';
 import { LancamentosPage } from './financeiro/LancamentosPage';
 import { EmptyModule } from './financeiro/EmptyModule';
+import { useKitchenAutoPrint } from '../../hooks/useKitchenAutoPrint';
 
 export default function RestaurantDashboard() {
   const { user, profile, refreshUser } = useAuth();
@@ -95,6 +96,13 @@ export default function RestaurantDashboard() {
   const [restaurantProfile, setRestaurantProfile] = useState<any>(null);
   const [schedules, setSchedules] = useState<any[]>([]);
   const [lastAlertedOrderId, setLastAlertedOrderId] = useState<string | null>(null);
+
+  // Impressão automática contínua de pedidos destinados à cozinha via QZ Tray
+  useKitchenAutoPrint({
+    orders,
+    restaurantProfile,
+    profile
+  });
 
   useEffect(() => {
     // Push a state to history to prevent back button from exiting the app

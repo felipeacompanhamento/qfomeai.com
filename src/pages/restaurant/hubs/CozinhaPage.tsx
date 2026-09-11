@@ -1,12 +1,16 @@
 import React from 'react';
-import { ChefHat, Clock, CheckCircle2, Flame, RefreshCw, User, Store, Bike, Utensils, Monitor, Tag } from 'lucide-react';
+import { ChefHat, Clock, CheckCircle2, Flame, RefreshCw, User, Store, Bike, Utensils, Monitor, Tag, Printer, Loader2, Check } from 'lucide-react';
 import { normalizeOrderOrigem, OrderOrigem } from '../../../domain/order/orderSource';
+import { printThermalKitchenTicket } from '../../../components/orders/OrderThermalPrint';
+import { useAuth } from '../../../contexts/AuthContext';
+import { useKitchenAutoPrint } from '../../../hooks/useKitchenAutoPrint';
 
 interface CozinhaPageProps {
   orders: any[];
   onUpdateStatus: (orderId: string, newStatus: string) => void;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  restaurantProfile?: any;
 }
 
 export type BalcaoModalidade = 'RETIRADA' | 'ENTREGA' | 'MESA';
@@ -51,9 +55,40 @@ export function getBalcaoModalidade(order: any): BalcaoModalidade {
   return 'RETIRADA';
 }
 
-export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefreshing }: CozinhaPageProps) {
+export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefreshing, restaurantProfile }: CozinhaPageProps) {
+  const { profile } = useAuth();
   const [selectedOrigin, setSelectedOrigin] = React.useState<'TODOS' | 'DELIVERY' | 'GARCOM' | 'BALCAO' | 'TOTEM'>('TODOS');
   const [balcaoFilter, setBalcaoFilter] = React.useState<'TODOS' | 'RETIRADA' | 'ENTREGA' | 'MESA'>('TODOS');
+  const [printingOrderId, setPrintingOrderId] = React.useState<string | null>(null);
+  const [printNotice, setPrintNotice] = React.useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // Impressão automática de novos pedidos destinados à cozinha via QZ Tray (idempotente por orderId + printerId)
+  useKitchenAutoPrint({
+    orders,
+    restaurantProfile,
+    profile
+  });
+
+  const handlePrintKitchenOrder = async (order: any) => {
+    if (printingOrderId) return;
+    setPrintingOrderId(order.id);
+    try {
+      const result = await printThermalKitchenTicket(order, restaurantProfile, profile);
+      if (result.method === 'qz' && result.success) {
+        setPrintNotice({
+          type: 'success',
+          message: (result.printerCount && result.printerCount > 1)
+            ? `Pedido #${order.numero_pedido || order.orderNumber || ''} enviado para ${result.printerCount} impressoras da cozinha via QZ Tray.`
+            : `Pedido #${order.numero_pedido || order.orderNumber || ''} impresso com sucesso via QZ Tray.`
+        });
+        setTimeout(() => setPrintNotice(null), 4000);
+      }
+    } catch (err) {
+      console.error('Erro ao imprimir pedido na cozinha:', err);
+    } finally {
+      setPrintingOrderId(null);
+    }
+  };
 
   // Filter active kitchen orders: 'aceito' (confirmed, to prepare), 'preparo' (in kitchen), 'cozinha'
   const kitchenOrders = React.useMemo(() => {
@@ -128,6 +163,29 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
 
   return (
     <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 max-w-full h-full overflow-hidden space-y-2.5 sm:space-y-3 font-sans">
+      {/* Print Feedback Notification Toast */}
+      {printNotice && (
+        <div className={`shrink-0 p-3 rounded-xl border flex items-center justify-between gap-2 shadow-sm transition-all animate-fadeIn ${
+          printNotice.type === 'success' 
+            ? 'bg-emerald-50 text-emerald-900 border-emerald-300' 
+            : printNotice.type === 'error'
+            ? 'bg-rose-50 text-rose-900 border-rose-300'
+            : 'bg-stone-100 text-stone-900 border-stone-300'
+        }`}>
+          <div className="flex items-center gap-2 min-w-0 text-xs sm:text-sm font-bold">
+            <Printer className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span className="truncate">{printNotice.message}</span>
+          </div>
+          <button 
+            type="button" 
+            onClick={() => setPrintNotice(null)}
+            className="text-stone-500 hover:text-stone-800 text-xs font-bold px-2 py-1 rounded-lg"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Header Banner & Origin Filters - Fixed at Top */}
       <div className="shrink-0 space-y-2 sm:space-y-2.5">
         {/* Header Banner */}
@@ -440,14 +498,33 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
 
                         {/* Status & Timer */}
                         <div className="flex flex-col items-end gap-1 shrink-0">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                              isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
-                            }`}
-                          >
-                            {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
-                            <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePrintKitchenOrder(order);
+                              }}
+                              disabled={printingOrderId === order.id}
+                              className="p-1.5 bg-white hover:bg-stone-100 active:scale-95 border border-stone-200 text-stone-700 hover:text-stone-900 rounded-lg transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                              title="Imprimir ticket da cozinha"
+                              aria-label="Imprimir ticket da cozinha"
+                            >
+                              {printingOrderId === order.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                              ) : (
+                                <Printer className="w-3.5 h-3.5 text-stone-700" />
+                              )}
+                            </button>
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                                isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
+                              }`}
+                            >
+                              {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
+                              <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
+                            </span>
+                          </div>
                           <span className={`text-xs font-bold ${isDelayed ? 'text-rose-600 animate-pulse' : 'text-stone-500'}`}>
                             ⏱️ {elapsed}
                           </span>
@@ -479,14 +556,33 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                           </div>
 
                           <div className="flex flex-col items-end gap-1 shrink-0">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                                isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
-                              }`}
-                            >
-                              {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
-                              <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePrintKitchenOrder(order);
+                                }}
+                                disabled={printingOrderId === order.id}
+                                className="p-1.5 bg-white hover:bg-stone-100 active:scale-95 border border-stone-200 text-stone-700 hover:text-stone-900 rounded-lg transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                                title="Imprimir ticket da cozinha"
+                                aria-label="Imprimir ticket da cozinha"
+                              >
+                                {printingOrderId === order.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                                ) : (
+                                  <Printer className="w-3.5 h-3.5 text-stone-700" />
+                                )}
+                              </button>
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                                  isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
+                                }`}
+                              >
+                                {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
+                                <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
+                              </span>
+                            </div>
                             <span className={`text-xs font-bold ${isDelayed ? 'text-rose-600 animate-pulse' : 'text-stone-500'}`}>
                               ⏱️ {elapsed}
                             </span>
@@ -515,14 +611,33 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                           </div>
 
                           <div className="flex flex-col items-end gap-1 shrink-0">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                                isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
-                              }`}
-                            >
-                              {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
-                              <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePrintKitchenOrder(order);
+                                }}
+                                disabled={printingOrderId === order.id}
+                                className="p-1.5 bg-white hover:bg-stone-100 active:scale-95 border border-stone-200 text-stone-700 hover:text-stone-900 rounded-lg transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                                title="Imprimir ticket da cozinha"
+                                aria-label="Imprimir ticket da cozinha"
+                              >
+                                {printingOrderId === order.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                                ) : (
+                                  <Printer className="w-3.5 h-3.5 text-stone-700" />
+                                )}
+                              </button>
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                                  isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
+                                }`}
+                              >
+                                {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
+                                <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
+                              </span>
+                            </div>
                             <span className={`text-xs font-bold ${isDelayed ? 'text-rose-600 animate-pulse' : 'text-stone-500'}`}>
                               ⏱️ {elapsed}
                             </span>
@@ -554,14 +669,33 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                           </div>
 
                           <div className="flex flex-col items-end gap-1 shrink-0">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                                isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
-                              }`}
-                            >
-                              {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
-                              <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePrintKitchenOrder(order);
+                                }}
+                                disabled={printingOrderId === order.id}
+                                className="p-1.5 bg-white hover:bg-stone-100 active:scale-95 border border-stone-200 text-stone-700 hover:text-stone-900 rounded-lg transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                                title="Imprimir ticket da cozinha"
+                                aria-label="Imprimir ticket da cozinha"
+                              >
+                                {printingOrderId === order.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                                ) : (
+                                  <Printer className="w-3.5 h-3.5 text-stone-700" />
+                                )}
+                              </button>
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                                  isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
+                                }`}
+                              >
+                                {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
+                                <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
+                              </span>
+                            </div>
                             <span className={`text-xs font-bold ${isDelayed ? 'text-rose-600 animate-pulse' : 'text-stone-500'}`}>
                               ⏱️ {elapsed}
                             </span>
@@ -591,14 +725,33 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                         </div>
 
                         <div className="flex flex-col items-end gap-1 shrink-0">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                              isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
-                            }`}
-                          >
-                            {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
-                            <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePrintKitchenOrder(order);
+                              }}
+                              disabled={printingOrderId === order.id}
+                              className="p-1.5 bg-white hover:bg-stone-100 active:scale-95 border border-stone-200 text-stone-700 hover:text-stone-900 rounded-lg transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                              title="Imprimir ticket da cozinha"
+                              aria-label="Imprimir ticket da cozinha"
+                            >
+                              {printingOrderId === order.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                              ) : (
+                                <Printer className="w-3.5 h-3.5 text-stone-700" />
+                              )}
+                            </button>
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                                isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
+                              }`}
+                            >
+                              {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
+                              <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
+                            </span>
+                          </div>
                           <span className={`text-xs font-bold ${isDelayed ? 'text-rose-600 animate-pulse' : 'text-stone-500'}`}>
                             ⏱️ {elapsed}
                           </span>
@@ -636,14 +789,33 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                         </div>
 
                         <div className="flex flex-col items-end gap-1 shrink-0">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-                              isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
-                            }`}
-                          >
-                            {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
-                            <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePrintKitchenOrder(order);
+                              }}
+                              disabled={printingOrderId === order.id}
+                              className="p-1.5 bg-white hover:bg-stone-100 active:scale-95 border border-stone-200 text-stone-700 hover:text-stone-900 rounded-lg transition-all shadow-2xs flex items-center justify-center cursor-pointer"
+                              title="Imprimir ticket da cozinha"
+                              aria-label="Imprimir ticket da cozinha"
+                            >
+                              {printingOrderId === order.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                              ) : (
+                                <Printer className="w-3.5 h-3.5 text-stone-700" />
+                              )}
+                            </button>
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                                isPreparo ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-stone-100 text-stone-700 border-stone-200'
+                              }`}
+                            >
+                              {isPreparo ? <Flame className="w-3 h-3 text-amber-600" /> : <Clock className="w-3 h-3 text-stone-500" />}
+                              <span>{isPreparo ? 'Em Preparo' : 'Aguardando'}</span>
+                            </span>
+                          </div>
                           <span className={`text-xs font-bold ${isDelayed ? 'text-rose-600 animate-pulse' : 'text-stone-500'}`}>
                             ⏱️ {elapsed}
                           </span>
@@ -685,12 +857,26 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                   </div>
 
                   {/* Card Action - Production Only */}
-                  <div className="p-3 sm:p-4 bg-stone-50/80 border-t border-stone-100 shrink-0">
+                  <div className="p-3 sm:p-4 bg-stone-50/80 border-t border-stone-100 shrink-0 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handlePrintKitchenOrder(order)}
+                      disabled={printingOrderId === order.id}
+                      className="min-h-[42px] sm:min-h-[44px] px-3.5 py-2.5 bg-white hover:bg-stone-100 border border-stone-300 text-stone-800 font-bold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer shrink-0 active:scale-[0.98]"
+                      title="Imprimir ticket de produção da cozinha"
+                    >
+                      {printingOrderId === order.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+                      ) : (
+                        <Printer className="w-4 h-4 text-stone-700" />
+                      )}
+                      <span className="hidden sm:inline">Imprimir</span>
+                    </button>
                     {!isPreparo ? (
                       <button
                         type="button"
                         onClick={() => onUpdateStatus(order.id, 'preparo')}
-                        className="w-full min-h-[42px] sm:min-h-[44px] py-2.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-stone-950 font-extrabold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 shadow-2xs cursor-pointer"
+                        className="flex-1 min-h-[42px] sm:min-h-[44px] py-2.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-stone-950 font-extrabold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 shadow-2xs cursor-pointer"
                       >
                         <Flame className="w-4 h-4 text-stone-950" />
                         <span>Iniciar Preparo</span>
@@ -699,7 +885,7 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
                       <button
                         type="button"
                         onClick={() => onUpdateStatus(order.id, 'pronto')}
-                        className="w-full min-h-[42px] sm:min-h-[44px] py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 shadow-2xs cursor-pointer"
+                        className="flex-1 min-h-[42px] sm:min-h-[44px] py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 shadow-2xs cursor-pointer"
                       >
                         <CheckCircle2 className="w-4 h-4 text-white" />
                         <span>Marcar como Pronto</span>

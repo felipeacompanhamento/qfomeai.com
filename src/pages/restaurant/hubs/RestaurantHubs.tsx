@@ -81,6 +81,7 @@ export const OperacaoHubWrapper: React.FC<HubProps> = ({
         onUpdateStatus={handleUpdateStatus}
         onRefresh={() => fetchOrders && fetchOrders(false, true)}
         isRefreshing={isRefreshing}
+        restaurantProfile={restaurantProfile}
       />
     ),
     entregas: <EntregasHubPage />,

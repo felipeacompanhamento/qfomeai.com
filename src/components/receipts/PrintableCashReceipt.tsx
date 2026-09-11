@@ -1,34 +1,29 @@
 import React, { useRef } from 'react';
+import { printViaCentralService, PrintDestinationType, PaperSize } from '../../services/printCentralService';
 
 interface PrintableCashReceiptProps {
   children: React.ReactNode;
   onPrint?: () => void;
+  destination?: 'cash_open' | 'cash_close';
+  restaurantProfile?: any;
+  profile?: any;
+  documentId?: string;
+  isReprint?: boolean;
 }
 
-export const PrintableCashReceipt: React.FC<PrintableCashReceiptProps> = ({ children, onPrint }) => {
+export const PrintableCashReceipt: React.FC<PrintableCashReceiptProps> = ({ 
+  children, 
+  onPrint,
+  destination,
+  restaurantProfile,
+  profile,
+  documentId,
+  isReprint = false
+}) => {
   const receiptRef = useRef<HTMLDivElement>(null);
   const isPrintingRef = useRef(false);
 
-  const handlePrint = () => {
-    if (isPrintingRef.current) return;
-    isPrintingRef.current = true;
-
-    if (onPrint) {
-      onPrint();
-    }
-
-    const receiptEl = receiptRef.current;
-    if (!receiptEl) {
-      isPrintingRef.current = false;
-      return;
-    }
-
-    const contentHtml = receiptEl.innerHTML;
-
-    // Isolate the receipt in a dedicated, hidden iframe to ensure:
-    // 1. Exactly 1 page is printed (no multi-page layout inflation from body * { visibility: hidden })
-    // 2. No repeating fixed elements across multiple pages
-    // 3. Exactly 1 print job is triggered per click
+  const executeBrowserPrint = (contentHtml: string) => {
     const iframeId = 'printable-cash-receipt-iframe';
     const existingIframe = document.getElementById(iframeId);
     if (existingIframe) {
@@ -54,7 +49,7 @@ export const PrintableCashReceipt: React.FC<PrintableCashReceiptProps> = ({ chil
       return;
     }
 
-    // Collect all head stylesheets so styling matches exactly
+    // Coleta estilos para impressão no navegador
     const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
       .map(el => el.outerHTML)
       .join('\n');
@@ -101,7 +96,6 @@ export const PrintableCashReceipt: React.FC<PrintableCashReceiptProps> = ({ chil
 </html>`);
     iframeDoc.close();
 
-    // Trigger single print execution
     setTimeout(() => {
       try {
         iframe.contentWindow?.focus();
@@ -116,6 +110,92 @@ export const PrintableCashReceipt: React.FC<PrintableCashReceiptProps> = ({ chil
         }, 3000);
       }
     }, 150);
+  };
+
+  const handlePrint = async () => {
+    if (isPrintingRef.current) return;
+    isPrintingRef.current = true;
+
+    if (onPrint) {
+      onPrint();
+    }
+
+    const receiptEl = receiptRef.current;
+    if (!receiptEl) {
+      isPrintingRef.current = false;
+      return;
+    }
+
+    const contentHtml = receiptEl.innerHTML;
+
+    // Se temos um destino definido (cash_open ou cash_close), usar a Central de Impressão
+    if (destination) {
+      try {
+        const cashDocId = documentId || `${destination}_${new Date().toISOString().slice(0, 10)}`;
+        await printViaCentralService({
+          destination,
+          restaurantProfile,
+          profile,
+          documentId: cashDocId,
+          documentType: destination,
+          isReprint,
+          documentTitle: destination === 'cash_open' ? 'Abertura de Caixa' : 'Fechamento de Caixa',
+          htmlGenerator: (paperSize: PaperSize) => {
+            const maxWidth = paperSize === '58mm' ? '58mm' : paperSize === '100mm' ? '100mm' : '80mm';
+            return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${destination === 'cash_open' ? 'Abertura de Caixa' : 'Fechamento de Caixa'}</title>
+  <style>
+    @page { margin: 0; size: auto; }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: #1c1917;
+      font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 9.5pt;
+      line-height: 1.35;
+    }
+    body {
+      padding: 6px 10px;
+      width: 100%;
+      max-width: ${maxWidth};
+      margin: 0 auto;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .flex { display: flex; justify-content: space-between; }
+    .text-center { text-align: center; }
+    .font-bold { font-weight: bold; }
+    .border-t { border-top: 1px dashed #78716c; }
+    .border-b { border-bottom: 1px dashed #78716c; }
+    .py-2 { padding-top: 6px; padding-bottom: 6px; }
+    .mb-2 { margin-bottom: 6px; }
+    .mb-4 { margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  ${contentHtml}
+</body>
+</html>`;
+          },
+          fallbackExecutor: () => {
+            executeBrowserPrint(contentHtml);
+          }
+        });
+      } catch (err) {
+        console.error('[PrintableCashReceipt] Erro na central de impressão:', err);
+        executeBrowserPrint(contentHtml);
+      } finally {
+        isPrintingRef.current = false;
+      }
+    } else {
+      // Fallback padrão sem destino
+      executeBrowserPrint(contentHtml);
+    }
   };
 
   return (
@@ -141,7 +221,7 @@ export const PrintableCashReceipt: React.FC<PrintableCashReceiptProps> = ({ chil
         <button 
           type="button"
           onClick={handlePrint}
-          className="w-full py-2 bg-stone-800 text-white font-bold rounded-lg hover:bg-stone-700 transition-colors"
+          className="w-full py-2 bg-stone-800 text-white font-bold rounded-lg hover:bg-stone-700 transition-colors cursor-pointer"
         >
           Imprimir
         </button>
@@ -149,4 +229,5 @@ export const PrintableCashReceipt: React.FC<PrintableCashReceiptProps> = ({ chil
     </div>
   );
 };
+
 

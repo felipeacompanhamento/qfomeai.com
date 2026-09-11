@@ -880,7 +880,10 @@ export function CaixaPage() {
                 <X className="w-4 h-4" />
               </IconButton>
             </div>
-            <PrintableCashReceipt>
+            <PrintableCashReceipt 
+              destination={printData.type === 'opening' ? 'cash_open' : 'cash_close'}
+              restaurantProfile={restaurantData}
+            >
               {printData.type === 'opening' ? (
                 <CashOpeningReceipt 
                   restaurantName={restaurantData?.nome || 'Restaurante'}
