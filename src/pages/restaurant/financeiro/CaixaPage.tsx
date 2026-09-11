@@ -872,8 +872,8 @@ export function CaixaPage() {
 
       {/* Print Modal */}
       {printData.type && printData.data && (
-        <div className="fixed inset-0 z-50 bg-stone-900/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg p-4 max-w-sm w-full">
+        <div className="fixed inset-0 z-50 bg-stone-900/50 flex items-center justify-center p-4 print:static print:inset-auto print:p-0 print:m-0 print:bg-transparent">
+          <div className="bg-white rounded-lg p-4 max-w-sm w-full print:p-0 print:m-0 print:max-w-none print:shadow-none print:border-none">
             <div className="flex justify-between items-center mb-4 no-print">
               <h3 className="font-bold text-lg">Impressão</h3>
               <IconButton variant="ghost" size="sm" onClick={() => setPrintData({ type: null, data: null })} aria-label="Fechar">

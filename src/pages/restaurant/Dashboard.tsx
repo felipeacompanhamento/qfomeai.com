@@ -34,6 +34,7 @@ import { cacheOrders } from '../../utils/cacheOrders';
 import { processOrderPaymentsApi, processOrderRefundApi, normalizePaymentMethodId, registerClientOrderPaymentMovement, registerClientOrderRefundMovement } from '../../utils/financeIntegration';
 import { isPixPaymentMethod } from '../../services/paymentMethodsService';
 import { scheduleService, Schedule } from '../../services/scheduleService';
+import ExecutiveDashboard from './ExecutiveDashboard';
 import PerformanceDashboard from './PerformanceDashboard';
 import RestaurantCategories from './Categories';
 import RestaurantExtras from './Extras';
@@ -754,8 +755,8 @@ export default function RestaurantDashboard() {
       )}
 
       <Routes>
-        <Route path="/" element={<PermissionGuard module="dashboard" allowedRoles={["MANAGER"]}><DashboardStats orders={orders} /></PermissionGuard>} />
-        <Route path="dashboard" element={<PermissionGuard module="dashboard" allowedRoles={["MANAGER"]}><DashboardStats orders={orders} /></PermissionGuard>} />
+        <Route path="/" element={<PermissionGuard module="dashboard" allowedRoles={["MANAGER"]}><ExecutiveDashboard liveOrders={orders} restaurantProfile={restaurantProfile} /></PermissionGuard>} />
+        <Route path="dashboard" element={<PermissionGuard module="dashboard" allowedRoles={["MANAGER"]}><ExecutiveDashboard liveOrders={orders} restaurantProfile={restaurantProfile} /></PermissionGuard>} />
         <Route path="balcao" element={
           <PermissionGuard module="balcao">
             {normalizeRestaurantFeatures(restaurantProfile).counterEnabled ? (
@@ -774,7 +775,7 @@ export default function RestaurantDashboard() {
             )}
           </PermissionGuard>
         } />
-        <Route path="desempenho" element={<PermissionGuard module="desempenho"><PerformanceDashboard orders={orders} /></PermissionGuard>} />
+        <Route path="desempenho" element={<Navigate to="/restaurant/dashboard" replace />} />
         <Route path="clientes" element={<PermissionGuard module="clientes"><Navigate to="/restaurant/gestao/clientes?subtab=clientes" replace /></PermissionGuard>} />
         <Route path="customers" element={<PermissionGuard module="clientes"><Navigate to="/restaurant/gestao/clientes?subtab=clientes" replace /></PermissionGuard>} />
         <Route path="relatorios" element={<PermissionGuard module="relatorios"><Navigate to="/restaurant/gestao/relatorios?subtab=relatorios" replace /></PermissionGuard>} />

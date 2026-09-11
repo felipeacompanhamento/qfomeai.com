@@ -51,17 +51,9 @@ export const OFFICIAL_NAV_GROUPS: MenuGroupConfig[] = [
         id: 'dashboard',
         title: 'Dashboard',
         path: '/restaurant/dashboard',
-        aliases: ['/restaurant/dashboard'],
+        aliases: ['/restaurant/dashboard', '/restaurant/desempenho'],
         canonicalPermission: 'dashboard.visualizar',
         icon: LayoutDashboard,
-      },
-      {
-        id: 'desempenho',
-        title: 'Desempenho',
-        path: '/restaurant/desempenho',
-        aliases: ['/restaurant/desempenho'],
-        canonicalPermission: 'dashboard.visualizar',
-        icon: TrendingUp,
       },
     ]
   },

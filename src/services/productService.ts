@@ -5,6 +5,7 @@ import {
   where, 
   getDocs, 
   doc, 
+  getDoc,
   addDoc, 
   updateDoc, 
   deleteDoc, 
@@ -15,6 +16,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage, handleFirestoreError, OperationType, auth } from '../firebase';
 import { invalidateRestaurantCache } from './restaurantService';
+import { storageCleanupService } from './storageCleanupService';
 import { ProductSalesChannels, ProductChannelPricing } from '../domain/product/productChannels';
 
 export interface ProductSize {
@@ -144,6 +146,22 @@ export const productService = {
         updatePayload.imagem_url = imageUrl;
       }
 
+      // Se a imagem_url foi alterada ou removida, apagar arquivo antigo do Storage antes de atualizar
+      if (updatePayload.imagem_url !== undefined) {
+        try {
+          const currentSnap = await getDoc(docRef);
+          if (currentSnap.exists()) {
+            const oldImageUrl = currentSnap.data()?.imagem_url;
+            const newImageUrl = updatePayload.imagem_url;
+            if (oldImageUrl && oldImageUrl !== newImageUrl) {
+              await storageCleanupService.deleteProductOldImage(restaurantId, oldImageUrl, newImageUrl);
+            }
+          }
+        } catch (storageErr) {
+          console.warn('[Storage Cleanup] Aviso ao verificar imagem anterior do produto:', storageErr);
+        }
+      }
+
       await updateDoc(docRef, updatePayload);
       invalidateRestaurantCache(restaurantId);
     } catch (error) {
@@ -151,9 +169,27 @@ export const productService = {
     }
   },
 
-  async deleteProduct(restaurantId: string, productId: string) {
+  async deleteProduct(restaurantId: string, productId: string, knownImageUrl?: string) {
     try {
       const docRef = doc(db, 'restaurants', restaurantId, 'products', productId);
+      
+      // Obter imagem do produto para apagar do Storage antes de excluir do Firestore
+      let imageUrlToDelete = knownImageUrl;
+      if (!imageUrlToDelete) {
+        try {
+          const currentSnap = await getDoc(docRef);
+          if (currentSnap.exists()) {
+            imageUrlToDelete = currentSnap.data()?.imagem_url;
+          }
+        } catch (fetchErr) {
+          console.warn('[Storage Cleanup] Aviso ao buscar produto para exclusão de imagem:', fetchErr);
+        }
+      }
+
+      if (imageUrlToDelete) {
+        await storageCleanupService.deleteProductOldImage(restaurantId, imageUrlToDelete);
+      }
+
       await deleteDoc(docRef);
       invalidateRestaurantCache(restaurantId);
     } catch (error) {

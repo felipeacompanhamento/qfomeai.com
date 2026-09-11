@@ -6,6 +6,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, auth, storage } from '../../firebase';
 import { getReports } from '../../services/reportService';
 import { scheduleService } from '../../services/scheduleService';
+import { storageCleanupService } from '../../services/storageCleanupService';
 import { isRestaurantOpen } from '../../utils/restaurantStatus';
 import { validateCPF, validateCNPJ, formatCPF, formatCNPJ } from '../../utils/validation';
 import ImageUpload from '../../components/ImageUpload';
@@ -3413,6 +3414,20 @@ function RestaurantManagement({ restaurants, categories }: any) {
   const handleDeleteRestaurant = async () => {
     if (!deletingRestaurantId) return;
     try {
+      // Limpeza das imagens do restaurante antes de excluir
+      try {
+        const restSnap = await getDoc(doc(db, 'restaurants', deletingRestaurantId));
+        if (restSnap.exists()) {
+          const restData = restSnap.data();
+          const logo = restData.logoUrl || restData.logo_url;
+          const cover = restData.coverUrl || restData.capa_url;
+          if (logo) await storageCleanupService.deleteRestaurantOldLogo(deletingRestaurantId, logo);
+          if (cover) await storageCleanupService.deleteRestaurantOldCover(deletingRestaurantId, cover);
+        }
+      } catch (cleanErr) {
+        console.warn('[AdminDashboard] Erro ao limpar imagens do restaurante excluído:', cleanErr);
+      }
+
       // Delete restaurant document
       await deleteDoc(doc(db, 'restaurants', deletingRestaurantId));
       // Update user role to 'cliente'
@@ -3446,6 +3461,28 @@ function RestaurantManagement({ restaurants, categories }: any) {
     setSaveLoading(true);
     try {
       const { id, ...rest } = data;
+
+      // Limpeza de imagens antigas do Storage se foram trocadas ou removidas
+      try {
+        const restSnap = await getDoc(doc(db, 'restaurants', id));
+        if (restSnap.exists()) {
+          const prevData = restSnap.data();
+          const oldLogo = prevData.logoUrl || prevData.logo_url;
+          const newLogo = rest.logoUrl;
+          if (oldLogo && oldLogo !== newLogo) {
+            await storageCleanupService.deleteRestaurantOldLogo(id, oldLogo, newLogo);
+          }
+
+          const oldCover = prevData.coverUrl || prevData.capa_url;
+          const newCover = rest.coverUrl;
+          if (oldCover && oldCover !== newCover) {
+            await storageCleanupService.deleteRestaurantOldCover(id, oldCover, newCover);
+          }
+        }
+      } catch (cleanErr) {
+        console.warn('[AdminDashboard] Erro ao limpar imagens antigas do restaurante:', cleanErr);
+      }
+
       await updateDoc(doc(db, 'restaurants', id), {
         ...rest,
         data_atualizacao: new Date().toISOString()

@@ -436,7 +436,7 @@ export default function RestaurantProducts({ adminRestaurantId }: { adminRestaur
     setSaveLoading(true);
     setError(null);
     try {
-      await productService.deleteProduct(restaurantId, productToDelete.id);
+      await productService.deleteProduct(restaurantId, productToDelete.id, productToDelete.imagem_url);
       // Atualiza o estado local imediatamente
       setProducts(prev => prev.filter(p => p.id !== productToDelete.id));
       setSuccessMessage("Produto excluído com sucesso!");

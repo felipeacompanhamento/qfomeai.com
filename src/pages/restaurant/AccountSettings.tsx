@@ -3,6 +3,7 @@ import { doc, getDoc, updateDoc, serverTimestamp, collection, query, where, getD
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { restaurantService } from '../../services/restaurantService';
+import { storageCleanupService } from '../../services/storageCleanupService';
 import ImageUpload from '../../components/ImageUpload';
 import { Save, Loader2, MapPin, Phone, Mail, Instagram, Globe, Clock, ShoppingBag, AlertCircle, Check, Trash2, RefreshCw, FileText, XCircle, Info, Database, Users } from 'lucide-react';
 
@@ -412,6 +413,27 @@ export default function AccountSettings() {
     try {
       const { id, logo_url, capa_url, ...data } = restaurantData;
       
+      // Limpeza de imagens antigas do Firebase Storage antes de atualizar o Firestore
+      try {
+        const currentDocSnap = await getDoc(doc(db, 'restaurants', restaurantId));
+        if (currentDocSnap.exists()) {
+          const currentDbData = currentDocSnap.data();
+          const oldLogo = currentDbData.logoUrl || currentDbData.logo_url;
+          const newLogo = data.logoUrl;
+          if (oldLogo && oldLogo !== newLogo) {
+            await storageCleanupService.deleteRestaurantOldLogo(restaurantId, oldLogo, newLogo);
+          }
+
+          const oldCover = currentDbData.coverUrl || currentDbData.capa_url;
+          const newCover = data.coverUrl;
+          if (oldCover && oldCover !== newCover) {
+            await storageCleanupService.deleteRestaurantOldCover(restaurantId, oldCover, newCover);
+          }
+        }
+      } catch (cleanupErr) {
+        console.warn('[Storage Cleanup] Aviso na limpeza de imagens do restaurante:', cleanupErr);
+      }
+
       // Garantir que campos obrigatórios pelas regras do Firestore estejam presentes
       const updatePayload = {
         ...data,
