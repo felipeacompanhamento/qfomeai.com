@@ -521,6 +521,26 @@
         "created_at": { "type": "string", "format": "date-time" }
       },
       "required": ["restaurantId", "mesaId", "mesaNumero", "status"]
+    },
+    "PrintAgentDevice": {
+      "title": "PrintAgentDevice",
+      "description": "Linked Print Agent device connected to the restaurant.",
+      "type": "object",
+      "properties": {
+        "deviceId": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "platform": { "type": "string" },
+        "appVersion": { "type": "string" },
+        "status": { "type": "string" },
+        "connectionStatus": { "type": "string", "enum": ["online", "offline"] },
+        "isOnline": { "type": "boolean" },
+        "pairedAt": { "type": "number" },
+        "lastSeenAt": { "type": "number" },
+        "connectedAt": { "type": "number" },
+        "disconnectedAt": { "type": "number" },
+        "remoteAddress": { "type": "string" }
+      },
+      "required": ["deviceId", "restaurantId"]
     }
   },
   "firestore": {
@@ -533,6 +553,7 @@
     "/users/{userId}/cupons/{cupomId}": { "schema": "CupomCliente", "description": "User coupons" },
     "/users/{userId}/favoritos/{favoritoId}": { "schema": "Favorito", "description": "User favorite restaurants" },
     "/restaurants/{restaurantId}": { "schema": "Restaurant", "description": "Restaurant details" },
+    "/restaurants/{restaurantId}/printAgentDevices/{deviceId}": { "schema": "PrintAgentDevice", "description": "Linked Print Agent desktop devices" },
     "/restaurants/{restaurantId}/categories/{categoryId}": { "schema": "Category", "description": "Restaurant menu categories" },
     "/restaurants/{restaurantId}/drivers/{driverId}": { "schema": "Driver", "description": "Restaurant drivers list" },
     "/restaurants/{restaurantId}/waiters/{waiterId}": { "schema": "Waiter", "description": "Restaurant waitstaff list" },

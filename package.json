@@ -57,10 +57,12 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vite-plugin-pwa": "^1.2.0"
+    "vite-plugin-pwa": "^1.2.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",
+    "@types/ws": "^8.18.1",
     "vitest": "^4.1.10"
   }
 }

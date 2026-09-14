@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { doc, getDoc, updateDoc, collection, getDocs, query } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
@@ -63,6 +63,22 @@ export interface PrintAgentPairingData {
   status: 'active' | 'expired' | 'used';
   restaurantId: string;
   createdBy?: string;
+}
+
+export interface LinkedPrintAgentDevice {
+  id: string;
+  deviceId: string;
+  restaurantId: string;
+  platform?: string;
+  appVersion?: string;
+  status?: string;
+  connectionStatus?: 'online' | 'offline';
+  isOnline?: boolean;
+  pairedAt?: number;
+  lastSeenAt?: number;
+  connectedAt?: number;
+  disconnectedAt?: number;
+  remoteAddress?: string | null;
 }
 
 export interface AutoPrintSettings {
@@ -141,6 +157,66 @@ export default function PrintSettings() {
   const [isGeneratingCode, setIsGeneratingCode] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [timeLeftSeconds, setTimeLeftSeconds] = useState<number>(0);
+
+  // Estados dos Dispositivos Print Agent Vinculados
+  const [linkedDevices, setLinkedDevices] = useState<LinkedPrintAgentDevice[]>([]);
+  const [loadingLinkedDevices, setLoadingLinkedDevices] = useState(true);
+  const [testingDeviceId, setTestingDeviceId] = useState<string | null>(null);
+  const [agentTestFeedback, setAgentTestFeedback] = useState<{
+    deviceId: string;
+    type: 'success' | 'error';
+    message: string;
+    latencyMs?: number;
+    acknowledgedAt?: string;
+  } | null>(null);
+
+  // Escuta em tempo real os dispositivos Print Agent vinculados ao restaurante no Firestore
+  useEffect(() => {
+    if (!user || !profile?.restaurantId) {
+      setLinkedDevices([]);
+      setLoadingLinkedDevices(false);
+      return;
+    }
+
+    setLoadingLinkedDevices(true);
+    const devicesColRef = collection(db, 'restaurants', profile.restaurantId, 'printAgentDevices');
+    const unsubscribe = onSnapshot(devicesColRef, (snapshot) => {
+      const devices: LinkedPrintAgentDevice[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        devices.push({
+          id: docSnap.id,
+          deviceId: data.deviceId || docSnap.id,
+          restaurantId: data.restaurantId || profile.restaurantId || '',
+          platform: data.platform || 'windows',
+          appVersion: data.appVersion || '1.0.0',
+          status: data.status || 'active',
+          connectionStatus: data.connectionStatus || (data.isOnline ? 'online' : 'offline'),
+          isOnline: Boolean(data.isOnline || data.connectionStatus === 'online'),
+          pairedAt: data.pairedAt,
+          lastSeenAt: data.lastSeenAt,
+          connectedAt: data.connectedAt,
+          disconnectedAt: data.disconnectedAt,
+          remoteAddress: data.remoteAddress,
+        });
+      });
+
+      // Ordenar dispositivos: Online primeiro, depois pelo lastSeenAt mais recente
+      devices.sort((a, b) => {
+        if (a.isOnline && !b.isOnline) return -1;
+        if (!a.isOnline && b.isOnline) return 1;
+        return (b.lastSeenAt || 0) - (a.lastSeenAt || 0);
+      });
+
+      setLinkedDevices(devices);
+      setLoadingLinkedDevices(false);
+    }, (err) => {
+      console.warn('Aviso ao sincronizar dispositivos do Print Agent:', err?.message || err);
+      setLoadingLinkedDevices(false);
+    });
+
+    return () => unsubscribe();
+  }, [user, profile?.restaurantId]);
 
   // Efeito de contagem regressiva para expiração do código de vinculação (10 min)
   useEffect(() => {
@@ -244,6 +320,78 @@ export default function PrintSettings() {
       setTimeout(() => setCopiedCode(false), 2500);
     } catch {
       // Ignora falha de cópia
+    }
+  };
+
+  /**
+   * Envia teste de comunicação exclusivo ao QFomeAI Print Agent via WebSocket existente.
+   * Exibe sucesso SOMENTE se o Agent confirmar o recebimento com test_ack.
+   */
+  const handleSendTestToAgent = async (targetDevice?: LinkedPrintAgentDevice) => {
+    if (!profile?.restaurantId) {
+      setAgentTestFeedback({
+        deviceId: targetDevice?.deviceId || 'geral',
+        type: 'error',
+        message: 'Restaurante não autenticado. Faça login novamente.'
+      });
+      return;
+    }
+
+    const deviceId = targetDevice?.deviceId;
+    const isOnline = Boolean(targetDevice?.isOnline || targetDevice?.connectionStatus === 'online');
+
+    if (targetDevice && !isOnline) {
+      setAgentTestFeedback({
+        deviceId: targetDevice.deviceId,
+        type: 'error',
+        message: 'O Print Agent está Offline no momento. Abra e conecte o aplicativo no Windows para testar a comunicação.'
+      });
+      return;
+    }
+
+    setTestingDeviceId(deviceId || 'geral');
+    setAgentTestFeedback(null);
+
+    try {
+      const idToken = await user?.getIdToken();
+      const response = await fetch('/api/restaurant/print-agent/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
+        },
+        body: JSON.stringify({
+          deviceId,
+          restaurantId: profile.restaurantId
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        // Mostrar sucesso SOMENTE se o Agent confirmar o recebimento
+        setAgentTestFeedback({
+          deviceId: data.deviceId || deviceId || 'geral',
+          type: 'success',
+          message: 'Comunicação confirmada com sucesso pelo Print Agent! (test_ack recebido)',
+          latencyMs: data.latencyMs,
+          acknowledgedAt: data.acknowledgedAt
+        });
+      } else {
+        setAgentTestFeedback({
+          deviceId: deviceId || 'geral',
+          type: 'error',
+          message: data.error || 'O Print Agent não respondeu com a confirmação (test_ack) dentro do tempo limite.'
+        });
+      }
+    } catch (err: any) {
+      setAgentTestFeedback({
+        deviceId: deviceId || 'geral',
+        type: 'error',
+        message: `Falha na transmissão do teste: ${err?.message || 'Servidor inacessível.'}`
+      });
+    } finally {
+      setTestingDeviceId(null);
     }
   };
 
@@ -1605,6 +1753,166 @@ export default function PrintSettings() {
             </div>
           </div>
         )}
+
+        {/* LISTA DE DISPOSITIVOS PRINT AGENT VINCULADOS */}
+        <div className="pt-4 border-t border-stone-100 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Monitor className="w-4 h-4 text-stone-600" />
+              <h4 className="text-sm font-bold text-stone-800">
+                Dispositivos Print Agent Vinculados
+              </h4>
+              <span className="text-xs bg-stone-100 text-stone-700 px-2 py-0.5 rounded-full font-bold">
+                {linkedDevices.length} {linkedDevices.length === 1 ? 'dispositivo' : 'dispositivos'}
+              </span>
+            </div>
+          </div>
+
+          {loadingLinkedDevices ? (
+            <div className="p-6 rounded-2xl bg-stone-50 border border-stone-200 flex items-center justify-center gap-2 text-xs text-stone-500">
+              <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
+              <span>Sincronizando dispositivos do Print Agent...</span>
+            </div>
+          ) : linkedDevices.length === 0 ? (
+            <div className="p-5 rounded-2xl bg-stone-50 border border-dashed border-stone-200 text-center space-y-1 text-xs text-stone-500">
+              <p className="font-semibold text-stone-700">Nenhum aplicativo Print Agent vinculado ainda.</p>
+              <p>Gere o código acima e insira no QFomeAI Print Agent instalado no computador para estabelecer a conexão.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3">
+              {linkedDevices.map((device) => {
+                const isOnline = Boolean(device.isOnline || device.connectionStatus === 'online');
+                const isTestingThis = testingDeviceId === device.deviceId;
+                const feedback = agentTestFeedback && agentTestFeedback.deviceId === device.deviceId ? agentTestFeedback : null;
+
+                return (
+                  <div
+                    key={device.id}
+                    id={`print-agent-device-${device.deviceId}`}
+                    className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                      isOnline
+                        ? 'bg-emerald-50/20 border-emerald-200 shadow-xs'
+                        : 'bg-stone-50/60 border-stone-200'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-start sm:items-center gap-3 min-w-0">
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                            isOnline
+                              ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
+                              : 'bg-stone-100 border-stone-200 text-stone-500'
+                          }`}
+                        >
+                          <Monitor className="w-5 h-5" />
+                        </div>
+
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-extrabold text-stone-900 font-mono">
+                              {device.deviceId}
+                            </span>
+
+                            {/* Badge de Status de Conexão */}
+                            {isOnline ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+                                Online
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-stone-200 text-stone-600 border border-stone-300">
+                                <span className="w-2 h-2 rounded-full bg-stone-400" />
+                                Offline
+                              </span>
+                            )}
+
+                            <span className="px-2 py-0.5 bg-stone-100 border border-stone-200 text-stone-600 text-[11px] font-bold rounded-md">
+                              Windows Desktop (v{device.appVersion || '1.0.0'})
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-[11px] text-stone-500 flex-wrap">
+                            {device.pairedAt && (
+                              <span>Pareado em: {new Date(device.pairedAt).toLocaleDateString('pt-BR')}</span>
+                            )}
+                            {device.lastSeenAt && (
+                              <span>• Última comunicação: {new Date(device.lastSeenAt).toLocaleTimeString('pt-BR')}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Botão: Enviar teste ao Agent */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          id={`btn-send-agent-test-${device.deviceId}`}
+                          onClick={() => handleSendTestToAgent(device)}
+                          disabled={testingDeviceId !== null}
+                          className={`min-h-[38px] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer ${
+                            isOnline
+                              ? 'bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white shadow-sky-100'
+                              : 'bg-stone-200 hover:bg-stone-300 text-stone-700'
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                          title={isOnline ? 'Enviar teste de comunicação ao Agent via WebSocket' : 'Agent offline (conecte o app para testar)'}
+                        >
+                          {isTestingThis ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin text-white" />
+                              <span>Aguardando resposta...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Zap className={`w-4 h-4 ${isOnline ? 'text-sky-200' : 'text-stone-500'}`} />
+                              <span>Enviar teste ao Agent</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Feedback do Teste (Exibe Sucesso SOMENTE se o Agent confirmar) */}
+                    {feedback && (
+                      <div
+                        id={`agent-test-feedback-${device.deviceId}`}
+                        className={`p-3 rounded-xl border flex items-start justify-between gap-3 text-xs animate-fadeIn ${
+                          feedback.type === 'success'
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                            : 'bg-rose-50 border-rose-200 text-rose-950'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          {feedback.type === 'success' ? (
+                            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                          ) : (
+                            <XCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                          )}
+                          <div className="space-y-0.5">
+                            <p className="font-bold">{feedback.message}</p>
+                            {feedback.latencyMs !== undefined && (
+                              <p className="text-[11px] opacity-85">
+                                Tempo de resposta (latência): <strong>{feedback.latencyMs}ms</strong>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setAgentTestFeedback(null)}
+                          className="p-1 rounded hover:bg-black/5 text-stone-500 hover:text-stone-800 transition"
+                          title="Fechar aviso"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* SEÇÃO 1: IMPRESSORAS CONFIGURADAS DO RESTAURANTE (Persistidas no Firestore) */}
