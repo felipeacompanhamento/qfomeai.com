@@ -185,6 +185,13 @@ export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router 
     }
   };
 
+  const statusRateLimiter = createRateLimiter({
+    windowMs: 60 * 1000, // 1 minuto
+    max: 120, // 120 requisições por minuto por IP (permite verificações regulares sem abuso)
+    message: 'Muitas consultas de status do Print Agent. Aguarde um instante.',
+    category: 'auth'
+  });
+
   /**
    * GET /status
    * Confirma a autenticação de um QFomeAI Print Agent já vinculado.
@@ -425,67 +432,40 @@ export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router 
         return res.status(500).json({ error: 'Serviço de autenticação não configurado no servidor.' });
       }
 
-      // Localizar o restaurante do usuário com suporte a múltiplos campos canônicos e legados
+      // Localizar o restaurante do usuário
       const userDoc = await db.collection('users').doc(authenticatedUid).get();
-      const userData = userDoc.data() || {};
-      const userRestaurantId = (
-        userData.restaurantId ||
-        userData.restaurante_id ||
-        userData.idRestaurante ||
-        userData.restauranteId ||
-        ''
-      ).trim();
+      const userData = userDoc.data();
+      const restaurantId = userData?.restaurantId || authenticatedUid;
 
-      const requestedRestaurantId = (req.body.restaurantId || req.body.restaurant_id || '').trim();
-      const rawDeviceId = req.body.deviceId || req.body.device_id;
-      const cleanDeviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim() ? rawDeviceId.trim() : undefined;
-
-      let effectiveRestaurantId = userRestaurantId || requestedRestaurantId || authenticatedUid;
-
-      // Se temos deviceId, podemos consultar o registro canônico do dispositivo
-      if (cleanDeviceId) {
-        try {
-          const regDoc = await db.collection('printAgentRegistry').doc(cleanDeviceId).get();
-          if (regDoc.exists) {
-            const registeredRestId = (regDoc.data()?.restaurantId || '').trim();
-            if (registeredRestId) {
-              // Validar se o usuário autenticado tem direito de enviar teste para esse restaurante
-              const isAdmin = userData.role === 'ADMIN' || userData.role === 'SUPER_ADMIN' || userData.tipo_usuario === 'admin';
-              const isSameRestaurant = userRestaurantId && userRestaurantId.toLowerCase() === registeredRestId.toLowerCase();
-              const isOwner = authenticatedUid.toLowerCase() === registeredRestId.toLowerCase();
-
-              if (!isAdmin && !isSameRestaurant && !isOwner) {
-                // Verificar se é proprietário do documento restaurant
-                const restDoc = await db.collection('restaurants').doc(registeredRestId).get();
-                const restData = restDoc.data() || {};
-                const isRestaurantOwner = restData.ownerId === authenticatedUid || restData.userId === authenticatedUid;
-                if (!isRestaurantOwner) {
-                  return res.status(403).json({ error: 'Acesso negado: dispositivo vinculado a outro estabelecimento.' });
-                }
-              }
-              effectiveRestaurantId = registeredRestId;
-            }
-          }
-        } catch {
-          // segue com fluxo padrão
-        }
-      }
-
-      if (!effectiveRestaurantId) {
+      if (!restaurantId) {
         return res.status(403).json({ error: 'Restaurante não associado ao usuário autenticado.' });
       }
 
-      // 2. Se deviceId foi fornecido e não validado pelo registry, garantir que pertence ao restaurante
+      // Se foi enviado um restaurantId no corpo da requisição, deve bater com o autenticado
+      const requestedRestaurantId = req.body.restaurantId || req.body.restaurant_id;
+      if (requestedRestaurantId && typeof requestedRestaurantId === 'string' && requestedRestaurantId.trim() !== restaurantId) {
+        // Se for admin geral pode ter exceção, caso contrário bloquear
+        if (userData?.role !== 'ADMIN' && userData?.role !== 'SUPER_ADMIN') {
+          logger.warn('[PRINT_AGENT] Tentativa não autorizada de enviar teste para outro restaurante', {
+            authenticatedRestaurantId: restaurantId,
+            requestedRestaurantId
+          });
+          return res.status(403).json({ error: 'Acesso negado: restaurante divergente do usuário autenticado.' });
+        }
+      }
+
+      const effectiveRestaurantId = (requestedRestaurantId && (userData?.role === 'ADMIN' || userData?.role === 'SUPER_ADMIN'))
+        ? requestedRestaurantId.trim()
+        : restaurantId;
+
+      const rawDeviceId = req.body.deviceId || req.body.device_id;
+      const cleanDeviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim() ? rawDeviceId.trim() : undefined;
+
+      // 2. Se deviceId foi fornecido, garantir que pertence ao restaurantId autenticado
       if (cleanDeviceId) {
-        const directDeviceDoc = await db.collection('restaurants').doc(effectiveRestaurantId).collection('printAgentDevices').doc(cleanDeviceId).get();
-        if (!directDeviceDoc.exists) {
-          // Tentar consulta no restaurantId do usuário se diferente
-          if (userRestaurantId && userRestaurantId !== effectiveRestaurantId) {
-            const userDeviceDoc = await db.collection('restaurants').doc(userRestaurantId).collection('printAgentDevices').doc(cleanDeviceId).get();
-            if (userDeviceDoc.exists) {
-              effectiveRestaurantId = userRestaurantId;
-            }
-          }
+        const deviceDoc = await db.collection('restaurants').doc(effectiveRestaurantId).collection('printAgentDevices').doc(cleanDeviceId).get();
+        if (!deviceDoc.exists) {
+          return res.status(403).json({ error: 'Dispositivo não encontrado ou não pertence a este restaurante.' });
         }
       }
 
@@ -506,7 +486,7 @@ export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router 
         latencyMs: testResult.latencyMs
       });
     } catch (err: any) {
-      logger.info('[PRINT_AGENT] Teste de comunicação não concluído (Print Agent offline ou sem resposta)', { error: err?.message });
+      logger.warn('[PRINT_AGENT] Falha no teste de comunicação com o Agent', { error: err?.message });
       return res.status(400).json({
         success: false,
         error: err?.message || 'Falha ao enviar teste para o Print Agent.'
@@ -516,7 +496,7 @@ export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router 
 
   router.post('/pair', pairRateLimiter, handlePairing);
   router.post('/parear', pairRateLimiter, handlePairing);
-  router.get('/status', handleStatus);
+  router.get('/status', statusRateLimiter, handleStatus);
   router.post('/test', handleSendTest);
   router.post('/send-test', handleSendTest);
 

@@ -17,26 +17,8 @@ export interface ConnectedPrintAgent {
   remoteAddress?: string;
 }
 
-// Registro em memória de agentes conectados centralizado em globalThis (garante singleton único compartilhado no processo)
-declare global {
-  // eslint-disable-next-line no-var
-  var __qfomeai_active_print_agents__: Map<string, ConnectedPrintAgent> | undefined;
-  // eslint-disable-next-line no-var
-  var __qfomeai_pending_test_acks__: Map<string, PendingTestRequest> | undefined;
-}
-
-const activeAgents: Map<string, ConnectedPrintAgent> =
-  globalThis.__qfomeai_active_print_agents__ || (globalThis.__qfomeai_active_print_agents__ = new Map());
-
-interface PendingTestRequest {
-  resolve: (res: { success: true; deviceId: string; acknowledgedAt: string; latencyMs: number }) => void;
-  reject: (err: Error) => void;
-  timer: NodeJS.Timeout;
-  sentAt: number;
-}
-
-const pendingTestAcks: Map<string, PendingTestRequest> =
-  globalThis.__qfomeai_pending_test_acks__ || (globalThis.__qfomeai_pending_test_acks__ = new Map());
+// Registro em memória de agentes conectados
+const activeAgents = new Map<string, ConnectedPrintAgent>();
 
 let wssInstance: WebSocketServer | null = null;
 let heartbeatTimer: NodeJS.Timeout | null = null;
@@ -332,12 +314,7 @@ export function initPrintAgentWebSocketServer(
           remoteAddress: remoteAddress || null,
           updatedAt: new Date().toISOString()
         });
-        logger.info('[PRINT_AGENT_REGISTRY] Dispositivo autenticado e registrado no WebSocket', {
-          restaurantId,
-          deviceId,
-          connectedAgentsCount: activeAgents.size,
-          registeredDeviceKeys: Array.from(activeAgents.keys())
-        });
+        logger.info('[PRINT_AGENT_WS] Dispositivo autenticado e online', { deviceId, restaurantId, restaurantName });
       } catch (err: any) {
         logger.error('[PRINT_AGENT_WS] Erro ao atualizar status online no Firestore', {
           deviceId,
@@ -499,11 +476,9 @@ export function initPrintAgentWebSocketServer(
               disconnectedAt: now,
               updatedAt: new Date().toISOString()
             });
-            logger.info('[PRINT_AGENT_REGISTRY] Dispositivo desconectado e removido do WebSocket', {
+            logger.info('[PRINT_AGENT_WS] Dispositivo desconectado e marcado como offline', {
               deviceId: agent.deviceId,
               restaurantId: agent.restaurantId,
-              connectedAgentsCount: activeAgents.size,
-              registeredDeviceKeys: Array.from(activeAgents.keys()),
               code,
               reason: reason?.toString('utf-8') || 'Normal'
             });
@@ -588,6 +563,15 @@ export function getConnectedPrintAgent(deviceId: string): ConnectedPrintAgent | 
   return activeAgents.get(deviceId);
 }
 
+interface PendingTestRequest {
+  resolve: (res: { success: true; deviceId: string; acknowledgedAt: string; latencyMs: number }) => void;
+  reject: (err: Error) => void;
+  timer: NodeJS.Timeout;
+  sentAt: number;
+}
+
+const pendingTestAcks = new Map<string, PendingTestRequest>();
+
 /**
  * Trata o recebimento de confirmação test_ack do Agent
  */
@@ -617,16 +601,6 @@ export async function sendTestToPrintAgent(
   timeoutMs = 8000
 ): Promise<{ success: boolean; deviceId: string; acknowledgedAt: string; latencyMs: number }> {
   const cleanRestId = (restaurantId || '').trim();
-  const cleanDeviceId = (targetDeviceId || '').trim();
-
-  // Log seguro do estado do registry no momento da busca
-  logger.info('[PRINT_AGENT_REGISTRY] Buscando Print Agent conectado para envio de teste', {
-    restaurantId: cleanRestId,
-    deviceId: cleanDeviceId || 'any',
-    connectedAgentsCount: activeAgents.size,
-    registeredDeviceKeys: Array.from(activeAgents.keys())
-  });
-
   if (!cleanRestId) {
     throw new Error('Identificador do restaurante é obrigatório.');
   }
@@ -634,33 +608,16 @@ export async function sendTestToPrintAgent(
   // 1. Localizar o Agent ONLINE do restaurante
   let agent: ConnectedPrintAgent | undefined;
 
-  if (cleanDeviceId) {
-    const candidate = activeAgents.get(cleanDeviceId);
-    if (candidate && candidate.ws.readyState === WebSocket.OPEN) {
-      if (
-        !candidate.restaurantId ||
-        candidate.restaurantId.trim().toLowerCase() === cleanRestId.toLowerCase()
-      ) {
-        agent = candidate;
-      } else {
-        logger.warn('[PRINT_AGENT_REGISTRY] Dispositivo conectado sob outro restaurantId', {
-          requestedRestaurantId: cleanRestId,
-          agentRestaurantId: candidate.restaurantId,
-          deviceId: cleanDeviceId,
-          connectedAgentsCount: activeAgents.size,
-          registeredDeviceKeys: Array.from(activeAgents.keys())
-        });
-      }
+  if (targetDeviceId && targetDeviceId.trim()) {
+    const candidate = activeAgents.get(targetDeviceId.trim());
+    if (candidate && candidate.restaurantId === cleanRestId && candidate.ws.readyState === WebSocket.OPEN) {
+      agent = candidate;
     }
   }
 
   if (!agent) {
     for (const a of activeAgents.values()) {
-      if (
-        a.ws.readyState === WebSocket.OPEN &&
-        a.restaurantId &&
-        a.restaurantId.trim().toLowerCase() === cleanRestId.toLowerCase()
-      ) {
+      if (a.restaurantId === cleanRestId && a.ws.readyState === WebSocket.OPEN) {
         agent = a;
         break;
       }
@@ -668,12 +625,6 @@ export async function sendTestToPrintAgent(
   }
 
   if (!agent || agent.ws.readyState !== WebSocket.OPEN) {
-    logger.info('[PRINT_AGENT_REGISTRY] Nenhum Print Agent ativo encontrado no processo', {
-      restaurantId: cleanRestId,
-      deviceId: cleanDeviceId || 'any',
-      connectedAgentsCount: activeAgents.size,
-      registeredDeviceKeys: Array.from(activeAgents.keys())
-    });
     throw new Error('Nenhum QFomeAI Print Agent online encontrado para este restaurante. Verifique se o aplicativo está aberto e conectado.');
   }
 

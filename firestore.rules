@@ -205,11 +205,6 @@ service cloud.firestore {
         }
       }
 
-      match /printAgentDevices/{deviceId} {
-        allow read: if isRestaurantOwner(restaurantId) || isAdmin();
-        allow write: if false; // Modificações de segurança são feitas exclusivamente pelo Backend Admin SDK
-      }
-
       match /dataCleanupRequests/{requestId} {
         allow read, write: if isRestaurantOwner(restaurantId) || isAdmin();
       }

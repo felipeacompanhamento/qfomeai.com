@@ -172,7 +172,7 @@ export default function PrintSettings() {
 
   // Escuta em tempo real os dispositivos Print Agent vinculados ao restaurante no Firestore
   useEffect(() => {
-    if (!user || !profile?.restaurantId) {
+    if (!profile?.restaurantId) {
       setLinkedDevices([]);
       setLoadingLinkedDevices(false);
       return;
@@ -211,12 +211,12 @@ export default function PrintSettings() {
       setLinkedDevices(devices);
       setLoadingLinkedDevices(false);
     }, (err) => {
-      console.warn('Aviso ao sincronizar dispositivos do Print Agent:', err?.message || err);
+      console.error('Erro ao sincronizar dispositivos do Print Agent:', err);
       setLoadingLinkedDevices(false);
     });
 
     return () => unsubscribe();
-  }, [user, profile?.restaurantId]);
+  }, [profile?.restaurantId]);
 
   // Efeito de contagem regressiva para expiração do código de vinculação (10 min)
   useEffect(() => {
@@ -338,17 +338,6 @@ export default function PrintSettings() {
     }
 
     const deviceId = targetDevice?.deviceId;
-    const isOnline = Boolean(targetDevice?.isOnline || targetDevice?.connectionStatus === 'online');
-
-    if (targetDevice && !isOnline) {
-      setAgentTestFeedback({
-        deviceId: targetDevice.deviceId,
-        type: 'error',
-        message: 'O Print Agent está Offline no momento. Abra e conecte o aplicativo no Windows para testar a comunicação.'
-      });
-      return;
-    }
-
     setTestingDeviceId(deviceId || 'geral');
     setAgentTestFeedback(null);
 

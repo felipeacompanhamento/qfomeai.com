@@ -1,7 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
-import fsSync from 'fs';
 import { promises as fs } from 'fs';
 import admin from 'firebase-admin';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
@@ -874,27 +873,6 @@ async function startServer() {
       logger.info('Health check completed - healthy', logData);
       return res.status(200).json(responseBody);
     }
-  });
-
-  // Dedicated handler for /favicon.ico (guarantees fast serving and bypasses API & SSR middlewares)
-  app.get('/favicon.ico', (req, res) => {
-    const publicPath = path.join(process.cwd(), 'public');
-    const distPath = path.join(process.cwd(), 'dist');
-    const icoPath = path.join(publicPath, 'favicon.ico');
-    if (fsSync.existsSync(icoPath)) {
-      return res.sendFile(icoPath);
-    }
-    const logoPng = path.join(publicPath, 'logo.png');
-    if (fsSync.existsSync(logoPng)) {
-      res.type('image/png');
-      return res.sendFile(logoPng);
-    }
-    const distLogoPng = path.join(distPath, 'logo.png');
-    if (fsSync.existsSync(distLogoPng)) {
-      res.type('image/png');
-      return res.sendFile(distLogoPng);
-    }
-    return res.status(204).end();
   });
 
   // Vite middleware for development
