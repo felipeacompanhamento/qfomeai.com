@@ -97,23 +97,28 @@ export function createRateLimiter(options: RateLimitOptions) {
 
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // 0. Static assets, favicon, service workers, manifests, images, fonts, scripts and styles NEVER pass through rate limiting
+      // 0. Static assets, root path, index.html, favicon, service workers, manifests, images, fonts, scripts and styles NEVER pass through rate limiting
+      const originalUrl = req.originalUrl || req.url || '';
       const reqPath = (req.path || req.url || '').split('?')[0];
       if (
-        req.method === 'GET' &&
-        (
-          reqPath === '/favicon.ico' ||
-          reqPath === '/sw.js' ||
-          reqPath === '/firebase-messaging-sw.js' ||
-          reqPath === '/manifest.json' ||
-          reqPath === '/robots.txt' ||
-          reqPath === '/sitemap.xml' ||
-          reqPath === '/splashscreen.svg' ||
-          reqPath === '/icon.svg' ||
-          reqPath === '/logo.png' ||
-          reqPath === '/logo-og.webp' ||
-          reqPath === '/logo-og.png' ||
-          /\.(ico|png|jpg|jpeg|gif|svg|webp|js|mjs|css|woff|woff2|ttf|eot|map|webmanifest)$/i.test(reqPath)
+        !originalUrl.startsWith('/api') ||
+        (req.method === 'GET' &&
+          (
+            reqPath === '/' ||
+            reqPath === '/index.html' ||
+            reqPath === '/favicon.ico' ||
+            reqPath === '/sw.js' ||
+            reqPath === '/firebase-messaging-sw.js' ||
+            reqPath === '/manifest.json' ||
+            reqPath === '/robots.txt' ||
+            reqPath === '/sitemap.xml' ||
+            reqPath === '/splashscreen.svg' ||
+            reqPath === '/icon.svg' ||
+            reqPath === '/logo.png' ||
+            reqPath === '/logo-og.webp' ||
+            reqPath === '/logo-og.png' ||
+            /\.(ico|png|jpg|jpeg|gif|svg|webp|js|mjs|css|woff|woff2|ttf|eot|map|webmanifest)$/i.test(reqPath)
+          )
         )
       ) {
         return next();
