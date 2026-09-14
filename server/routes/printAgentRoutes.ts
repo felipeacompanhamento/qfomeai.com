@@ -185,13 +185,6 @@ export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router 
     }
   };
 
-  const statusRateLimiter = createRateLimiter({
-    windowMs: 60 * 1000, // 1 minuto
-    max: 120, // 120 requisições por minuto por IP (permite verificações regulares sem abuso)
-    message: 'Muitas consultas de status do Print Agent. Aguarde um instante.',
-    category: 'auth'
-  });
-
   /**
    * GET /status
    * Confirma a autenticação de um QFomeAI Print Agent já vinculado.
@@ -523,7 +516,7 @@ export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router 
 
   router.post('/pair', pairRateLimiter, handlePairing);
   router.post('/parear', pairRateLimiter, handlePairing);
-  router.get('/status', statusRateLimiter, handleStatus);
+  router.get('/status', handleStatus);
   router.post('/test', handleSendTest);
   router.post('/send-test', handleSendTest);
 
