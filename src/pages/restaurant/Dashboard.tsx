@@ -97,7 +97,7 @@ export default function RestaurantDashboard() {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [lastAlertedOrderId, setLastAlertedOrderId] = useState<string | null>(null);
 
-  // Impressão automática contínua de pedidos destinados à cozinha via QZ Tray
+  // Impressão automática contínua de pedidos destinados à cozinha via Print Agent
   useKitchenAutoPrint({
     orders,
     restaurantProfile,

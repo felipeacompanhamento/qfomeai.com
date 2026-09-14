@@ -66,6 +66,7 @@ import { createMercadoPagoRouter } from './server/routes/mercadoPagoRoutes';
 import { createNotificationRouter } from './server/routes/notificationRoutes';
 import { createGeoRouter } from './server/routes/geoRoutes';
 import { createAdminRouter } from './server/routes/adminRoutes';
+import { createPrintAgentRouter } from './server/routes/printAgentRoutes';
 
 
 // Catch unhandled rejections to prevent silent crashes
@@ -706,6 +707,12 @@ async function startServer() {
 
   // Register Geo Routes
   app.use('/api', createGeoRouter(db));
+
+  // Register QFomeAI Print Agent Routes (Pareamento seguro de dispositivos)
+  const printAgentRouter = createPrintAgentRouter(db);
+  app.use('/api/print-agent', printAgentRouter);
+  app.use('/api/print', printAgentRouter);
+  app.use('/api/restaurant/print-agent', printAgentRouter);
 
 
 

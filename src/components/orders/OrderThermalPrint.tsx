@@ -10,7 +10,6 @@ import {
   routeOrderItemsByStations,
   getPrintersForDestination,
   recordPrintHistoryItem,
-  ensureQzConnected,
   showDiscretePrintNotice,
   isDocumentAlreadyPrinted,
   recordSuccessfulPrint,
@@ -21,8 +20,6 @@ import {
   PrintDestinationType,
   PaperSize 
 } from '../../services/printCentralService';
-import * as qzTrayModule from 'qz-tray';
-const qz = (qzTrayModule as any).default || qzTrayModule;
 
 // Simple HTML escape helper to prevent injection
 export function escapeHtml(unsafe: any): string {
@@ -1457,7 +1454,7 @@ export async function printThermalKitchenTicket(
   restaurant?: any, 
   profile?: any,
   options?: { isReprint?: boolean; forcePrint?: boolean; isAutoPrint?: boolean }
-): Promise<{ success: boolean; method: 'qz' | 'browser'; printerCount?: number; error?: string }> {
+): Promise<{ success: boolean; method: 'agent' | 'browser'; printerCount?: number; error?: string }> {
   if (!order) return { success: false, method: 'browser', error: 'Pedido inválido' };
 
   const restId = restaurant?.id || restaurant?.restaurantId || profile?.restaurantId || order?.restaurantId;
@@ -1473,194 +1470,8 @@ export async function printThermalKitchenTicket(
       const { stationJobs, unassignedItems } = routeOrderItemsByStations(order, stations, allPrinters);
 
       if (stationJobs.length > 0) {
-        const isQzConnected = await ensureQzConnected();
-
-        if (isQzConnected) {
-          const printersUsed: string[] = [];
-
-          // Imprimir ticket de cada estação na impressora correspondente
-          for (const job of stationJobs) {
-            const { station, printer, items } = job;
-            const printerId = printer.id || printer.rawName;
-            const docType = `kitchen_station_${station.name || station.id}`;
-            const compositeKey = buildPrintCompositeKey(restId, docId, printerId, docType);
-
-            // REGRA 2 & 3: Checagem de idempotência por estação + documento + impressora
-            if (!options?.isReprint && !options?.forcePrint) {
-              if (isDocumentAlreadyPrinted(restId, docId, printerId, docType)) {
-                console.info(`[OrderThermalPrint] Estação "${station.name}" já impressa para pedido #${order.numero_pedido || docId}. Pulando.`);
-                continue;
-              }
-            }
-
-            // REGRA 9 & 10: Trava de concorrência / duplo clique
-            if (!acquirePrintLock(compositeKey)) {
-              console.warn(`[OrderThermalPrint] Impressão concorrente em andamento para "${compositeKey}". Ignorando duplo disparo.`);
-              continue;
-            }
-
-            const subOrder = {
-              ...order,
-              items,
-              itens: items,
-              stationName: station.name
-            };
-
-            const rawPaperSize = printer.paperSize || '80mm';
-            const paperSize: PaperSize = rawPaperSize === '58mm' ? '58mm' : rawPaperSize === '100mm' ? '100mm' : '80mm';
-            const paperWidthMm = paperSize === '58mm' ? 58 : paperSize === '100mm' ? 100 : 80;
-
-            const htmlContent = generateKitchenTicketHtml(
-              subOrder,
-              { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize },
-              profile
-            );
-            const cleanHtml = htmlContent.replace(/<script[\s\S]*?<\/script>/gi, '');
-
-            const config = qz.configs.create(printer.rawName, {
-              size: { width: paperWidthMm },
-              units: 'mm',
-              margins: 0,
-              scaleContent: true,
-              rasterize: false,
-              copies: 1
-            });
-
-            try {
-              await qz.print(config, [{ type: 'pixel', format: 'html', flavor: 'plain', data: cleanHtml }]);
-              printersUsed.push(printer.rawName);
-
-              // REGRA 8: Registrar sucesso na camada central de segurança
-              recordSuccessfulPrint(restId, docId, printerId, printer.rawName, docType, 'kitchen');
-              if (restId && order.id) {
-                markOrderPrintedOnPrinter(restId, order.id, printer.rawName, printer.rawName);
-              }
-
-              recordPrintHistoryItem({
-                timestamp: Date.now(),
-                printerName: printer.nickname || printer.rawName,
-                rawPrinterName: printer.rawName,
-                documentType: `Ticket Produção — ${station.name}${options?.isReprint ? ' (Reimpressão)' : ''}`,
-                destination: 'kitchen',
-                status: 'success',
-                method: 'qz',
-                paperSize,
-                lastHtml: htmlContent
-              });
-            } catch (err: any) {
-              // REGRA 7: Registrar erro e permitir retry
-              console.error(`[OrderThermalPrint] Erro ao imprimir na estação "${station.name}" (${printer.rawName}):`, err);
-              recordFailedPrint(restId, docId, printerId, printer.rawName, docType, err?.message);
-
-              recordPrintHistoryItem({
-                timestamp: Date.now(),
-                printerName: printer.nickname || printer.rawName,
-                rawPrinterName: printer.rawName,
-                documentType: `Ticket Produção — ${station.name}${options?.isReprint ? ' (Reimpressão)' : ''}`,
-                destination: 'kitchen',
-                status: 'error',
-                errorMessage: err?.message || 'Erro no envio para impressora da estação',
-                method: 'qz',
-                paperSize,
-                lastHtml: htmlContent
-              });
-            } finally {
-              releasePrintLock(compositeKey);
-            }
-          }
-
-          // Itens sem estação configurada continuam no fluxo padrão da cozinha
-          if (unassignedItems.length > 0) {
-            const defaultKitchenPrinters = getPrintersForDestination('kitchen', allPrinters);
-            const unassignedOrder = {
-              ...order,
-              items: unassignedItems,
-              itens: unassignedItems,
-              stationName: 'Cozinha (Geral)'
-            };
-
-            if (defaultKitchenPrinters.length > 0) {
-              for (const printer of defaultKitchenPrinters) {
-                const printerId = printer.id || printer.rawName;
-                const docType = 'kitchen_unassigned_general';
-                const compositeKey = buildPrintCompositeKey(restId, docId, printerId, docType);
-
-                if (!options?.isReprint && !options?.forcePrint) {
-                  if (isDocumentAlreadyPrinted(restId, docId, printerId, docType)) {
-                    continue;
-                  }
-                }
-
-                if (!acquirePrintLock(compositeKey)) {
-                  continue;
-                }
-
-                const rawPaperSize = printer.paperSize || '80mm';
-                const paperSize: PaperSize = rawPaperSize === '58mm' ? '58mm' : rawPaperSize === '100mm' ? '100mm' : '80mm';
-                const paperWidthMm = paperSize === '58mm' ? 58 : paperSize === '100mm' ? 100 : 80;
-
-                const htmlContent = generateKitchenTicketHtml(
-                  unassignedOrder,
-                  { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize },
-                  profile
-                );
-                const cleanHtml = htmlContent.replace(/<script[\s\S]*?<\/script>/gi, '');
-
-                const config = qz.configs.create(printer.rawName, {
-                  size: { width: paperWidthMm },
-                  units: 'mm',
-                  margins: 0,
-                  scaleContent: true,
-                  rasterize: false,
-                  copies: 1
-                });
-
-                try {
-                  await qz.print(config, [{ type: 'pixel', format: 'html', flavor: 'plain', data: cleanHtml }]);
-                  printersUsed.push(printer.rawName);
-
-                  recordSuccessfulPrint(restId, docId, printerId, printer.rawName, docType, 'kitchen');
-                  if (restId && order.id) {
-                    markOrderPrintedOnPrinter(restId, order.id, printer.rawName, printer.rawName);
-                  }
-
-                  recordPrintHistoryItem({
-                    timestamp: Date.now(),
-                    printerName: printer.nickname || printer.rawName,
-                    rawPrinterName: printer.rawName,
-                    documentType: `Ticket Produção — Cozinha (Geral)${options?.isReprint ? ' (Reimpressão)' : ''}`,
-                    destination: 'kitchen',
-                    status: 'success',
-                    method: 'qz',
-                    paperSize,
-                    lastHtml: htmlContent
-                  });
-                } catch (err: any) {
-                  console.error('[OrderThermalPrint] Erro ao imprimir itens não roteados:', err);
-                  recordFailedPrint(restId, docId, printerId, printer.rawName, docType, err?.message);
-                } finally {
-                  releasePrintLock(compositeKey);
-                }
-              }
-            } else if (!options?.isAutoPrint) {
-              // Sem impressora padrão da cozinha via QZ: fallback navegador para itens não roteados em ação manual
-              const fallbackHtml = generateKitchenTicketHtml(unassignedOrder, restaurant, profile);
-              executeThermalPrint(fallbackHtml);
-            }
-          }
-
-          if (printersUsed.length > 0 || (!options?.isReprint && !options?.forcePrint)) {
-            return {
-              success: true,
-              method: 'qz',
-              printerCount: printersUsed.length
-            };
-          }
-        }
-
-        // Se QZ estiver offline ou falhar: aviso discreto + fallback pelo navegador em ação manual
+        // Em ação manual: imprimir tickets das estações no visualizador do navegador
         if (!options?.isAutoPrint) {
-          showDiscretePrintNotice('QZ Tray desconectado. Abrindo tickets das estações no navegador.', 'info');
           for (const job of stationJobs) {
             const subOrder = {
               ...order,
@@ -1668,7 +1479,13 @@ export async function printThermalKitchenTicket(
               itens: job.items,
               stationName: job.station.name
             };
-            const stationHtml = generateKitchenTicketHtml(subOrder, restaurant, profile);
+            const rawPaperSize = job.printer?.paperSize || '80mm';
+            const paperSize: PaperSize = rawPaperSize === '58mm' ? '58mm' : rawPaperSize === '100mm' ? '100mm' : '80mm';
+            const stationHtml = generateKitchenTicketHtml(
+              subOrder, 
+              { ...(restaurant || {}), defaultPaperSize: paperSize, paperSize }, 
+              profile
+            );
             executeThermalPrint(stationHtml);
             recordPrintHistoryItem({
               timestamp: Date.now(),
@@ -1676,9 +1493,8 @@ export async function printThermalKitchenTicket(
               documentType: `Ticket Produção — ${job.station.name}`,
               destination: 'kitchen',
               status: 'success',
-              errorMessage: 'QZ Tray desconectado (impresso via navegador)',
               method: 'browser',
-              paperSize: '80mm',
+              paperSize,
               lastHtml: stationHtml
             });
           }
@@ -1696,9 +1512,9 @@ export async function printThermalKitchenTicket(
         }
 
         return {
-          success: !options?.isAutoPrint,
-          method: options?.isAutoPrint ? 'qz' : 'browser',
-          printerCount: 0
+          success: true,
+          method: 'browser',
+          printerCount: stationJobs.length
         };
       }
     }
@@ -1723,14 +1539,6 @@ export async function printThermalKitchenTicket(
       }
     });
 
-    if (result.method === 'qz' && result.printersUsed.length > 0) {
-      if (restId && order?.id) {
-        result.printersUsed.forEach(printerRawName => {
-          markOrderPrintedOnPrinter(restId, order.id, printerRawName, printerRawName);
-        });
-      }
-    }
-
     return {
       success: result.success,
       method: result.method,
@@ -1743,7 +1551,7 @@ export async function printThermalKitchenTicket(
       const fallbackHtml = generateKitchenTicketHtml(order, restaurant, profile);
       executeThermalPrint(fallbackHtml);
     }
-    return { success: false, method: options?.isAutoPrint ? 'qz' : 'browser', error: err?.message };
+    return { success: false, method: 'browser', error: err?.message };
   }
 }
 

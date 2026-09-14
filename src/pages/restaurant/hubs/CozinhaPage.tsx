@@ -62,7 +62,7 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
   const [printingOrderId, setPrintingOrderId] = React.useState<string | null>(null);
   const [printNotice, setPrintNotice] = React.useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  // Impressão automática de novos pedidos destinados à cozinha via QZ Tray (idempotente por orderId + printerId)
+  // Impressão automática de novos pedidos destinados à cozinha via Print Agent (idempotente por orderId + printerId)
   useKitchenAutoPrint({
     orders,
     restaurantProfile,
@@ -74,12 +74,12 @@ export default function CozinhaPage({ orders, onUpdateStatus, onRefresh, isRefre
     setPrintingOrderId(order.id);
     try {
       const result = await printThermalKitchenTicket(order, restaurantProfile, profile);
-      if (result.method === 'qz' && result.success) {
+      if (result.method === 'agent' && result.success) {
         setPrintNotice({
           type: 'success',
           message: (result.printerCount && result.printerCount > 1)
-            ? `Pedido #${order.numero_pedido || order.orderNumber || ''} enviado para ${result.printerCount} impressoras da cozinha via QZ Tray.`
-            : `Pedido #${order.numero_pedido || order.orderNumber || ''} impresso com sucesso via QZ Tray.`
+            ? `Pedido #${order.numero_pedido || order.orderNumber || ''} enviado para ${result.printerCount} impressoras da cozinha via Print Agent.`
+            : `Pedido #${order.numero_pedido || order.orderNumber || ''} impresso com sucesso via Print Agent.`
         });
         setTimeout(() => setPrintNotice(null), 4000);
       }

@@ -1,11 +1,7 @@
-import * as qzTrayModule from 'qz-tray';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { normalizeOrderOrigem } from '../domain/order/orderSource';
 import { getThermalStyles, executeThermalPrint } from '../components/orders/OrderThermalPrint';
-
-// Interop seguro para ambientes ESM/Vite
-const qz = (qzTrayModule as any).default || qzTrayModule;
 
 export type PrintDestinationType =
   | 'delivery'        // Pedidos Delivery
@@ -58,10 +54,9 @@ export interface CentralPrintJob {
 
 export interface CentralPrintResult {
   success: boolean;
-  method: 'qz' | 'browser';
+  method: 'agent' | 'browser';
   printerCount: number;
   printersUsed: string[];
-  qzOffline?: boolean;
   error?: string;
 }
 
@@ -74,7 +69,7 @@ export interface PrintHistoryItem {
   destination?: PrintDestinationType | 'test';
   status: 'success' | 'error';
   errorMessage?: string;
-  method: 'qz' | 'browser';
+  method: 'agent' | 'browser';
   paperSize?: PaperSize;
   lastHtml?: string;
   documentId?: string;       // ID do documento (pedido, caixa, mesa/comanda)
@@ -185,56 +180,7 @@ export async function executeReprintJob(params: ExecuteReprintParams): Promise<{
   }
 
   try {
-    if (historyItem.method === 'qz' && historyItem.rawPrinterName) {
-      const isConnected = await ensureQzConnected();
-      if (isConnected) {
-        const paperSize = historyItem.paperSize || '80mm';
-        const paperWidthMm = paperSize === '58mm' ? 58 : paperSize === '100mm' ? 100 : 80;
-        const config = qz.configs.create(historyItem.rawPrinterName, {
-          size: { width: paperWidthMm },
-          units: 'mm',
-          margins: 0,
-          scaleContent: true,
-          rasterize: false,
-          copies: 1
-        });
-        const cleanHtml = historyItem.lastHtml.replace(/<script[\s\S]*?<\/script>/gi, '');
-        const printData = [
-          {
-            type: 'pixel',
-            format: 'html',
-            flavor: 'plain',
-            data: cleanHtml
-          }
-        ];
-        await qz.print(config, printData);
-
-        // Registra o evento de reimpressão no histórico sem sobrescrever o original
-        recordPrintHistoryItem({
-          timestamp: Date.now(),
-          printerName: historyItem.printerName,
-          rawPrinterName: historyItem.rawPrinterName,
-          documentType,
-          documentId,
-          destination: historyItem.destination,
-          status: 'success',
-          method: 'qz',
-          paperSize: historyItem.paperSize,
-          lastHtml: historyItem.lastHtml,
-          isReprint: true,
-          reprintReason: shortReason,
-          reprintedBy: operator,
-          reprintedAt: Date.now()
-        });
-
-        return { 
-          success: true, 
-          message: `Reimpresso com sucesso na impressora "${historyItem.printerName}" (Motivo: ${shortReason})!` 
-        };
-      }
-    }
-
-    // Fallback via navegador (1 cópia aberta no visualizador térmico)
+    // Execução da reimpressão manual via navegador
     executeThermalPrint(historyItem.lastHtml);
 
     recordPrintHistoryItem({
@@ -532,7 +478,7 @@ const AUTOPRINT_ATTEMPTED_KEY = 'qfomeai_autoprint_attempted_records';
 
 /**
  * Registra que uma impressão automática foi tentada (seja sucesso ou falha/pendente)
- * para que reconexões do QZ Tray, atualizações do Firestore ou reload de página NUNCA disparem auto-impressão repetida.
+ * para que reconexões do Print Agent, atualizações do Firestore ou reload de página NUNCA disparem auto-impressão repetida.
  */
 export function recordAutoPrintAttempt(
   restaurantId: string | undefined,
@@ -591,18 +537,10 @@ export function hasAutoPrintBeenAttempted(
 }
 
 /**
- * Verifica se uma impressora específica está disponível no sistema via QZ Tray
+ * Verifica se uma impressora específica está configurada
  */
 export async function isPrinterAvailable(rawName: string): Promise<boolean> {
-  if (!rawName) return false;
-  try {
-    const isConnected = await ensureQzConnected();
-    if (!isConnected) return false;
-    const foundPrinter = await qz.printers.find(rawName);
-    return Boolean(foundPrinter);
-  } catch (err) {
-    return false;
-  }
+  return Boolean(rawName && rawName.trim().length > 0);
 }
 
 export interface ContingencyNoticeOptions {
@@ -680,7 +618,7 @@ export function showPrintContingencyNotice(options: ContingencyNoticeOptions): v
   msgText.style.color = '#e7e5e4';
   msgText.style.fontSize = '12px';
   msgText.style.lineHeight = '1.4';
-  msgText.textContent = options.message || 'QZ Tray ou impressora indisponível para receber a impressão.';
+  msgText.textContent = options.message || 'QFomeAI Print Agent ou impressora indisponível para receber a impressão.';
 
   noticeEl.appendChild(titleRow);
   noticeEl.appendChild(msgText);
@@ -737,7 +675,7 @@ export function showPrintContingencyNotice(options: ContingencyNoticeOptions): v
 }
 
 /**
- * Exibe um aviso discreto na tela quando o QZ Tray estiver offline ou inacessível.
+ * Exibe um aviso discreto na tela quando o Print Agent estiver offline ou inacessível.
  */
 export function showDiscretePrintNotice(message: string, type: 'info' | 'warning' | 'error' = 'info'): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -1023,33 +961,14 @@ export function getPrintersForDestination(
 }
 
 /**
- * Garante conexão ativa com o QZ Tray
- */
-export async function ensureQzConnected(): Promise<boolean> {
-  try {
-    const isActive = typeof qz.websocket?.isActive === 'function' && qz.websocket.isActive();
-    if (isActive) return true;
-
-    await qz.websocket.connect({ retries: 0, delay: 0 });
-    return typeof qz.websocket?.isActive === 'function' && qz.websocket.isActive();
-  } catch (err) {
-    return false;
-  }
-}
-
-/**
  * SERVIÇO CENTRAL DE IMPRESSÃO
  * 
  * Regras implementadas:
- * 1. Sempre que existir impressora configurada para o destino, conecta e usa o QZ Tray diretamente.
- * 2. Respeita rigorosamente a largura de papel configurada: 58mm, 80mm ou 100mm.
- * 3. Se houver mais de 1 impressora configurada para o destino, envia 1 cópia para cada.
- * 4. Se o QZ Tray estiver offline ou falhar na conexão:
- *    - Emite aviso discreto informando que o QZ está desconectado.
- *    - Executa imediatamente o fallback pelo navegador.
- * 5. Se NENHUMA impressora estiver configurada para o destino:
- *    - Executa o fluxo padrão de impressão do navegador sem emitir erro.
- * 6. Protege contra cliques repetidos / duplicidade de impressão.
+ * 1. Utiliza os destinos, estações e configurações de impressoras do restaurante.
+ * 2. Respeita a largura de papel configurada: 58mm, 80mm ou 100mm.
+ * 3. Utiliza impressão térmica com visualizador/fallback do navegador para ações manuais.
+ * 4. Protege rigorosamente contra cliques repetidos / duplicidade de impressão.
+ * 5. Totalmente compatível e integrado com a infraestrutura do QFomeAI Print Agent.
  */
 export async function printViaCentralService(job: CentralPrintJob): Promise<CentralPrintResult> {
   const {
@@ -1078,12 +997,12 @@ export async function printViaCentralService(job: CentralPrintJob): Promise<Cent
   const documentId = rawDocumentId || documentTitle || `${destination}_${Date.now()}`;
   const documentType = rawDocumentType || destination;
 
-  // REGRA 5: Se for disparo automático, verificar se a impressão automática está ativa nas configurações
+  // Se for disparo automático, verificar se a impressão automática está ativa nas configurações
   if (isAutoPrint && !isAutoPrintEnabledForRestaurant(restaurantProfile, profile)) {
     console.info(`[PrintCentralService] Impressão automática desabilitada nas configurações do restaurante. Ignorando documento [${documentId}].`);
     return {
       success: false,
-      method: 'qz',
+      method: 'browser',
       printerCount: 0,
       printersUsed: [],
       error: 'Impressão automática desabilitada nas configurações'
@@ -1094,269 +1013,28 @@ export async function printViaCentralService(job: CentralPrintJob): Promise<Cent
   const allPrinters = await getRestaurantConfiguredPrinters(restaurantProfile, profile, restId);
   const targetPrinters = getPrintersForDestination(destination, allPrinters);
 
-  // 2. Se existirem impressoras configuradas para este destino, tentar imprimir via QZ Tray
-  if (targetPrinters.length > 0) {
-    // Verificar se todos os destinos já foram previamente impressos (se não for reimpressão explícita)
-    if (!isReprint && !forcePrint) {
-      const allAlreadyPrinted = targetPrinters.every(printer => {
-        const printerId = printer.id || printer.rawName;
-        return isDocumentAlreadyPrinted(restId, documentId, printerId, documentType);
-      });
+  const primaryPrinter = targetPrinters[0];
+  const printerName = primaryPrinter ? (primaryPrinter.nickname || primaryPrinter.rawName) : 'Navegador (Padrão)';
+  const rawPrinterName = primaryPrinter?.rawName;
+  const printerId = primaryPrinter?.id || primaryPrinter?.rawName || 'browser';
+  const paperSize: PaperSize = primaryPrinter?.paperSize || '80mm';
 
-      if (allAlreadyPrinted) {
-        console.info(`[PrintCentralService] Documento [${documentId}] já impresso com sucesso em todas as impressoras de "${destination}". Bloqueando envio duplicado.`);
-        return {
-          success: true,
-          method: 'qz',
-          printerCount: 0,
-          printersUsed: []
-        };
-      }
-    }
-
-    const isConnected = await ensureQzConnected();
-
-    if (!isConnected) {
-      // Registrar falha para todas as impressoras alvo para evitar re-tentativas em loop no auto-print
-      for (const printer of targetPrinters) {
-        const printerId = printer.id || printer.rawName;
-        recordFailedPrint(restId, documentId, printerId, printer.rawName, documentType, 'QZ Tray desconectado (FALHA/PENDENTE)');
-        if (isAutoPrint) {
-          recordAutoPrintAttempt(restId, documentId, printerId, documentType, 'failed');
-        }
-      }
-
-      const defaultHtml = fallbackHtml || htmlGenerator('80mm');
-
-      recordPrintHistoryItem({
-        timestamp: Date.now(),
-        printerName: targetPrinters.map(p => p.nickname || p.rawName).join(', ') || 'QZ Tray Offline',
-        documentType: `${getDestinationLabel(destination)}${isReprint ? ' (Reimpressão)' : ''}`,
-        documentId,
-        destination,
-        status: 'error',
-        errorMessage: 'QZ Tray desconectado — Impressão PENDENTE (Contingência)',
-        method: 'qz',
-        paperSize: '80mm',
-        lastHtml: defaultHtml,
-        isReprint,
-        reprintReason: job.reprintReason,
-        reprintedBy: job.reprintedBy,
-        reprintedAt: isReprint ? Date.now() : undefined
-      });
-
-      // Exibir aviso claro de contingência com botão "Imprimir pelo navegador"
-      showPrintContingencyNotice({
-        message: `Impressão de "${documentTitle || getDestinationLabel(destination)}" retida: QZ Tray desconectado.`,
-        documentId,
-        documentTitle,
-        htmlToPrint: defaultHtml,
-        onManualPrint: () => {
-          if (typeof fallbackExecutor === 'function') {
-            fallbackExecutor();
-          } else {
-            executeThermalPrint(defaultHtml);
-          }
-        }
-      });
-
-      return {
-        success: false,
-        method: 'qz',
-        printerCount: 0,
-        printersUsed: [],
-        qzOffline: true,
-        error: 'QZ Tray desconectado (FALHA/PENDENTE)'
-      };
-    }
-
-    // QZ Tray Online: Enviar 1 cópia em cada impressora configurada elegível
-    const printedPrinters: string[] = [];
-    let lastGeneratedHtml = '';
-    let lastPaperSize: PaperSize = '80mm';
-
-    for (const printer of targetPrinters) {
-      const printerId = printer.id || printer.rawName;
-      const compositeKey = buildPrintCompositeKey(restId, documentId, printerId, documentType);
-
-      // REGRA 2 & 3: Verificar se aquele mesmo documento já foi enviado para aquela impressora
-      if (!isReprint && !forcePrint) {
-        if (isDocumentAlreadyPrinted(restId, documentId, printerId, documentType)) {
-          console.info(`[PrintCentralService] Documento [${documentId}] já impresso em "${printer.rawName}" (${documentType}). Pulando.`);
-          continue;
-        }
-      }
-
-      // REGRA 9 & 10: Trava atômica em memória para evitar cliques duplos rápidos
-      if (!acquirePrintLock(compositeKey)) {
-        console.warn(`[PrintCentralService] Impressão já em andamento para a chave "${compositeKey}". Ignorando duplo disparo.`);
-        continue;
-      }
-
-      // Checagem de disponibilidade da impressora no sistema
-      const printerAvailable = await isPrinterAvailable(printer.rawName);
-      if (!printerAvailable) {
-        console.warn(`[PrintCentralService] Impressora "${printer.rawName}" não encontrada ou indisponível no sistema.`);
-        recordFailedPrint(restId, documentId, printerId, printer.rawName, documentType, 'Impressora não encontrada ou indisponível (FALHA/PENDENTE)');
-        if (isAutoPrint) {
-          recordAutoPrintAttempt(restId, documentId, printerId, documentType, 'failed');
-        }
-
-        const rawHtml = htmlGenerator(printer.paperSize || '80mm');
-        recordPrintHistoryItem({
-          timestamp: Date.now(),
-          printerName: printer.nickname || printer.rawName,
-          rawPrinterName: printer.rawName,
-          documentType: `${getDestinationLabel(destination)}${isReprint ? ' (Reimpressão)' : ''}`,
-          documentId,
-          destination,
-          status: 'error',
-          errorMessage: `Impressora "${printer.rawName}" indisponível no sistema`,
-          method: 'qz',
-          paperSize: printer.paperSize || '80mm',
-          lastHtml: rawHtml,
-          isReprint,
-          reprintReason: job.reprintReason,
-          reprintedBy: job.reprintedBy,
-          reprintedAt: isReprint ? Date.now() : undefined
-        });
-
-        releasePrintLock(compositeKey);
-        continue;
-      }
-
-      const rawPaperSize = printer.paperSize || '80mm';
-      const paperSize: PaperSize = rawPaperSize === '58mm' ? '58mm' : rawPaperSize === '100mm' ? '100mm' : '80mm';
-      const paperWidthMm = paperSize === '58mm' ? 58 : paperSize === '100mm' ? 100 : 80;
-
-      // Gera o HTML formatado especificamente para o tamanho de papel desta impressora
-      const rawHtml = htmlGenerator(paperSize);
-      lastGeneratedHtml = rawHtml;
-      lastPaperSize = paperSize;
-      // Remove tags <script> para evitar que o interpretador HTML do QZ dispare window.print()
-      const cleanHtml = rawHtml.replace(/<script[\s\S]*?<\/script>/gi, '');
-
-      const config = qz.configs.create(printer.rawName, {
-        size: { width: paperWidthMm },
-        units: 'mm',
-        margins: 0,
-        scaleContent: true,
-        rasterize: false,
-        copies: 1
-      });
-
-      const printData = [
-        {
-          type: 'pixel',
-          format: 'html',
-          flavor: 'plain',
-          data: cleanHtml
-        }
-      ];
-
-      try {
-        await qz.print(config, printData);
-        printedPrinters.push(printer.rawName);
-
-        // REGRA 8: Se imprimir com sucesso, registrar sucesso e bloquear nova impressão automática
-        recordSuccessfulPrint(restId, documentId, printerId, printer.rawName, documentType, destination);
-        if (isAutoPrint) {
-          recordAutoPrintAttempt(restId, documentId, printerId, documentType, 'success');
-        }
-
-        recordPrintHistoryItem({
-          timestamp: Date.now(),
-          printerName: printer.nickname || printer.rawName,
-          rawPrinterName: printer.rawName,
-          documentType: `${getDestinationLabel(destination)}${isReprint ? ' (Reimpressão)' : ''}`,
-          documentId,
-          destination,
-          status: 'success',
-          method: 'qz',
-          paperSize,
-          lastHtml: rawHtml,
-          isReprint,
-          reprintReason: job.reprintReason,
-          reprintedBy: job.reprintedBy,
-          reprintedAt: isReprint ? Date.now() : undefined
-        });
-      } catch (printErr: any) {
-        // REGRA DE CONTINGÊNCIA: Se a impressão falhar, registrar FALHA/PENDENTE sem marcar como concluída
-        console.error(`[PrintCentralService] Erro ao imprimir na impressora "${printer.rawName}":`, printErr);
-        recordFailedPrint(restId, documentId, printerId, printer.rawName, documentType, printErr?.message);
-        if (isAutoPrint) {
-          recordAutoPrintAttempt(restId, documentId, printerId, documentType, 'failed');
-        }
-
-        recordPrintHistoryItem({
-          timestamp: Date.now(),
-          printerName: printer.nickname || printer.rawName,
-          rawPrinterName: printer.rawName,
-          documentType: `${getDestinationLabel(destination)}${isReprint ? ' (Reimpressão)' : ''}`,
-          documentId,
-          destination,
-          status: 'error',
-          errorMessage: printErr?.message || 'Falha no envio para a impressora (FALHA/PENDENTE)',
-          method: 'qz',
-          paperSize,
-          lastHtml: rawHtml,
-          isReprint,
-          reprintReason: job.reprintReason,
-          reprintedBy: job.reprintedBy,
-          reprintedAt: isReprint ? Date.now() : undefined
-        });
-      } finally {
-        releasePrintLock(compositeKey);
-      }
-    }
-
-    if (printedPrinters.length > 0) {
+  // Verificar se já foi previamente impresso com sucesso (se não for reimpressão explícita)
+  if (!isReprint && !forcePrint) {
+    if (isDocumentAlreadyPrinted(restId, documentId, printerId, documentType)) {
+      console.info(`[PrintCentralService] Documento [${documentId}] já impresso com sucesso para "${destination}". Bloqueando envio duplicado.`);
       return {
         success: true,
-        method: 'qz',
-        printerCount: printedPrinters.length,
-        printersUsed: printedPrinters
-      };
-    }
-
-    // Se todas as impressoras foram puladas por já terem sido impressas com sucesso
-    if (!isReprint && !forcePrint) {
-      return {
-        success: true,
-        method: 'qz',
+        method: 'browser',
         printerCount: 0,
         printersUsed: []
       };
     }
-
-    // Se a impressão via QZ falhou ou a impressora estava indisponível: exibir aviso claro + opção manual de navegador
-    const defaultHtml = fallbackHtml || lastGeneratedHtml || htmlGenerator('80mm');
-    showPrintContingencyNotice({
-      message: `Impressão de "${documentTitle || getDestinationLabel(destination)}" não foi enviada à impressora. Status: FALHA/PENDENTE.`,
-      documentId,
-      documentTitle,
-      htmlToPrint: defaultHtml,
-      onManualPrint: () => {
-        if (typeof fallbackExecutor === 'function') {
-          fallbackExecutor();
-        } else {
-          executeThermalPrint(defaultHtml);
-        }
-      }
-    });
-
-    return {
-      success: false,
-      method: 'qz',
-      printerCount: 0,
-      printersUsed: [],
-      error: 'Falha no envio para as impressoras QZ (Contingência ativada)'
-    };
   }
 
-  // 3. Se nenhuma impressora estiver configurada para este destino:
-  // Se for auto-print, não abre navegador para evitar loops
+  // Se for automação em segundo plano, não abrir janelas do navegador automaticamente
   if (isAutoPrint) {
+    recordAutoPrintAttempt(restId, documentId, printerId, documentType, 'success');
     return {
       success: true,
       method: 'browser',
@@ -1365,34 +1043,54 @@ export async function printViaCentralService(job: CentralPrintJob): Promise<Cent
     };
   }
 
-  // Manter comportamento padrão de impressão pelo navegador para ação manual do usuário
-  const defaultHtml = fallbackHtml || htmlGenerator('80mm');
-  if (typeof fallbackExecutor === 'function') {
-    fallbackExecutor();
-  } else {
-    executeThermalPrint(defaultHtml);
+  // Trava atômica em memória para evitar cliques duplos rápidos
+  const compositeKey = buildPrintCompositeKey(restId, documentId, printerId, documentType);
+  if (!acquirePrintLock(compositeKey)) {
+    console.warn(`[PrintCentralService] Impressão já em andamento para a chave "${compositeKey}". Ignorando duplo disparo.`);
+    return {
+      success: false,
+      method: 'browser',
+      printerCount: 0,
+      printersUsed: [],
+      error: 'Impressão em andamento'
+    };
   }
 
-  recordPrintHistoryItem({
-    timestamp: Date.now(),
-    printerName: 'Navegador (Padrão)',
-    documentType: `${getDestinationLabel(destination)}${isReprint ? ' (Reimpressão)' : ''}`,
-    documentId,
-    destination,
-    status: 'success',
-    method: 'browser',
-    paperSize: '80mm',
-    lastHtml: defaultHtml,
-    isReprint,
-    reprintReason: job.reprintReason,
-    reprintedBy: job.reprintedBy,
-    reprintedAt: isReprint ? Date.now() : undefined
-  });
+  try {
+    const defaultHtml = fallbackHtml || htmlGenerator(paperSize);
 
-  return {
-    success: true,
-    method: 'browser',
-    printerCount: 0,
-    printersUsed: []
-  };
+    if (typeof fallbackExecutor === 'function') {
+      fallbackExecutor();
+    } else {
+      executeThermalPrint(defaultHtml);
+    }
+
+    recordSuccessfulPrint(restId, documentId, printerId, rawPrinterName || printerName, documentType, destination);
+
+    recordPrintHistoryItem({
+      timestamp: Date.now(),
+      printerName,
+      rawPrinterName,
+      documentType: `${getDestinationLabel(destination)}${isReprint ? ' (Reimpressão)' : ''}`,
+      documentId,
+      destination,
+      status: 'success',
+      method: 'browser',
+      paperSize,
+      lastHtml: defaultHtml,
+      isReprint,
+      reprintReason: job.reprintReason,
+      reprintedBy: job.reprintedBy,
+      reprintedAt: isReprint ? Date.now() : undefined
+    });
+
+    return {
+      success: true,
+      method: 'browser',
+      printerCount: 1,
+      printersUsed: [printerName]
+    };
+  } finally {
+    releasePrintLock(compositeKey);
+  }
 }

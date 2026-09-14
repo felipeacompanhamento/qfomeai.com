@@ -36,9 +36,12 @@ import {
   Info,
   Zap,
   ShoppingBag,
-  Utensils
+  Utensils,
+  Copy,
+  ShieldCheck,
+  Key,
+  Monitor
 } from 'lucide-react';
-import * as qzTrayModule from 'qz-tray';
 import { 
   getPrintHistory, 
   recordPrintHistoryItem, 
@@ -47,12 +50,20 @@ import {
   PrintHistoryItem,
   PrintStation
 } from '../../services/printCentralService';
+import { executeThermalPrint } from '../../components/orders/OrderThermalPrint';
 import { ReprintConfirmModal } from '../../components/printing/ReprintConfirmModal';
 
-// Interop seguro para ambientes ESM/Vite
-const qz = (qzTrayModule as any).default || qzTrayModule;
-
 export type PaperSize = '58mm' | '80mm' | '100mm';
+
+export interface PrintAgentPairingData {
+  code: string;
+  createdAt: number;
+  expiresAt: number;
+  used: boolean;
+  status: 'active' | 'expired' | 'used';
+  restaurantId: string;
+  createdBy?: string;
+}
 
 export interface AutoPrintSettings {
   delivery: boolean;
@@ -99,14 +110,9 @@ const PAPER_SIZES: PaperSize[] = ['58mm', '80mm', '100mm'];
 export default function PrintSettings() {
   const { profile, user } = useAuth();
   
-  // Estados do QZ Tray e Impressoras Físicas Detectadas
-  const [qzStatus, setQzStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
-  const [qzVersion, setQzVersion] = useState<string | null>(null);
-  const [detectedPrinters, setDetectedPrinters] = useState<string[]>([]);
-  const [defaultPrinter, setDefaultPrinter] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [qzError, setQzError] = useState<string | null>(null);
-  const hasAttemptedMount = useRef(false);
+  // Estados para Adicionar/Configurar Impressora
+  const [isAddingPrinter, setIsAddingPrinter] = useState(false);
+  const [customRawName, setCustomRawName] = useState('');
 
   // Estado de Automação de Impressão por Canal (Iniciam DESLIGADAS por padrão: false)
   const [autoPrintSettings, setAutoPrintSettings] = useState<AutoPrintSettings>({
@@ -129,6 +135,117 @@ export default function PrintSettings() {
   const [reprintFeedback, setReprintFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [reprintTargetItem, setReprintTargetItem] = useState<PrintHistoryItem | null>(null);
   const [isReprintModalOpen, setIsReprintModalOpen] = useState(false);
+
+  // Estados do Pareamento do QFomeAI Print Agent (Windows)
+  const [pairingData, setPairingData] = useState<PrintAgentPairingData | null>(null);
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [timeLeftSeconds, setTimeLeftSeconds] = useState<number>(0);
+
+  // Efeito de contagem regressiva para expiração do código de vinculação (10 min)
+  useEffect(() => {
+    if (!pairingData || pairingData.status !== 'active') {
+      setTimeLeftSeconds(0);
+      return;
+    }
+
+    const updateRemaining = () => {
+      const diffMs = pairingData.expiresAt - Date.now();
+      const secs = Math.max(0, Math.floor(diffMs / 1000));
+      setTimeLeftSeconds(secs);
+      if (secs <= 0 && pairingData.status === 'active') {
+        setPairingData((prev) => (prev ? { ...prev, status: 'expired' } : null));
+      }
+    };
+
+    updateRemaining();
+    const interval = setInterval(updateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [pairingData]);
+
+  const formatTimeLeft = (totalSeconds: number) => {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  const generateSecurePairingCode = (): string => {
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+      const array = new Uint32Array(1);
+      window.crypto.getRandomValues(array);
+      const code = 100000 + (array[0] % 900000);
+      return code.toString();
+    }
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  };
+
+  const handleGeneratePairingCode = async () => {
+    if (!profile?.restaurantId) {
+      setStatusMessage({
+        type: 'error',
+        message: 'Restaurante não identificado. Faça login novamente para gerar o código.'
+      });
+      return;
+    }
+
+    setIsGeneratingCode(true);
+    try {
+      const code = generateSecurePairingCode();
+      const now = Date.now();
+      const expiresAt = now + 10 * 60 * 1000; // 10 minutos de validade
+
+      const newPairing: PrintAgentPairingData = {
+        code,
+        createdAt: now,
+        expiresAt,
+        used: false,
+        status: 'active',
+        restaurantId: profile.restaurantId,
+        createdBy: user?.uid || profile?.name || 'admin'
+      };
+
+      const docRef = doc(db, 'restaurants', profile.restaurantId);
+      await updateDoc(docRef, {
+        printAgentPairing: newPairing,
+        updatedAt: new Date().toISOString()
+      });
+
+      setPairingData(newPairing);
+      setCopiedCode(false);
+      setStatusMessage({
+        type: 'success',
+        message: 'Código de vinculação gerado com sucesso! Válido por 10 minutos.'
+      });
+      setTimeout(() => setStatusMessage(null), 4000);
+    } catch (err: any) {
+      console.error('Erro ao gerar código de vinculação:', err);
+      setStatusMessage({
+        type: 'error',
+        message: 'Erro ao salvar código de vinculação no servidor.'
+      });
+    } finally {
+      setIsGeneratingCode(false);
+    }
+  };
+
+  const handleCopyCode = async (code: string) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = code;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2500);
+    } catch {
+      // Ignora falha de cópia
+    }
+  };
 
   const operatorName = profile?.name || profile?.displayName || user?.displayName || user?.email || 'Operador';
 
@@ -225,133 +342,69 @@ export default function PrintSettings() {
 
   const STATION_NAME_PRESETS = ['Cozinha', 'Bar', 'Caixa', 'Expedição', 'Pizzaria', 'Churrasqueira'] as const;
 
-  /**
-   * Conecta ao QZ Tray e lista as impressoras instaladas no sistema operacional
-   */
-  const connectAndFetchPrinters = useCallback(async (isUserInitiated = false) => {
-    if (isUserInitiated) {
-      setIsRefreshing(true);
-    } else {
-      setQzStatus('checking');
-    }
-    setQzError(null);
-
-    try {
-      const isActive = typeof qz.websocket?.isActive === 'function' && qz.websocket.isActive();
-      if (!isActive) {
-        await qz.websocket.connect({
-          retries: 0,
-          delay: 0,
-        });
-      }
-
-      if (qz.version) {
-        setQzVersion(qz.version);
-      }
-
-      const printersResult = await qz.printers.find();
-      let printerList: string[] = [];
-      if (Array.isArray(printersResult)) {
-        printerList = printersResult;
-      } else if (typeof printersResult === 'string' && printersResult.trim()) {
-        printerList = [printersResult];
-      }
-
-      try {
-        const def = await qz.printers.getDefault();
-        if (def && typeof def === 'string') {
-          setDefaultPrinter(def);
-        }
-      } catch {
-        // Padrão opcional
-      }
-
-      setDetectedPrinters(printerList);
-      setQzStatus('connected');
-    } catch (err: any) {
-      console.warn('[Central de Impressão] Não foi possível conectar ao QZ Tray:', err);
-      setQzStatus('disconnected');
-      setDetectedPrinters([]);
-      setDefaultPrinter(null);
-      
-      const errMsg = err?.message || '';
-      if (errMsg.includes('WebSocket not supported')) {
-        setQzError('Seu navegador não suporta WebSockets locais.');
-      } else if (errMsg.includes('Connection refused') || errMsg.includes('Unable to establish') || errMsg.includes('Closed without status code')) {
-        setQzError('O aplicativo QZ Tray não está em execução neste computador.');
-      }
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, []);
-
-  // Detecção automática na montagem do componente
-  useEffect(() => {
-    if (!hasAttemptedMount.current) {
-      hasAttemptedMount.current = true;
-      connectAndFetchPrinters(false);
-    }
-
-    if (qz.websocket && typeof qz.websocket.setClosedCallbacks === 'function') {
-      qz.websocket.setClosedCallbacks(() => {
-        setQzStatus('disconnected');
-      });
-    }
-
-    if (qz.websocket && typeof qz.websocket.setErrorCallbacks === 'function') {
-      qz.websocket.setErrorCallbacks((err: any) => {
-        console.warn('[QZ Tray WebSocket Error]', err);
-      });
-    }
-  }, [connectAndFetchPrinters]);
-
   // Carregar impressoras e estações de impressão configuradas salvas no Firestore para este restaurante
-  useEffect(() => {
-    const fetchSettings = async () => {
-      if (!profile?.restaurantId) return;
-      setLoadingConfig(true);
-      try {
-        const docRef = doc(db, 'restaurants', profile.restaurantId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (Array.isArray(data.configuredPrinters)) {
-            setConfiguredPrinters(data.configuredPrinters);
-          } else {
-            setConfiguredPrinters([]);
-          }
+  const fetchSettings = useCallback(async () => {
+    if (!profile?.restaurantId) return;
+    setLoadingConfig(true);
+    try {
+      const docRef = doc(db, 'restaurants', profile.restaurantId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (Array.isArray(data.configuredPrinters)) {
+          setConfiguredPrinters(data.configuredPrinters);
+        } else {
+          setConfiguredPrinters([]);
+        }
 
-          if (Array.isArray(data.printStations)) {
-            setPrintStations(data.printStations);
-          } else {
-            setPrintStations([]);
-          }
+        if (Array.isArray(data.printStations)) {
+          setPrintStations(data.printStations);
+        } else {
+          setPrintStations([]);
+        }
 
-          // Carregar configurações de automação de impressão (por padrão iniciam DESLIGADAS)
-          if (data.autoPrintSettings) {
-            setAutoPrintSettings({
-              delivery: Boolean(data.autoPrintSettings.delivery ?? false),
-              counter: Boolean(data.autoPrintSettings.counter ?? false),
-              table: Boolean(data.autoPrintSettings.table ?? data.autoPrintSettings.dine_in ?? false),
-              kitchen: Boolean(data.autoPrintSettings.kitchen ?? false),
-            });
-          } else {
-            setAutoPrintSettings({
-              delivery: Boolean(data.autoPrintDelivery ?? false),
-              counter: Boolean(data.autoPrintCounter ?? data.autoPrintBalcao ?? false),
-              table: Boolean(data.autoPrintTable ?? data.autoPrintMesa ?? false),
-              kitchen: Boolean(data.autoPrintKitchen ?? data.kitchenAutoPrint ?? false),
-            });
+        // Carregar configurações de automação de impressão (por padrão iniciam DESLIGADAS)
+        if (data.autoPrintSettings) {
+          setAutoPrintSettings({
+            delivery: Boolean(data.autoPrintSettings.delivery ?? false),
+            counter: Boolean(data.autoPrintSettings.counter ?? false),
+            table: Boolean(data.autoPrintSettings.table ?? data.autoPrintSettings.dine_in ?? false),
+            kitchen: Boolean(data.autoPrintSettings.kitchen ?? false),
+          });
+        } else {
+          setAutoPrintSettings({
+            delivery: Boolean(data.autoPrintDelivery ?? false),
+            counter: Boolean(data.autoPrintCounter ?? data.autoPrintBalcao ?? false),
+            table: Boolean(data.autoPrintTable ?? data.autoPrintMesa ?? false),
+            kitchen: Boolean(data.autoPrintKitchen ?? data.kitchenAutoPrint ?? false),
+          });
+        }
+
+        // Carregar código de pareamento do QFomeAI Print Agent se existente
+        if (data.printAgentPairing) {
+          const pairing = data.printAgentPairing as PrintAgentPairingData;
+          const now = Date.now();
+          if (pairing && pairing.code && !pairing.used && pairing.expiresAt > now) {
+            setPairingData(pairing);
+          } else if (pairing && pairing.code) {
+            setPairingData({ ...pairing, status: pairing.used ? 'used' : 'expired' });
           }
         }
-      } catch (error) {
-        console.error('Erro ao carregar configurações de impressoras do restaurante:', error);
-      } finally {
-        setLoadingConfig(false);
       }
-    };
-    fetchSettings();
+    } catch (error) {
+      console.error('Erro ao carregar configurações de impressoras do restaurante:', error);
+      setStatusMessage({
+        type: 'error',
+        message: 'Não foi possível carregar as configurações de impressão salvas.'
+      });
+    } finally {
+      setLoadingConfig(false);
+    }
   }, [profile?.restaurantId]);
+
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
 
   /**
    * Alterna a chave ligar/desligar de automação de impressão por canal
@@ -409,9 +462,6 @@ export default function PrintSettings() {
     }
     if (configuredPrinters.length === 1) {
       return `${configuredPrinters[0].nickname || configuredPrinters[0].rawName} (Geral)`;
-    }
-    if (defaultPrinter) {
-      return `${defaultPrinter} (Padrão OS)`;
     }
     return 'Navegador / Padrão do Sistema';
   };
@@ -634,11 +684,23 @@ export default function PrintSettings() {
   };
 
   /**
-   * Iniciar configuração de uma nova impressora detectada
+   * Iniciar adição ou configuração de uma impressora
    */
+  const handleStartAddingNewPrinter = () => {
+    setIsAddingPrinter(true);
+    setConfiguringRawName('');
+    setCustomRawName('');
+    const usedNicknames = configuredPrinters.map(p => p.nickname.toLowerCase());
+    const firstAvailable = NICKNAME_SUGGESTIONS.find(s => !usedNicknames.includes(s.toLowerCase())) || 'Caixa';
+    setNewNickname(firstAvailable);
+    setNewPaperSize('80mm');
+    setNewDestinations(getSuggestedDestinations(firstAvailable));
+  };
+
   const handleStartConfiguring = (rawName: string) => {
+    setIsAddingPrinter(true);
     setConfiguringRawName(rawName);
-    // Sugere o próximo apelido ainda não utilizado
+    setCustomRawName(rawName);
     const usedNicknames = configuredPrinters.map(p => p.nickname.toLowerCase());
     const firstAvailable = NICKNAME_SUGGESTIONS.find(s => !usedNicknames.includes(s.toLowerCase())) || 'Caixa';
     setNewNickname(firstAvailable);
@@ -650,7 +712,11 @@ export default function PrintSettings() {
    * Salvar nova configuração de impressora
    */
   const handleSaveNewPrinter = async () => {
-    if (!configuringRawName) return;
+    const rawDeviceName = (customRawName || configuringRawName || '').trim();
+    if (!rawDeviceName) {
+      setStatusMessage({ type: 'error', message: 'Informe o nome do dispositivo ou impressora (ex: EPSON TM-T20X, Bematech MP-4200 TH).' });
+      return;
+    }
     const trimmedNickname = newNickname.trim();
     if (!trimmedNickname) {
       setStatusMessage({ type: 'error', message: 'Informe um apelido para a impressora (ex: Caixa, Cozinha).' });
@@ -659,8 +725,8 @@ export default function PrintSettings() {
 
     // Criar novo objeto mantendo o nome real intacto
     const newEntry: ConfiguredPrinter = {
-      id: `${configuringRawName}-${Date.now()}`,
-      rawName: configuringRawName,
+      id: `${rawDeviceName.replace(/\s+/g, '_')}-${Date.now()}`,
+      rawName: rawDeviceName,
       nickname: trimmedNickname,
       paperSize: newPaperSize,
       destinations: newDestinations,
@@ -668,7 +734,7 @@ export default function PrintSettings() {
     };
 
     // Se já existir uma configuração para este rawName, atualiza ou adiciona
-    const existingIndex = configuredPrinters.findIndex(p => p.rawName.toLowerCase() === configuringRawName.toLowerCase());
+    const existingIndex = configuredPrinters.findIndex(p => p.rawName.toLowerCase() === rawDeviceName.toLowerCase());
     let updatedList: ConfiguredPrinter[];
     if (existingIndex >= 0) {
       updatedList = [...configuredPrinters];
@@ -684,7 +750,9 @@ export default function PrintSettings() {
     }
 
     await persistPrintersConfig(updatedList, `Impressora "${trimmedNickname}" configurada com sucesso!`);
+    setIsAddingPrinter(false);
     setConfiguringRawName(null);
+    setCustomRawName('');
     setNewNickname('');
     setNewDestinations([]);
   };
@@ -738,7 +806,7 @@ export default function PrintSettings() {
   };
 
   /**
-   * Envia uma única impressão de teste para a impressora escolhida via QZ Tray
+   * Envia uma única impressão de teste para a impressora escolhida
    */
   const handleTestPrint = async (printer: ConfiguredPrinter) => {
     if (testingPrinterId) return; // Garante que cada clique gere EXATAMENTE 1 impressão
@@ -746,31 +814,7 @@ export default function PrintSettings() {
     setStatusMessage(null);
 
     try {
-      // 1. Garantir que o WebSocket do QZ Tray esteja ativo
-      const isActive = typeof qz.websocket?.isActive === 'function' && qz.websocket.isActive();
-      if (!isActive) {
-        await qz.websocket.connect({ retries: 0, delay: 0 });
-        setQzStatus('connected');
-      }
-
-      // 2. Configurar o tamanho de papel de acordo com a bobina configurada (58mm, 80mm, 100mm)
-      const paperWidthMm = printer.paperSize === '58mm' ? 58 : printer.paperSize === '100mm' ? 100 : 80;
-      const config = qz.configs.create(printer.rawName, {
-        size: { width: paperWidthMm },
-        units: 'mm',
-        margins: 0,
-        scaleContent: true,
-        rasterize: false,
-        copies: 1
-      });
-
-      // 3. Montar o cupom simples do teste conforme solicitado:
-      // QFomeAI
-      // Teste de impressão
-      // Impressora: [apelido]
-      // Nome real: [nome da impressora]
-      // Papel: [tamanho]
-      // Data e hora do teste
+      // Configurar o tamanho de papel de acordo com a bobina configurada (58mm, 80mm, 100mm)
       const maxPixelWidth = printer.paperSize === '58mm' ? 220 : printer.paperSize === '100mm' ? 380 : 280;
       const fontSize = printer.paperSize === '58mm' ? '12px' : printer.paperSize === '100mm' ? '14px' : '13px';
 
@@ -825,17 +869,8 @@ export default function PrintSettings() {
 </html>
       `.trim();
 
-      const printData = [
-        {
-          type: 'pixel',
-          format: 'html',
-          flavor: 'plain',
-          data: printHtml
-        }
-      ];
-
-      // 4. Enviar EXATAMENTE uma impressão para a impressora escolhida
-      await qz.print(config, printData);
+      // Executa a impressão térmica
+      executeThermalPrint(printHtml);
 
       recordPrintHistoryItem({
         timestamp: Date.now(),
@@ -844,28 +879,21 @@ export default function PrintSettings() {
         documentType: 'Teste de Impressão',
         destination: 'test',
         status: 'success',
-        method: 'qz',
+        method: 'browser',
         paperSize: printer.paperSize,
         lastHtml: printHtml
       });
 
       setStatusMessage({
         type: 'success',
-        message: 'Impressão enviada com sucesso.'
+        message: 'Impressão de teste enviada com sucesso.'
       });
       setTimeout(() => {
         setStatusMessage(null);
       }, 5000);
     } catch (err: any) {
       console.error('[Teste de Impressão] Erro ao enviar para impressora:', err);
-      const rawMsg = err?.message || (typeof err === 'string' ? err : 'Falha na comunicação com o QZ Tray.');
-      let friendly = rawMsg;
-      if (rawMsg.includes('Connection refused') || rawMsg.includes('Unable to establish') || rawMsg.includes('Closed without status code')) {
-        friendly = 'O QZ Tray não está aberto neste computador. Inicie o QZ Tray e tente novamente.';
-        setQzStatus('disconnected');
-      } else if (rawMsg.includes('Printer not found') || rawMsg.includes('Cannot find printer')) {
-        friendly = `A impressora "${printer.rawName}" não foi localizada no Windows. Verifique se o cabo está conectado e o driver instalado.`;
-      }
+      const friendly = err?.message || 'Falha ao executar impressão de teste.';
 
       recordPrintHistoryItem({
         timestamp: Date.now(),
@@ -875,7 +903,7 @@ export default function PrintSettings() {
         destination: 'test',
         status: 'error',
         errorMessage: friendly,
-        method: 'qz',
+        method: 'browser',
         paperSize: printer.paperSize,
         lastHtml: ''
       });
@@ -890,11 +918,10 @@ export default function PrintSettings() {
   };
 
   /**
-   * Verifica se o nome real da impressora está atualmente detectado no computador
+   * Verifica se o nome real da impressora está configurado
    */
-  const isPrinterDetected = (rawName: string) => {
-    if (qzStatus !== 'connected') return false;
-    return detectedPrinters.some(p => p.toLowerCase() === rawName.toLowerCase());
+  const isPrinterDetected = (_rawName: string) => {
+    return true;
   };
 
   return (
@@ -915,42 +942,22 @@ export default function PrintSettings() {
           </div>
         </div>
 
-        {/* Badge de Status do QZ Tray e Botão de Atualizar */}
+        {/* Indicador do QFomeAI Print Agent e Botão de Atualizar */}
         <div className="flex items-center flex-wrap gap-2.5">
-          {qzStatus === 'checking' && (
-            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs sm:text-sm font-bold animate-pulse">
-              <Loader2 className="w-4 h-4 animate-spin text-amber-600 shrink-0" />
-              <span>Detectando QZ Tray...</span>
-            </div>
-          )}
-
-          {qzStatus === 'connected' && (
-            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold shadow-xs">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-              </span>
-              <span>🟢 QZ Tray Ativo</span>
-              {qzVersion && <span className="text-[11px] font-medium text-emerald-600">v{qzVersion}</span>}
-            </div>
-          )}
-
-          {qzStatus === 'disconnected' && (
-            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm font-bold shadow-xs">
-              <span className="inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
-              <span>🔴 QZ Tray Não Conectado</span>
-            </div>
-          )}
+          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold shadow-xs">
+            <Monitor className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>QFomeAI Print Agent</span>
+          </div>
 
           <button
             type="button"
-            onClick={() => connectAndFetchPrinters(true)}
-            disabled={isRefreshing || qzStatus === 'checking'}
+            onClick={() => fetchSettings()}
+            disabled={loadingConfig}
             className="min-h-[44px] px-4 py-2 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white text-xs sm:text-sm font-bold rounded-2xl transition-all shadow-sm flex items-center justify-center gap-2 shrink-0 cursor-pointer"
-            title="Sincronizar e atualizar lista de impressoras detectadas no computador"
+            title="Atualizar configurações de impressão"
           >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>Atualizar impressoras</span>
+            <RefreshCw className={`w-4 h-4 ${loadingConfig ? 'animate-spin' : ''}`} />
+            <span>Atualizar</span>
           </button>
         </div>
       </div>
@@ -992,7 +999,7 @@ export default function PrintSettings() {
 
         const lastPrintJob = printHistory.length > 0 ? printHistory[0] : null;
         const lastPrintError = printHistory.find(
-          (item) => item.status === 'error' || (item.errorMessage && !item.errorMessage.includes('QZ Tray desconectado'))
+          (item) => item.status === 'error' || Boolean(item.errorMessage)
         );
         const canReprint = printHistory.some((item) => item.lastHtml && item.lastHtml.trim().length > 0);
         const last20History = printHistory.slice(0, 20);
@@ -1057,30 +1064,18 @@ export default function PrintSettings() {
 
             {/* Painel de Indicadores (KPIs do Diagnóstico) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-              {/* 1. Status do QZ Tray */}
+              {/* 1. Status do QFomeAI Print Agent */}
               <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50/70 space-y-1.5 flex flex-col justify-between">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Status do QZ Tray</span>
-                  {qzStatus === 'connected' ? (
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                  ) : (
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0"></span>
-                  )}
+                  <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Print Agent</span>
+                  <Monitor className="w-4 h-4 text-emerald-600" />
                 </div>
                 <div>
                   <div className="text-base font-extrabold text-stone-900 flex items-center gap-1.5">
-                    {qzStatus === 'connected' ? (
-                      <span className="text-emerald-700">Conectado</span>
-                    ) : qzStatus === 'checking' ? (
-                      <span className="text-amber-700">Verificando...</span>
-                    ) : (
-                      <span className="text-rose-700">Desconectado</span>
-                    )}
+                    <span className="text-emerald-700">Sistema Ativo</span>
                   </div>
                   <p className="text-[11px] text-stone-500 mt-0.5">
-                    {qzStatus === 'connected'
-                      ? `Comunicação local ativa ${qzVersion ? `(v${qzVersion})` : ''}`
-                      : 'Modo de fallback pelo navegador'}
+                    Pareamento de agentes locais
                   </p>
                 </div>
               </div>
@@ -1200,7 +1195,7 @@ export default function PrintSettings() {
                           ) : (
                             <span
                               className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-900 text-xs font-bold rounded-xl border border-amber-200"
-                              title="Esta impressora não foi localizada no Windows via QZ Tray."
+                              title="Impressora configurada no restaurante."
                             >
                               <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                               <span>Não encontrada</span>
@@ -1486,6 +1481,132 @@ export default function PrintSettings() {
         </div>
       </div>
 
+      {/* SEÇÃO: QFOMEAI PRINT AGENT */}
+      <div id="qfomeai-print-agent-section" className="bg-white p-5 sm:p-6 rounded-3xl border border-stone-200 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-100 pb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-800 flex items-center justify-center border border-sky-200 shrink-0">
+              <Monitor className="w-4 h-4 text-sky-600" />
+            </div>
+            <div>
+              <h3 className="text-base sm:text-lg font-bold text-stone-800 flex items-center gap-2">
+                <span>QFomeAI Print Agent</span>
+                <span className="text-xs bg-sky-100 text-sky-900 px-2.5 py-0.5 rounded-full font-bold">
+                  Windows Desktop
+                </span>
+              </h3>
+              <p className="text-stone-500 text-xs sm:text-sm">
+                Gere um código temporário para vincular o QFomeAI Print Agent instalado no Windows.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            id="btn-generate-pairing-code"
+            onClick={handleGeneratePairingCode}
+            disabled={isGeneratingCode}
+            className="min-h-[40px] px-4 py-2 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white text-xs sm:text-sm font-bold rounded-2xl transition-all shadow-sm flex items-center gap-2 cursor-pointer shrink-0"
+            title="Gerar código aleatório seguro e curto com validade de 10 minutos"
+          >
+            {isGeneratingCode ? (
+              <Loader2 className="w-4 h-4 animate-spin text-sky-400" />
+            ) : (
+              <Key className="w-4 h-4 text-sky-400" />
+            )}
+            <span>{pairingData && pairingData.status === 'active' && timeLeftSeconds > 0 ? 'Gerar novo código' : 'Gerar código de vinculação'}</span>
+          </button>
+        </div>
+
+        {/* Detalhes do Código Ativo ou Informações de Pareamento */}
+        {pairingData && pairingData.status === 'active' && timeLeftSeconds > 0 ? (
+          <div className="p-5 sm:p-6 rounded-2xl bg-stone-50/90 border-2 border-sky-200 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                  Código de Vinculação
+                </span>
+                <div className="flex items-center gap-3">
+                  <div className="font-mono text-3xl sm:text-4xl font-black tracking-widest text-stone-900 bg-white border border-stone-300 px-4 py-2 rounded-xl shadow-inner select-all">
+                    {pairingData.code}
+                  </div>
+                  <button
+                    type="button"
+                    id="btn-copy-pairing-code"
+                    onClick={() => handleCopyCode(pairingData.code)}
+                    className="p-2.5 rounded-xl border border-stone-300 bg-white hover:bg-stone-100 text-stone-700 transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+                    title="Copiar código para a área de transferência"
+                  >
+                    {copiedCode ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-600" />
+                        <span className="text-emerald-700">Copiado!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-stone-500" />
+                        <span>Copiar</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Tempo Restante e Status */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 md:text-right">
+                <div className="p-3 bg-white border border-stone-200 rounded-xl space-y-1">
+                  <div className="flex items-center md:justify-end gap-1.5 text-xs font-medium text-stone-500">
+                    <Clock className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Tempo restante:</span>
+                  </div>
+                  <div className="text-lg font-black text-amber-700 font-mono">
+                    Expira em: {formatTimeLeft(timeLeftSeconds)}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap md:flex-col gap-1.5">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300 text-[11px] font-bold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                    Código Ativo
+                  </span>
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-stone-200 text-stone-700 text-[11px] font-semibold">
+                    Uso único
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Aviso de Segurança e Escopo Restrito */}
+            <div className="pt-3 border-t border-stone-200 flex items-start gap-2.5 text-xs text-stone-600">
+              <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+              <p>
+                Insira este código no <strong className="text-stone-800">QFomeAI Print Agent</strong> instalado no computador com Windows para autenticar o pareamento. 
+                <span className="block text-stone-500 mt-0.5">
+                  O código NÃO concede acesso a pedidos diretamente. Ele serve SOMENTE para iniciar o pareamento de um dispositivo com este restaurante.
+                </span>
+              </p>
+            </div>
+          </div>
+        ) : pairingData && (pairingData.status === 'expired' || timeLeftSeconds <= 0) ? (
+          <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-stone-700">
+            <div className="flex items-center gap-2.5">
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+              <div>
+                <p className="font-bold text-amber-950">O código de vinculação anterior expirou.</p>
+                <p className="text-stone-600">Por segurança, cada código é válido por 10 minutos e possui uso único. Clique em <strong>"Gerar código de vinculação"</strong> para gerar um novo código.</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 rounded-2xl bg-stone-50 border border-dashed border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-stone-600">
+            <div className="flex items-center gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-stone-400 shrink-0" />
+              <span>Nenhum código de vinculação ativo no momento. Clique em <strong>"Gerar código de vinculação"</strong> para parear o aplicativo no Windows.</span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* SEÇÃO 1: IMPRESSORAS CONFIGURADAS DO RESTAURANTE (Persistidas no Firestore) */}
       <div className="bg-white p-5 sm:p-6 rounded-3xl border border-stone-200 shadow-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 pb-4">
@@ -1500,7 +1621,198 @@ export default function PrintSettings() {
               Impressoras salvas com apelidos operacionais e tamanho de papel configurado para este estabelecimento.
             </p>
           </div>
+          <button
+            type="button"
+            onClick={handleStartAddingNewPrinter}
+            className="min-h-[40px] px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold rounded-2xl transition-all shadow-sm flex items-center gap-2 cursor-pointer shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Adicionar Impressora</span>
+          </button>
         </div>
+
+        {/* Painel de Adição de Nova Impressora */}
+        {isAddingPrinter && (
+          <div className="p-5 rounded-2xl border-2 border-emerald-500 bg-emerald-50/40 space-y-4 shadow-sm animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-emerald-200 pb-3">
+              <div className="flex items-center gap-2 text-emerald-900 font-extrabold text-sm sm:text-base">
+                <Tag className="w-5 h-5 text-emerald-700" />
+                <span>Configurar Nova Impressora</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddingPrinter(false)}
+                className="text-stone-400 hover:text-stone-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Nome do Dispositivo */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-stone-700 uppercase tracking-wide">
+                  Nome da Impressora / Dispositivo *
+                </label>
+                <input
+                  type="text"
+                  value={customRawName}
+                  onChange={(e) => setCustomRawName(e.target.value)}
+                  placeholder="Ex: EPSON TM-T20X, Bematech MP-4200 TH, Elgin i9"
+                  className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-sm font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+                />
+                <p className="text-[11px] text-stone-500">
+                  Nome exato da impressora instalada no Windows ou impressora de rede.
+                </p>
+              </div>
+
+              {/* Definir Apelido no QFomeAI */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-stone-800 uppercase tracking-wide">
+                  Definir Apelido no QFomeAI *
+                </label>
+                <input
+                  type="text"
+                  value={newNickname}
+                  onChange={(e) => setNewNickname(e.target.value)}
+                  placeholder="Ex: Caixa, Cozinha, Balcão, Expedição"
+                  className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-sm font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+                />
+                {/* Sugestões rápidas de apelido */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[11px] text-stone-500 font-medium">Sugestões:</span>
+                  {NICKNAME_SUGGESTIONS.map((sug) => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => {
+                        setNewNickname(sug);
+                        setNewDestinations(getSuggestedDestinations(sug));
+                      }}
+                      className={`text-[11px] px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                        newNickname === sug
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'bg-white border border-stone-200 hover:bg-stone-100 text-stone-700'
+                      }`}
+                    >
+                      {sug}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Tamanho da Bobina */}
+            <div className="space-y-1.5 pt-1">
+              <label className="text-xs font-bold text-stone-800 uppercase tracking-wide">
+                Tamanho da Bobina / Papel *
+              </label>
+              <div className="grid grid-cols-3 gap-3 max-w-md">
+                {PAPER_SIZES.map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => setNewPaperSize(size)}
+                    className={`py-2.5 px-3 rounded-xl border-2 text-xs sm:text-sm font-bold transition-all flex items-center justify-between cursor-pointer ${
+                      newPaperSize === size
+                        ? 'border-emerald-600 bg-white text-emerald-800 shadow-xs'
+                        : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
+                    }`}
+                  >
+                    <span>Bobina {size}</span>
+                    {newPaperSize === size && <Check className="w-4 h-4 text-emerald-600" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Destinos de Impressão */}
+            <div className="space-y-2 pt-2 border-t border-emerald-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <div>
+                  <label className="text-xs font-bold text-stone-800 uppercase tracking-wide flex items-center gap-1.5">
+                    <span>O que esta impressora poderá imprimir? (Destinos)</span>
+                  </label>
+                  <p className="text-[12px] text-stone-600">
+                    Marque as funções desta impressora.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setNewDestinations(PRINT_DESTINATIONS.map(d => d.id))}
+                    className="text-emerald-800 hover:text-emerald-950 font-bold hover:underline cursor-pointer"
+                  >
+                    Marcar todos
+                  </button>
+                  <span className="text-stone-300">•</span>
+                  <button
+                    type="button"
+                    onClick={() => setNewDestinations([])}
+                    className="text-stone-600 hover:text-stone-800 font-bold hover:underline cursor-pointer"
+                  >
+                    Desmarcar todos
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                {PRINT_DESTINATIONS.map((dest) => {
+                  const isSelected = newDestinations.includes(dest.id);
+                  return (
+                    <button
+                      key={dest.id}
+                      type="button"
+                      onClick={() => {
+                        setNewDestinations(prev =>
+                          prev.includes(dest.id) ? prev.filter(id => id !== dest.id) : [...prev, dest.id]
+                        );
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                        isSelected
+                          ? 'border-emerald-600 bg-white text-emerald-950 ring-2 ring-emerald-500 font-bold shadow-xs'
+                          : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300 font-medium'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`w-4 h-4 rounded-md flex items-center justify-center border transition-all shrink-0 ${
+                            isSelected
+                              ? 'bg-emerald-600 border-emerald-600 text-white'
+                              : 'bg-white border-stone-300'
+                          }`}
+                        >
+                          {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                        </div>
+                        <span className="text-xs sm:text-sm truncate">{dest.label}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Botões do Formulário */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-emerald-200">
+              <button
+                type="button"
+                onClick={() => setIsAddingPrinter(false)}
+                className="px-4 py-2 text-stone-600 hover:text-stone-800 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveNewPrinter}
+                disabled={savingConfig}
+                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold rounded-xl transition-all shadow-md shadow-emerald-200 flex items-center gap-2 cursor-pointer"
+              >
+                {savingConfig ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                <span>Salvar Configuração</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {loadingConfig ? (
           <div className="p-8 text-center bg-stone-50 rounded-2xl border border-stone-200 flex items-center justify-center gap-3 text-stone-600 font-medium">
@@ -1723,21 +2035,11 @@ export default function PrintSettings() {
                                 Bobina {printer.paperSize}
                               </span>
 
-                              {/* Status de Presença no Computador */}
-                              {isDetected ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold rounded-lg">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  <span>Disponível no PC</span>
-                                </span>
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-100/80 border border-amber-300 text-amber-900 text-[11px] font-bold rounded-lg"
-                                  title="Esta impressora está configurada no restaurante, mas não foi detectada no computador atual pelo QZ Tray."
-                                >
-                                  <AlertTriangle className="w-3 h-3 text-amber-700" />
-                                  <span>Não encontrada</span>
-                                </span>
-                              )}
+                              {/* Status de Configuração */}
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold rounded-lg">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Configurada</span>
+                              </span>
                             </div>
 
                             <div className="flex items-center gap-1.5 text-xs text-stone-500">
@@ -1827,15 +2129,6 @@ export default function PrintSettings() {
                       </div>
                     </div>
                   )}
-
-                  {!isDetected && !isEditing && (
-                    <div className="mt-2.5 pt-2.5 border-t border-amber-200/60 flex items-start gap-2 text-[11px] text-amber-800">
-                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                      <span>
-                        A impressora física <strong className="font-semibold">{printer.rawName}</strong> não foi encontrada nesta máquina pelo QZ Tray. A configuração continua salva no QFomeAI e voltará a ficar disponível quando o computador com ela instalada estiver conectado.
-                      </span>
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -1845,7 +2138,7 @@ export default function PrintSettings() {
             <Printer className="w-8 h-8 text-stone-400 mx-auto" />
             <p className="text-sm font-bold text-stone-700">Nenhuma impressora configurada ainda</p>
             <p className="text-xs text-stone-500 max-w-md mx-auto">
-              Escolha uma das impressoras detectadas abaixo e clique em <strong>"+ Configurar"</strong> para definir seu apelido (Caixa, Cozinha, Balcão, etc.) e tamanho do papel.
+              Clique em <strong>"Adicionar Impressora"</strong> acima para cadastrar os dispositivos do seu restaurante e definir seus apelidos (Caixa, Cozinha, Balcão, etc.) e bobinas.
             </p>
           </div>
         )}
@@ -2246,402 +2539,6 @@ export default function PrintSettings() {
           </ul>
         </div>
       </div>
-
-      {/* SEÇÃO 2: IMPRESSORAS DETECTADAS NO COMPUTADOR VIA QZ TRAY */}
-      {qzStatus === 'connected' && (
-        <div className="bg-white p-5 sm:p-6 rounded-3xl border border-stone-200 shadow-sm space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-100 pb-4">
-            <div>
-              <h3 className="text-base sm:text-lg font-bold text-stone-800 flex items-center gap-2">
-                <span>Impressoras Detectadas no Computador (Windows)</span>
-                <span className="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-extrabold">
-                  {detectedPrinters.length} {detectedPrinters.length === 1 ? 'dispositivo' : 'dispositivos'}
-                </span>
-              </h3>
-              <p className="text-stone-500 text-xs sm:text-sm mt-0.5">
-                Nomes reais lidos diretamente do Windows via QZ Tray. Clique para configurar ou alterar o apelido de cada uma.
-              </p>
-            </div>
-          </div>
-
-          {/* Painel aberto de configuração de uma nova impressora */}
-          {configuringRawName && (
-            <div className="p-5 rounded-2xl border-2 border-emerald-500 bg-emerald-50/40 space-y-4 shadow-sm animate-fadeIn">
-              <div className="flex items-center justify-between border-b border-emerald-200 pb-3">
-                <div className="flex items-center gap-2 text-emerald-900 font-extrabold text-sm sm:text-base">
-                  <Tag className="w-5 h-5 text-emerald-700" />
-                  <span>Configurar Impressora: {configuringRawName}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setConfiguringRawName(null)}
-                  className="text-stone-400 hover:text-stone-600 p-1 rounded-lg cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Nome real no Windows */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-stone-600 uppercase tracking-wide">
-                    Nome Real do Dispositivo
-                  </label>
-                  <div className="p-3 bg-white border border-stone-200 rounded-xl text-stone-800 text-sm font-semibold select-all">
-                    {configuringRawName}
-                  </div>
-                  <p className="text-[11px] text-stone-400">
-                    O nome real do Windows é preservado e não sofrerá modificação.
-                  </p>
-                </div>
-
-                {/* Definir Apelido no QFomeAI */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-stone-800 uppercase tracking-wide">
-                    Definir Apelido no QFomeAI *
-                  </label>
-                  <input
-                    type="text"
-                    value={newNickname}
-                    onChange={(e) => setNewNickname(e.target.value)}
-                    placeholder="Ex: Caixa, Cozinha, Balcão, Expedição"
-                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-sm font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
-                  />
-                  {/* Sugestões rápidas de apelido */}
-                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                    <span className="text-[11px] text-stone-500 font-medium">Sugestões:</span>
-                    {NICKNAME_SUGGESTIONS.map((sug) => (
-                      <button
-                        key={sug}
-                        type="button"
-                        onClick={() => {
-                          setNewNickname(sug);
-                          setNewDestinations(getSuggestedDestinations(sug));
-                        }}
-                        className={`text-[11px] px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                          newNickname === sug
-                            ? 'bg-emerald-600 text-white shadow-xs'
-                            : 'bg-white border border-stone-200 hover:bg-stone-100 text-stone-700'
-                        }`}
-                      >
-                        {sug}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Tamanho da Bobina */}
-              <div className="space-y-1.5 pt-1">
-                <label className="text-xs font-bold text-stone-800 uppercase tracking-wide">
-                  Tamanho da Bobina / Papel *
-                </label>
-                <div className="grid grid-cols-3 gap-3 max-w-md">
-                  {PAPER_SIZES.map((size) => (
-                    <button
-                      key={size}
-                      type="button"
-                      onClick={() => setNewPaperSize(size)}
-                      className={`py-2.5 px-3 rounded-xl border-2 text-xs sm:text-sm font-bold transition-all flex items-center justify-between cursor-pointer ${
-                        newPaperSize === size
-                          ? 'border-emerald-600 bg-white text-emerald-800 shadow-xs'
-                          : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300'
-                      }`}
-                    >
-                      <span>Bobina {size}</span>
-                      {newPaperSize === size && <Check className="w-4 h-4 text-emerald-600" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Destinos de Impressão para a nova impressora */}
-              <div className="space-y-2 pt-2 border-t border-emerald-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                  <div>
-                    <label className="text-xs font-bold text-stone-800 uppercase tracking-wide flex items-center gap-1.5">
-                      <span>O que esta impressora poderá imprimir? (Destinos)</span>
-                    </label>
-                    <p className="text-[12px] text-stone-600">
-                      Marque as funções desta impressora. Você pode marcar várias opções ou alterá-las mais tarde.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setNewDestinations(PRINT_DESTINATIONS.map(d => d.id))}
-                      className="text-emerald-800 hover:text-emerald-950 font-bold hover:underline cursor-pointer"
-                    >
-                      Marcar todos
-                    </button>
-                    <span className="text-stone-300">•</span>
-                    <button
-                      type="button"
-                      onClick={() => setNewDestinations([])}
-                      className="text-stone-600 hover:text-stone-800 font-bold hover:underline cursor-pointer"
-                    >
-                      Desmarcar todos
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
-                  {PRINT_DESTINATIONS.map((dest) => {
-                    const isSelected = newDestinations.includes(dest.id);
-                    return (
-                      <button
-                        key={dest.id}
-                        type="button"
-                        onClick={() => {
-                          setNewDestinations(prev =>
-                            prev.includes(dest.id) ? prev.filter(id => id !== dest.id) : [...prev, dest.id]
-                          );
-                        }}
-                        className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between gap-2 cursor-pointer ${
-                          isSelected
-                            ? 'border-emerald-600 bg-white text-emerald-950 ring-2 ring-emerald-500 font-bold shadow-xs'
-                            : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300 font-medium'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div
-                            className={`w-4 h-4 rounded-md flex items-center justify-center border transition-all shrink-0 ${
-                              isSelected
-                                ? 'bg-emerald-600 border-emerald-600 text-white'
-                                : 'bg-white border-stone-300'
-                            }`}
-                          >
-                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                          </div>
-                          <span className="text-xs sm:text-sm truncate">{dest.label}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Botões do Formulário */}
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-emerald-200">
-                <button
-                  type="button"
-                  onClick={() => setConfiguringRawName(null)}
-                  className="px-4 py-2 text-stone-600 hover:text-stone-800 text-xs sm:text-sm font-bold rounded-xl transition-all cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveNewPrinter}
-                  disabled={savingConfig}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold rounded-xl transition-all shadow-md shadow-emerald-200 flex items-center gap-2 cursor-pointer"
-                >
-                  {savingConfig ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  <span>Salvar Configuração no QFomeAI</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {detectedPrinters.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-              {detectedPrinters.map((printerName, index) => {
-                const isDefault = defaultPrinter && defaultPrinter.toLowerCase() === printerName.toLowerCase();
-                const configured = configuredPrinters.find(
-                  (p) => p.rawName.toLowerCase() === printerName.toLowerCase()
-                );
-
-                return (
-                  <div
-                    key={`${printerName}-${index}`}
-                    className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
-                      configured
-                        ? 'bg-emerald-50/40 border-emerald-200'
-                        : 'bg-stone-50/70 border-stone-200 hover:bg-stone-50 hover:border-stone-300'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2.5">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-white border border-stone-200 text-emerald-600 flex items-center justify-center shrink-0 shadow-2xs mt-0.5">
-                          <Printer className="w-5 h-5" />
-                        </div>
-                        <div className="min-w-0 space-y-0.5">
-                          <p className="text-sm font-bold text-stone-800 truncate" title={printerName}>
-                            {printerName}
-                          </p>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs text-stone-500 font-medium">Dispositivo Windows</span>
-                            {isDefault && (
-                              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">
-                                Padrão
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Badge de status de configuração */}
-                      {configured && (
-                        <span className="shrink-0 px-2.5 py-1 bg-emerald-600 text-white text-xs font-extrabold rounded-lg whitespace-nowrap shadow-2xs">
-                          {configured.nickname} ({configured.paperSize})
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Ação: Configurar ou Editar */}
-                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-200/70">
-                      {configured ? (
-                        <button
-                          type="button"
-                          onClick={() => handleStartEditing(configured)}
-                          className="px-3.5 py-1.5 bg-white hover:bg-stone-100 text-stone-700 text-xs font-bold rounded-xl transition-all border border-stone-200 flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Pencil className="w-3.5 h-3.5 text-stone-500" />
-                          <span>Alterar apelido / papel</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleStartConfiguring(printerName)}
-                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Configurar no QFomeAI</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="p-8 text-center bg-stone-50 rounded-2xl border border-dashed border-stone-200 space-y-2">
-              <Printer className="w-8 h-8 text-stone-400 mx-auto" />
-              <p className="text-sm font-bold text-stone-700">Nenhuma impressora encontrada no sistema operacional</p>
-              <p className="text-xs text-stone-500 max-w-md mx-auto">
-                O QZ Tray está conectado, mas não detectou impressoras configuradas no Painel de Controle do computador. Verifique se os cabos e drivers estão instalados.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* SEÇÃO 3: INSTRUÇÕES QUANDO QZ TRAY NÃO ESTÁ CONECTADO */}
-      {qzStatus === 'disconnected' && (
-        <div className="space-y-6">
-          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-rose-200/80 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 mt-0.5">
-                  <XCircle className="w-6 h-6" />
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-base sm:text-lg font-bold text-stone-800">
-                    QZ Tray Não Detectado neste Computador
-                  </h3>
-                  <p className="text-stone-600 text-xs sm:text-sm max-w-2xl leading-relaxed">
-                    Para detectar e se comunicar com as impressoras térmicas físicas (EPSON, Elgin, Bematech, Daruma, etc.), o aplicativo QZ Tray precisa estar em execução no computador.
-                  </p>
-                  {qzError && (
-                    <p className="text-xs text-rose-600 font-semibold mt-1">
-                      Detalhe: {qzError}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
-                <a
-                  href="https://qz.io/download/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="min-h-[44px] px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold rounded-2xl transition-all shadow-md shadow-emerald-200 flex items-center justify-center gap-2 text-center"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Baixar QZ Tray Oficial</span>
-                  <ExternalLink className="w-3.5 h-3.5 opacity-80" />
-                </a>
-
-                <button
-                  type="button"
-                  onClick={() => connectAndFetchPrinters(true)}
-                  disabled={isRefreshing}
-                  className="min-h-[44px] px-4 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs sm:text-sm font-bold rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  <span>Verificar Novamente</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Guia Rápido de Instalação */}
-          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-stone-200 shadow-sm space-y-5">
-            <div className="flex items-center gap-2.5 border-b border-stone-100 pb-4">
-              <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
-                <Laptop className="w-4 h-4" />
-              </div>
-              <div>
-                <h4 className="text-base font-bold text-stone-800">
-                  Instruções Simples de Instalação no Windows
-                </h4>
-                <p className="text-stone-500 text-xs">
-                  Siga os 5 passos rápidos para habilitar suas impressoras no QFomeAI:
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3.5">
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <div className="w-7 h-7 rounded-full bg-emerald-600 text-white text-xs font-black flex items-center justify-center">1</div>
-                <p className="text-xs font-bold text-stone-800">Baixe o Instalador</p>
-                <p className="text-xs text-stone-500 leading-relaxed">
-                  Baixe a versão para Windows no site oficial <span className="font-semibold text-stone-700">qz.io/download</span>.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <div className="w-7 h-7 rounded-full bg-emerald-600 text-white text-xs font-black flex items-center justify-center">2</div>
-                <p className="text-xs font-bold text-stone-800">Execute o Instalador</p>
-                <p className="text-xs text-stone-500 leading-relaxed">
-                  Abra o executável baixado (<span className="font-semibold text-stone-700">.exe</span>) e conclua a instalação padrão.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <div className="w-7 h-7 rounded-full bg-emerald-600 text-white text-xs font-black flex items-center justify-center">3</div>
-                <p className="text-xs font-bold text-stone-800">Inicie o QZ Tray</p>
-                <p className="text-xs text-stone-500 leading-relaxed">
-                  Abra o aplicativo pelo menu Iniciar. Ele ficará minimizado com um ícone verde ao lado do relógio.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <div className="w-7 h-7 rounded-full bg-emerald-600 text-white text-xs font-black flex items-center justify-center">4</div>
-                <p className="text-xs font-bold text-stone-800">Permita o Acesso</p>
-                <p className="text-xs text-stone-500 leading-relaxed">
-                  No aviso do navegador, clique em <span className="font-semibold text-emerald-700">"Permitir"</span> (Allow) e marque para lembrar.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
-                <div className="w-7 h-7 rounded-full bg-emerald-600 text-white text-xs font-black flex items-center justify-center">5</div>
-                <p className="text-xs font-bold text-stone-800">Atualizar</p>
-                <p className="text-xs text-stone-500 leading-relaxed">
-                  Volte aqui e clique em <span className="font-semibold text-stone-800">"Atualizar impressoras"</span> para carregar os dispositivos.
-                </p>
-              </div>
-            </div>
-
-            <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-xs text-amber-900">
-              <Smartphone className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold">Acessando pelo celular ou tablet?</span> As configurações salvas acima continuam salvas no seu restaurante. O QZ Tray é necessário apenas no computador físico onde as impressoras estão conectadas.
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal de Reimpressão Segura com Confirmação e Auditoria */}
       <ReprintConfirmModal

@@ -45,7 +45,6 @@
     "nodemailer": "^8.0.5",
     "pino": "^10.3.1",
     "qrcode": "^1.5.4",
-    "qz-tray": "^2.2.6",
     "react": "^19.0.0",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.0.0",
@@ -62,7 +61,6 @@
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",
-    "@types/qz-tray": "^2.2.2",
     "vitest": "^4.1.10"
   }
 }

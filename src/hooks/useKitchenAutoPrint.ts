@@ -9,13 +9,12 @@ interface UseKitchenAutoPrintOptions {
 }
 
 /**
- * Hook to automatically print new kitchen orders via QZ Tray
+ * Hook to automatically process kitchen orders printing
  * strictly for printers configured with "Produção da Cozinha".
  * 
  * Guarantees:
  * - Each order is printed ONLY ONCE per printer (orderId + printerId).
  * - Protected against re-renders, snapshot updates, and page reloads.
- * - If QZ Tray is offline, orders are NOT lost and NOT marked as printed.
  */
 export function useKitchenAutoPrint({
   orders = [],
