@@ -67,7 +67,6 @@ import { createNotificationRouter } from './server/routes/notificationRoutes';
 import { createGeoRouter } from './server/routes/geoRoutes';
 import { createAdminRouter } from './server/routes/adminRoutes';
 import { createPrintAgentRouter } from './server/routes/printAgentRoutes';
-import { initPrintAgentWebSocketServer } from './server/services/printAgentWebSocketServer';
 
 
 // Catch unhandled rejections to prevent silent crashes
@@ -1011,13 +1010,6 @@ async function startServer() {
     // Start the background job to automatically cancel orders older than 5 minutes
     // Now done on-demand per authenticated restaurant via /api/orders/check-timeout to avoid global loop
     logger.info('[Order Timeout] Global loop disabled. Checking on-demand per authenticated tenant.');
-
-    // Initialize persistent WebSocket server for QFomeAI Print Agent
-    try {
-      initPrintAgentWebSocketServer(server, db);
-    } catch (wsErr: any) {
-      logger.error('[STARTUP_WS_ERROR] Failed to initialize Print Agent WebSocket server:', { error: wsErr?.message });
-    }
   });
 
   server.on('error', (error: any) => {
