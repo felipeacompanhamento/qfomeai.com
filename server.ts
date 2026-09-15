@@ -709,8 +709,8 @@ async function startServer() {
   // Register Geo Routes
   app.use('/api', createGeoRouter(db));
 
-  // Register QFomeAI Print Agent Routes (Pareamento seguro de dispositivos e teste de comunicação)
-  const printAgentRouter = createPrintAgentRouter(db, authAdmin);
+  // Register QFomeAI Print Agent Routes (Pareamento seguro de dispositivos)
+  const printAgentRouter = createPrintAgentRouter(db);
   app.use('/api/print-agent', printAgentRouter);
   app.use('/api/print', printAgentRouter);
   app.use('/api/restaurant/print-agent', printAgentRouter);

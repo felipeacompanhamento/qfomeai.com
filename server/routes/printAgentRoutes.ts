@@ -1,13 +1,11 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { Firestore, DocumentReference } from 'firebase-admin/firestore';
-import type { Auth } from 'firebase-admin/auth';
 import crypto from 'crypto';
 import { createRateLimiter } from '../middleware/rateLimiter';
 import { logger } from '../utils/logger';
-import { sendTestToPrintAgent } from '../services/printAgentWebSocketServer';
 
-export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router {
+export function createPrintAgentRouter(db: Firestore): Router {
   const router = Router();
 
   const pairRateLimiter = createRateLimiter({
@@ -388,117 +386,9 @@ export function createPrintAgentRouter(db: Firestore, authAdmin?: Auth): Router 
     }
   };
 
-  /**
-   * POST /test (e /send-test)
-   * Envia um teste de comunicação via WebSocket existente ao Print Agent ONLINE do restaurante autenticado.
-   * Regras estritas:
-   *   - Somente permitir envio para dispositivo do restaurantId autenticado
-   *   - Enviar SOMENTE:
-   *     {
-   *       "type": "test",
-   *       "message": "Teste de comunicação QFomeAI",
-   *       "sentAt": "data/hora"
-   *     }
-   *   - Mostrar sucesso somente se o Agent confirmar o recebimento com test_ack
-   */
-  const handleSendTest = async (req: Request, res: Response) => {
-    try {
-      // 1. Validar autenticação do usuário do restaurante
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Não autorizado: Token de autenticação ausente.' });
-      }
-
-      const idToken = authHeader.split('Bearer ')[1]?.trim();
-      if (!idToken) {
-        return res.status(401).json({ error: 'Não autorizado: Token ausente.' });
-      }
-
-      let authenticatedUid: string;
-      if (idToken.startsWith('test_token_')) {
-        if (process.env.NODE_ENV === 'production') {
-          return res.status(401).json({ error: 'Tokens de teste não permitidos em produção.' });
-        }
-        authenticatedUid = idToken.replace('test_token_', '');
-      } else if (authAdmin) {
-        try {
-          const decoded = await authAdmin.verifyIdToken(idToken);
-          authenticatedUid = decoded.uid;
-        } catch (authErr: any) {
-          logger.warn('[PRINT_AGENT] Token de autorização inválido no teste de comunicação', { error: authErr?.message });
-          return res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
-        }
-      } else {
-        return res.status(500).json({ error: 'Serviço de autenticação não configurado no servidor.' });
-      }
-
-      // Localizar o restaurante do usuário
-      const userDoc = await db.collection('users').doc(authenticatedUid).get();
-      const userData = userDoc.data();
-      const restaurantId = userData?.restaurantId || authenticatedUid;
-
-      if (!restaurantId) {
-        return res.status(403).json({ error: 'Restaurante não associado ao usuário autenticado.' });
-      }
-
-      // Se foi enviado um restaurantId no corpo da requisição, deve bater com o autenticado
-      const requestedRestaurantId = req.body.restaurantId || req.body.restaurant_id;
-      if (requestedRestaurantId && typeof requestedRestaurantId === 'string' && requestedRestaurantId.trim() !== restaurantId) {
-        // Se for admin geral pode ter exceção, caso contrário bloquear
-        if (userData?.role !== 'ADMIN' && userData?.role !== 'SUPER_ADMIN') {
-          logger.warn('[PRINT_AGENT] Tentativa não autorizada de enviar teste para outro restaurante', {
-            authenticatedRestaurantId: restaurantId,
-            requestedRestaurantId
-          });
-          return res.status(403).json({ error: 'Acesso negado: restaurante divergente do usuário autenticado.' });
-        }
-      }
-
-      const effectiveRestaurantId = (requestedRestaurantId && (userData?.role === 'ADMIN' || userData?.role === 'SUPER_ADMIN'))
-        ? requestedRestaurantId.trim()
-        : restaurantId;
-
-      const rawDeviceId = req.body.deviceId || req.body.device_id;
-      const cleanDeviceId = typeof rawDeviceId === 'string' && rawDeviceId.trim() ? rawDeviceId.trim() : undefined;
-
-      // 2. Se deviceId foi fornecido, garantir que pertence ao restaurantId autenticado
-      if (cleanDeviceId) {
-        const deviceDoc = await db.collection('restaurants').doc(effectiveRestaurantId).collection('printAgentDevices').doc(cleanDeviceId).get();
-        if (!deviceDoc.exists) {
-          return res.status(403).json({ error: 'Dispositivo não encontrado ou não pertence a este restaurante.' });
-        }
-      }
-
-      // 3. Enviar teste através da conexão WebSocket existente e aguardar confirmação test_ack
-      const testResult = await sendTestToPrintAgent(effectiveRestaurantId, cleanDeviceId, 8000);
-
-      logger.info('[PRINT_AGENT] Teste de comunicação confirmado com sucesso pelo Print Agent', {
-        restaurantId: effectiveRestaurantId,
-        deviceId: testResult.deviceId,
-        latencyMs: testResult.latencyMs
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: 'Comunicação confirmada com sucesso pelo Print Agent!',
-        deviceId: testResult.deviceId,
-        acknowledgedAt: testResult.acknowledgedAt,
-        latencyMs: testResult.latencyMs
-      });
-    } catch (err: any) {
-      logger.warn('[PRINT_AGENT] Falha no teste de comunicação com o Agent', { error: err?.message });
-      return res.status(400).json({
-        success: false,
-        error: err?.message || 'Falha ao enviar teste para o Print Agent.'
-      });
-    }
-  };
-
   router.post('/pair', pairRateLimiter, handlePairing);
   router.post('/parear', pairRateLimiter, handlePairing);
   router.get('/status', statusRateLimiter, handleStatus);
-  router.post('/test', handleSendTest);
-  router.post('/send-test', handleSendTest);
 
   return router;
 }
